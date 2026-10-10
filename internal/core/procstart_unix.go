@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"math"
 	"os"
 	"runtime"
 	"strconv"
@@ -23,11 +22,6 @@ const clockTicks = 100
 
 // exactStartID reports whether this OS keeps an exact start identity (startID): Linux does.
 const exactStartID = runtime.GOOS == "linux"
-
-// startTolerance is the widest Duration: the Linux start time moves with the wall clock, so a
-// ProcessID without an exact start identity, one built by hand, whose pid runs always counts as a
-// live owner and nothing is removed (fail-closed, DR-25). CurrentProcess always sets the identity.
-const startTolerance = time.Duration(math.MaxInt64)
 
 // clockTick is one clock tick of /proc/<pid>/stat.
 const clockTick = time.Second / clockTicks
@@ -122,21 +116,41 @@ func procStartTicks(pid int) (uint64, bool, error) {
 	if err != nil {
 		return 0, false, fmt.Errorf("start time of process %d: %w", pid, err)
 	}
-	// The command name in parentheses may hold spaces and parentheses; the fields follow the last one.
-	i := bytes.LastIndexByte(b, ')')
-	if i < 0 {
-		return 0, false, fmt.Errorf("start time of process %d: malformed stat %q", pid, b)
-	}
-	f := strings.Fields(string(b[i+1:]))
-	if len(f) < 20 {
-		return 0, false, fmt.Errorf("start time of process %d: malformed stat %q", pid, b)
-	}
-	if f[0] == "Z" || f[0] == "X" {
-		return 0, false, nil
-	}
-	ticks, err := strconv.ParseUint(f[19], 10, 64)
+	ticks, err := parseProcStat(b)
 	if err != nil {
 		return 0, false, fmt.Errorf("start time of process %d: %w", pid, err)
 	}
+	if f, _ := procStatFields(b); f[0] == "Z" || f[0] == "X" {
+		return 0, false, nil
+	}
 	return ticks, true, nil
+}
+
+// parseProcStat returns the start tick, field 22, of the contents of a /proc/<pid>/stat file. Any
+// malformed input is an error, never a start, so the start counts as unknown (fail-closed).
+func parseProcStat(data []byte) (uint64, error) {
+	f, err := procStatFields(data)
+	if err != nil {
+		return 0, err
+	}
+	ticks, err := strconv.ParseUint(f[19], 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("malformed stat %q: %w", data, err)
+	}
+	return ticks, nil
+}
+
+// procStatFields returns the fields of a /proc/<pid>/stat file that follow the command name, from
+// field 3, the state, on; at least 20 of them, so field 22 is present.
+func procStatFields(data []byte) ([]string, error) {
+	// The command name in parentheses may hold spaces and parentheses; the fields follow the last one.
+	i, j := bytes.LastIndexByte(data, ')'), bytes.IndexByte(data, '(')
+	if j < 0 || i < j {
+		return nil, fmt.Errorf("malformed stat %q: no command name", data)
+	}
+	f := strings.Fields(string(data[i+1:]))
+	if len(f) < 20 {
+		return nil, fmt.Errorf("malformed stat %q: %d fields after the command name, want at least 20", data, len(f))
+	}
+	return f, nil
 }

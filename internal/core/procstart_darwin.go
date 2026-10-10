@@ -11,10 +11,6 @@ import (
 // procZombie is SZOMB, the p_stat of a process that has exited and waits for its parent.
 const procZombie = 5
 
-// startTolerance absorbs rounding only: p_starttime is a stored timeval, read the same way at
-// every call.
-const startTolerance = time.Second
-
 // processStart returns the OS start time of pid and whether the process runs (U13). A pid that
 // names no process, or a zombie, is not running; any other failure is an error, which the caller
 // treats as a live owner (fail-closed).

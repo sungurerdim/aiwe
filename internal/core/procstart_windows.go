@@ -12,10 +12,6 @@ import (
 // stillActive is the exit code GetExitCodeProcess reports for a process that has not exited.
 const stillActive = 259
 
-// startTolerance absorbs rounding only: the creation time is a stored FILETIME, read the same way
-// at every call.
-const startTolerance = time.Second
-
 // processStart returns the OS start time of pid and whether the process runs (U13). A pid that
 // names no process is not running; any other failure is an error, which the caller treats as a
 // live owner (fail-closed).
@@ -48,6 +44,9 @@ func processStart(pid int) (time.Time, bool, error) {
 // realPath returns the final path of an existing p: symlinks and junctions resolved, letter case
 // and short names normalised, as the file system reports it for an open handle.
 func realPath(p string) (string, error) {
+	if p == "" {
+		return "", errors.New("real path: empty path")
+	}
 	name, err := windows.UTF16PtrFromString(p)
 	if err != nil {
 		return "", fmt.Errorf("real path of %q: %w", p, err)
