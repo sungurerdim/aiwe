@@ -25,6 +25,7 @@ Each line names the rule; the rule text is in SPEC §3.
   same standard. After it, no unit is worked outside aiwe; a unit worked by hand is a defect and is
   recorded as one. From unit 1.29 on, CI flags a `main` commit that closes or references a unit
   issue and has no `Run-Id` trailer; Dependabot and outside commits are `external` (Q17).
+- Every piece of work is an issue before it starts, and a finished one closes mechanically (DR-50).
 - Every diff counts from the run's base commit (DR-47).
 - Commit only on your run branch; no push, merge, issue close or tracker write (DR-18).
 - A unit stays inside its declared file set (DR-11, DR-14).
@@ -42,7 +43,7 @@ Each line names the rule; the rule text is in SPEC §3.
 | Need | Place |
 |---|---|
 | Purpose, users, metrics | SPEC §1 |
-| Design rules DR-1…DR-49 | SPEC §3 |
+| Design rules DR-1…DR-50 | SPEC §3 |
 | Coding rules and patterns | SPEC §4, §5 |
 | Modules and package layout | SPEC §6.1 |
 | Sandbox levels and the open risk | SPEC §6.7 |
