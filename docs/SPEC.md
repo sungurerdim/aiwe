@@ -205,7 +205,7 @@ A test whose source is not yet in the tree passes only while a §14 Files cell l
 | DR-47 | Every engine diff is `git diff <base>...<tip>` from the run's base commit, so a base that advances during the run changes nothing; a D-check reports only lines of that diff, and a flagged line byte-identical on the base is `pre_existing`, never red; a unit line that counts from `HEAD~<n>` or `HEAD^` is refused. | S4, M3 | tests `engine/coverage_test.go`, `gates/checks_test.go`, `engine/unit_test.go` |
 | DR-48 | Every run starts through a sandbox adapter, and the run record names the level used; a live operation unit needs level `os-sandbox` (§6.7, Q19). | S4 | tests `core/sandbox_test.go`, `engine/clone_test.go`, `engine/operation_test.go` |
 | DR-49 | Every git call of the engine runs with repository-configured programs off, so a run clone's `.git/config` cannot make the engine run code (§5.21). | S4 | tests `core/git_test.go`, `engine/residue_test.go` |
-| DR-50 | Every done, planned or discovered piece of work is an issue in the §8.4 format before work starts, and issues are the single source of truth for work (DR-30); the engine closes a code unit issue at closeout, only after `main` CI of its squash commit is green (§7.3 step 17), an operation unit issue at its own closeout (§7.9 step 9), an owner unit issue once `main` CI of a commit that references it is green (§8.4), and a goal issue and a milestone by the rules of §8.4. | S5 | intake and `aiwe unit check` (§7.3 step 1, §8.4: only an issue in the §8.4 format is dispatched); closeout (§7.3 step 17, §7.9 step 9); owner unit close (§8.4); judgement: auditor (a finding outside the unit is a new issue) |
+| DR-50 | Every done, planned or discovered piece of work is an issue in the §8.4 format before work starts, and issues are the single source of truth for work (DR-30); the engine closes a code unit issue at closeout, only after `main` CI of its squash commit is green (§7.3 step 17), an operation unit issue at its own closeout (§7.9 step 9), an owner unit issue once `main` CI of a commit that references it is green and a goal issue once every unit of its task list is closed (§7.3 step 17), and a milestone by the rules of §8.4. | S5 | intake and `aiwe unit check` (§7.3 step 1, §8.4: only an issue in the §8.4 format is dispatched); closeout (§7.3 step 17, §7.9 step 9); judgement: auditor (a finding outside the unit is a new issue) |
 
 ---
 
@@ -740,7 +740,7 @@ parser (§8.4) validates every unit before work starts.
 | 14 integrate | M | DR-19 at pull-request level (Q21). The engine pushes the run branch and opens one pull request per unit through the tracker port: title = the unit's Conventional Commit subject, body carries `Refs #<n>` for the unit issue (§8.4) and ends with the `Run-Id` trailer. A batch = several unit pull requests, gated together in a temporary integration clone of the working branch tip. A unit commit marked breaking waits for the owner (§12.3). Batch states: `queued → running → splitting → merged \| removed`. A red batch splits in halves until each red pull request is isolated; a removed one stays open with its reason in a comment and returns as a fix round. A conflict follows §7.4. |
 | 15 pull request CI | M | Wait for the CI run of each pull request head through the tracker port. Red → the pull request stays open with its reason; the unit returns as a fix round. No run observed within the wait limit → `ci_not_observed`: never green. |
 | 16 merge and main CI | M | Green CI and head = `AuditedTip` → the engine squash-merges the pull request through the tracker port, giving the head SHA, so a moved head is refused (`unaudited_commits`). The canonical repository's checked-out branch is never a push target. A merge refused because `main` moved rebuilds the batch on the new tip once; a second → `push_rejected`, batch requeued. The engine then waits for the CI run of the squash commit on `main`, which also feeds the release job (§12.3): red → the engine opens a revert pull request for the squash commit through the tracker port, never a direct push, because the `main` ruleset refuses a change without a pull request (§16, Q21); it squash-merges the revert pull request once that pull request's CI is green, then requeues the unit as a fix round; a red revert pull request CI → `revert_red` (§7.4); none within the wait limit → `ci_not_observed`, the issue stays open. |
-| 17 closeout | M | Only after `main` CI of the squash commit is green (step 16), close the unit issue `completed`; a red `main` CI or `ci_not_observed` leaves it open (DR-50); the status comment's final state is the evidence (gate summary, pull request and CI links, Run-Id). Delete the claim ref, run refs, the run branch and the integration clone. |
+| 17 closeout | M | Only after `main` CI of the squash commit is green (step 16), close the unit issue `completed`; a red `main` CI or `ci_not_observed` leaves it open (DR-50); the status comment's final state is the evidence (gate summary, pull request and CI links, Run-Id). Delete the claim ref, run refs, the run branch and the integration clone. On each pass, close `completed` every open `runnable: owner` unit issue that a commit on `main` references once `main` CI of that commit is green; a red `main` CI leaves it open. Then close `completed` every goal issue whose task-list units are all closed (DR-50). |
 | 18 ledger | M | Append the record (§8.5); run the escaped-defect scan (M3) and the footprint check (§6.4). |
 
 ### 7.4 Failure paths
@@ -1051,8 +1051,8 @@ Serves S3, S5. Built-in elements only (DR-31):
   issue itself (§7.3 step 17, §10.1, DR-50).
 - **Finding outside the unit**: a new issue in this format, never an untracked note (DR-50).
 - **Assignee**: the human owner of a decision; the engine never assigns itself.
-- **Goal → units**: task list `- [ ] #N` in the goal body. The engine closes the goal issue
-  `completed` when every unit of its task list is closed (DR-50).
+- **Goal → units**: task list `- [ ] #N` in the goal body. Closeout closes the goal issue
+  `completed` when every unit of its task list is closed (§7.3 step 17, DR-50).
 - No custom labels, fields or title prefixes. Normalisation strips prefixes such as `ST2`
   or `(P1)` and maps them to type and milestone.
 
@@ -1086,7 +1086,7 @@ markers; all other text may be in any language (DR-27).
 | Element | Code | Operation | Rule |
 |---|---|---|---|
 | `- kind:` | required | required | `code` or `operation`; missing or other → `role_unresolved` (DR-44). |
-| `- runnable:` | required | required | `agent` allows dispatch. `owner` marks human work: never dispatched; the engine posts an owner brief. The owner's pull request carries `Refs #<n>`, never a closing keyword. The engine closes an owner unit issue `completed` once a commit that references it is on `main` and `main` CI of that commit is green; a red `main` CI leaves it open (DR-50). A harness or model name as the worker is refused; routing is by capability (DR-6). |
+| `- runnable:` | required | required | `agent` allows dispatch. `owner` marks human work: never dispatched; the engine posts an owner brief. The owner's pull request carries `Refs #<n>`, never a closing keyword. Closeout closes the owner unit issue (§7.3 step 17). A harness or model name as the worker is refused; routing is by capability (DR-6). |
 | `- test-exempt:` | required when not a behaviour unit, else absent | absent | One line: why the unit has no behaviour to test (DR-45). |
 | `## Goal` | required | required | One sentence: an imperative, or what is true when the unit is done. |
 | `## Files` | required | — | `- <path>` or `- <path> (new)`, optionally followed by one parenthesised note. DR-11; plain paths must exist, `(new)` paths must not. A tracked test file that contains a backticked identifier of `## Steps` and is not listed → `scope_outside_files`, naming each path. |
@@ -1930,7 +1930,7 @@ no run made it: the `Run-Id` check (Q17, unit 1.29) lists a commit that referenc
 
 Gate 3: M1 ≥ 70 % over the last 20 units; M3 = 0 in the window; M6 = 0; M7 within ceilings; a
 security fixture finding is reproduced by the engine; a UI fixture without a runner records
-`not_measured: ux`; the owner has decided code signing (Q7) and closed unit 3.10.
+`not_measured: ux`; the owner has decided code signing (Q7), and unit 3.10 is closed.
 
 ### Phase 4 — Operation units
 
