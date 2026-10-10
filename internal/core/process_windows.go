@@ -14,6 +14,7 @@ import (
 const (
 	createSuspended          = 0x00000004 // CREATE_SUSPENDED
 	processSetQuota          = 0x0100     // PROCESS_SET_QUOTA
+	processQueryLimitedInfo  = 0x1000     // PROCESS_QUERY_LIMITED_INFORMATION
 	threadSuspendResume      = 0x0002     // THREAD_SUSPEND_RESUME
 	jobBasicAccountingInfo   = 1          // JobObjectBasicAccountingInformation
 	jobExtendedLimitInfo     = 9          // JobObjectExtendedLimitInformation
@@ -28,6 +29,7 @@ const (
 type kernel32 struct {
 	createJobObject           *syscall.LazyProc
 	assignProcessToJobObject  *syscall.LazyProc
+	isProcessInJob            *syscall.LazyProc
 	terminateJobObject        *syscall.LazyProc
 	queryInformationJobObject *syscall.LazyProc
 	setInformationJobObject   *syscall.LazyProc
@@ -43,6 +45,7 @@ func loadKernel32() (kernel32, error) {
 	k := kernel32{
 		createJobObject:           dll.NewProc("CreateJobObjectW"),
 		assignProcessToJobObject:  dll.NewProc("AssignProcessToJobObject"),
+		isProcessInJob:            dll.NewProc("IsProcessInJob"),
 		terminateJobObject:        dll.NewProc("TerminateJobObject"),
 		queryInformationJobObject: dll.NewProc("QueryInformationJobObject"),
 		setInformationJobObject:   dll.NewProc("SetInformationJobObject"),
@@ -54,7 +57,7 @@ func loadKernel32() (kernel32, error) {
 	}
 	// Find each procedure now, because Call on a missing one panics.
 	for _, p := range []*syscall.LazyProc{
-		k.createJobObject, k.assignProcessToJobObject, k.terminateJobObject,
+		k.createJobObject, k.assignProcessToJobObject, k.isProcessInJob, k.terminateJobObject,
 		k.queryInformationJobObject, k.setInformationJobObject, k.thread32First, k.thread32Next, k.openThread,
 		k.resumeThread, k.getSystemDirectory,
 	} {
@@ -109,8 +112,10 @@ type jobExtendedLimit struct {
 type tree struct {
 	k   kernel32
 	job syscall.Handle // 0 once released
-	// steps records each start step that took effect, in order: create_suspended, assign_job,
-	// resume (U22).
+	// steps records each start step that took effect, in order (U22): create_suspended when the
+	// tree is made, assign_job once the job answers that it holds the child, resume once a thread
+	// of the child is resumed. The call that sees an effect records it, so a resume that runs before
+	// the job holds the child is refused, not recorded in the wrong place.
 	steps []string
 }
 
@@ -181,24 +186,20 @@ func launcherCandidate(path, dir string) string {
 	return filepath.Join(dir, path)
 }
 
-// attach assigns the suspended child to the job, then resumes it.
+// attach assigns the suspended child to the job, then resumes it once the job reports that it
+// holds the child.
 func (t *tree) attach(p *os.Process) error {
 	pid := uint32(p.Pid) // a Windows process id is a DWORD
-	h, err := syscall.OpenProcess(processSetQuota|syscall.PROCESS_TERMINATE, false, pid)
+	h, err := syscall.OpenProcess(processSetQuota|processQueryLimitedInfo|syscall.PROCESS_TERMINATE, false, pid)
 	if err != nil {
 		return fmt.Errorf("open process %d: %w", pid, err)
 	}
+	defer func() { _ = syscall.CloseHandle(h) }() // the job holds the process; h only checks and ends it
 	ok, _, callErr := t.k.assignProcessToJobObject.Call(uintptr(t.job), uintptr(h))
-	_ = syscall.CloseHandle(h) // the job holds the process from here on
 	if ok == 0 {
 		return fmt.Errorf("assign process %d to its job: %w", pid, callErr)
 	}
-	t.steps = append(t.steps, "assign_job")
-	if err := t.k.resumeProcess(pid); err != nil {
-		return err
-	}
-	t.steps = append(t.steps, "resume")
-	return nil
+	return t.resumeProcess(h, pid)
 }
 
 // stop terminates the job and waits for it to be empty. Windows has no ask a console-less child
@@ -238,8 +239,13 @@ func (t *tree) release() {
 	}
 }
 
-// resumeProcess resumes every thread of a process started suspended.
-func (k kernel32) resumeProcess(pid uint32) error {
+// resumeProcess resumes every thread of a process started suspended, after the job has answered
+// that it holds the process (h is a handle to it). The check is here, ahead of the first thread to
+// run, so no call can resume the process without it (U22).
+func (t *tree) resumeProcess(h syscall.Handle, pid uint32) error {
+	if err := t.requireInJob(h, pid); err != nil {
+		return err
+	}
 	snap, err := syscall.CreateToolhelp32Snapshot(syscall.TH32CS_SNAPTHREAD, 0)
 	if err != nil {
 		return fmt.Errorf("snapshot threads: %w", err)
@@ -247,12 +253,12 @@ func (k kernel32) resumeProcess(pid uint32) error {
 	defer func() { _ = syscall.CloseHandle(snap) }() // a read-only snapshot
 	entry := threadEntry{size: uint32(unsafe.Sizeof(threadEntry{}))}
 	resumed := 0
-	more, _, callErr := k.thread32First.Call(uintptr(snap), uintptr(unsafe.Pointer(&entry)))
-	for ; more != 0; more, _, callErr = k.thread32Next.Call(uintptr(snap), uintptr(unsafe.Pointer(&entry))) {
+	more, _, callErr := t.k.thread32First.Call(uintptr(snap), uintptr(unsafe.Pointer(&entry)))
+	for ; more != 0; more, _, callErr = t.k.thread32Next.Call(uintptr(snap), uintptr(unsafe.Pointer(&entry))) {
 		if entry.ownerProcessID != pid {
 			continue
 		}
-		if err := k.resumeThreadByID(entry.threadID); err != nil {
+		if err := t.k.resumeThreadByID(entry.threadID); err != nil {
 			return err
 		}
 		resumed++
@@ -263,7 +269,29 @@ func (k kernel32) resumeProcess(pid uint32) error {
 	if resumed == 0 {
 		return fmt.Errorf("process %d has no thread to resume", pid)
 	}
+	t.steps = append(t.steps, "resume")
 	return nil
+}
+
+// requireInJob asks the job whether it holds the suspended process of h, and records assign_job
+// only from a true answer. When the question fails or the answer is false, it terminates the
+// process, which has run nothing yet, and returns an error: the process is never resumed outside
+// the tree (U22).
+func (t *tree) requireInJob(h syscall.Handle, pid uint32) error {
+	var in int32 // a BOOL: IsProcessInJob writes four bytes
+	ok, _, callErr := t.k.isProcessInJob.Call(uintptr(h), uintptr(t.job), uintptr(unsafe.Pointer(&in)))
+	if ok != 0 && in != 0 {
+		t.steps = append(t.steps, "assign_job")
+		return nil
+	}
+	cause := fmt.Errorf("process %d is not in its job", pid)
+	if ok == 0 {
+		cause = fmt.Errorf("ask the job whether it holds process %d: %w", pid, callErr)
+	}
+	if err := syscall.TerminateProcess(h, jobStoppedExitCode); err != nil {
+		return errors.Join(cause, fmt.Errorf("terminate process %d: %w", pid, err))
+	}
+	return cause
 }
 
 func (k kernel32) resumeThreadByID(tid uint32) error {
