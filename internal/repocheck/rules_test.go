@@ -31,9 +31,11 @@ func rulesSpec() string {
 		"`LICENSE` (MIT) · `README.md` · `CONTRIBUTING.md` · `SECURITY.md` (private vulnerability",
 		"reporting) · `CODE_OF_CONDUCT.md` · `go.mod`, `go.sum` ·",
 		"`gate.json` (§12.2) · `.golangci.yml`, `.custom-gcl.yml` (§12.2) · `.goreleaser.yaml` (§12.3) ·",
-		"`.githooks/commit-msg` · `.github/dependabot.yml` ·",
+		"`.githooks/commit-msg` · `.gitattributes` (LF in every checkout, DR-27) · `.gitignore` (`/dist/`,",
+		"the release output, §12.3) · `.github/dependabot.yml` (ecosystems `gomod` and `github-actions`) ·",
 		"`.github/workflows/ci.yml` (the only workflow).",
-		"No issue form and no pull-request template: `CONTRIBUTING.md` names `zentra unit template`.",
+		"No issue form and no pull-request template: `CONTRIBUTING.md` names `zentra unit template`",
+		"and `git config core.hooksPath .githooks`.",
 		"No `CHANGELOG.md`: release notes live on each GitHub Release (§12.3).",
 		"",
 		"### 12.2 Gate, tool chain and CI",
@@ -60,7 +62,8 @@ func rulesRepoFiles() []string {
 	return []string{
 		"LICENSE", "README.md", "CONTRIBUTING.md", "SECURITY.md", "CODE_OF_CONDUCT.md",
 		"go.mod", "go.sum", "gate.json", ".golangci.yml", ".custom-gcl.yml", ".goreleaser.yaml",
-		".githooks/commit-msg", ".github/dependabot.yml", ".github/workflows/ci.yml",
+		".githooks/commit-msg", ".gitattributes", ".gitignore", ".github/dependabot.yml",
+		".github/workflows/ci.yml",
 	}
 }
 
@@ -143,7 +146,8 @@ func TestRules(t *testing.T) {
 
 	t.Run("every repository file of §12.1 present", func(t *testing.T) {
 		// Guards against reading every backticked name as a file: CHANGELOG.md is named only to
-		// say it does not exist, and the template command is not a file.
+		// say it does not exist, /dist/ is an ignore pattern, gomod is an ecosystem name, and the
+		// template and git config commands are not files.
 		repo := rulesRepo(t, nil)
 		if got := rulesFindings(t, repo, "missing_repo_file"); len(got) != 0 {
 			t.Fatalf("Rules missing_repo_file = %+v, want no finding", got)
