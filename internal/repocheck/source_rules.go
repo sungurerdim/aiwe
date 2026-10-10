@@ -31,12 +31,10 @@ const removeFile = "internal/core/remove.go"
 
 // Compiled patterns; the only package-level variables besides sentinel errors (SPEC §5.4).
 var (
-	// machinePathPattern matches a drive-letter path or a Linux or macOS home directory.
-	machinePathPattern = regexp.MustCompile(`(?:^|[^A-Za-z0-9])[A-Za-z]:[\\/]|(?:^|[^A-Za-z0-9._-])/(?:home|Users)/[^/\s]`)
+	// machinePathPattern matches a drive-letter path or a Linux, Linux root or macOS home directory.
+	machinePathPattern = regexp.MustCompile(`(?:^|[^A-Za-z0-9])[A-Za-z]:[\\/]|(?:^|[^A-Za-z0-9._-])/(?:(?:home|Users)/[^/\s]|root(?:/|$))`)
 	// versionPattern matches a literal that is a whole semantic version, with or without a v.
 	versionPattern = regexp.MustCompile(`^v?[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$`)
-	// cmdMainPattern matches the main file of a binary, the one place of the build-injected version.
-	cmdMainPattern = regexp.MustCompile(`^cmd/[^/]+/main\.go$`)
 )
 
 // SourceFile is one Go source file to check; Path is repository-relative and slash-separated.
@@ -104,7 +102,8 @@ func errorLine(err error) int {
 	return 0
 }
 
-// importNames maps each import's local name to its path.
+// importNames maps each import's local name to its path; a dot import is keyed "." + path, so
+// several dot imports never overwrite each other.
 func importNames(file *ast.File) map[string]string {
 	names := map[string]string{}
 	for _, imp := range file.Imports {
@@ -115,6 +114,9 @@ func importNames(file *ast.File) map[string]string {
 		name := path.Base(p)
 		if imp.Name != nil {
 			name = imp.Name.Name
+		}
+		if name == "." {
+			name += p
 		}
 		names[name] = p
 	}
@@ -170,6 +172,7 @@ func asciiLower(s string) string {
 }
 
 // checkLiterals runs the literal rules on every string literal except import paths.
+// Comments are not scanned: Go doc and the module path legitimately carry the product name.
 func (c *sourceChecker) checkLiterals(file *ast.File) {
 	var rules []literalRule
 	for _, r := range literalRules() {
@@ -203,17 +206,31 @@ func (c *sourceChecker) checkLiteral(lit *ast.BasicLit, rules []literalRule) {
 	}
 }
 
-// checkRemovals flags every use of os.RemoveAll, called or taken as a value, outside removeFile.
+// checkRemovals flags every use of os.RemoveAll, called or taken as a value, outside removeFile;
+// with `import . "os"` a bare RemoveAll counts too.
 func (c *sourceChecker) checkRemovals(file *ast.File) {
 	if c.path == removeFile {
 		return
 	}
-	ast.Inspect(file, func(n ast.Node) bool {
-		if sel, ok := n.(*ast.SelectorExpr); ok && c.isPkgSel(sel, "os", "RemoveAll") {
-			c.add(ruleRecursiveRemoval, sel.Pos())
+	ast.Inspect(file, c.visitRemoval)
+}
+
+// visitRemoval flags n when it names os.RemoveAll; the selected name of a selector is never a
+// bare identifier, so x.RemoveAll of another package stays unflagged.
+func (c *sourceChecker) visitRemoval(n ast.Node) bool {
+	switch n := n.(type) {
+	case *ast.SelectorExpr:
+		if c.isPkgSel(n, "os", "RemoveAll") {
+			c.add(ruleRecursiveRemoval, n.Pos())
 		}
-		return true
-	})
+		ast.Inspect(n.X, c.visitRemoval)
+		return false
+	case *ast.Ident:
+		if n.Name == "RemoveAll" && c.imports[".os"] == "os" {
+			c.add(ruleRecursiveRemoval, n.Pos())
+		}
+	}
+	return true
 }
 
 // checkPackageVars flags every package-level variable that is not an allowed form (SPEC §5.4).
@@ -238,7 +255,7 @@ func (c *sourceChecker) checkVarSpec(vs *ast.ValueSpec) {
 }
 
 // allowedVar reports whether name i of vs is a sentinel error, a compiled pattern or the
-// build-injected `var version string` of a cmd main.go.
+// build-injected `var version string` of the product's own cmd/<product>/main.go.
 func (c *sourceChecker) allowedVar(vs *ast.ValueSpec, i int) bool {
 	if len(vs.Values) == 0 {
 		return c.isVersionVar(vs.Names[i], vs.Type)
@@ -248,7 +265,7 @@ func (c *sourceChecker) allowedVar(vs *ast.ValueSpec, i int) bool {
 
 func (c *sourceChecker) isVersionVar(name *ast.Ident, typ ast.Expr) bool {
 	t, ok := typ.(*ast.Ident)
-	return ok && t.Name == "string" && name.Name == "version" && cmdMainPattern.MatchString(c.path)
+	return ok && t.Name == "string" && name.Name == "version" && c.path == "cmd/"+c.cfg.Product+"/main.go"
 }
 
 // allowedInits are the calls whose result may be held in a package-level variable.
