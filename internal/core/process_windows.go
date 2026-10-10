@@ -109,6 +109,9 @@ type jobExtendedLimit struct {
 type tree struct {
 	k   kernel32
 	job syscall.Handle // 0 once released
+	// steps records each start step that took effect, in order: create_suspended, assign_job,
+	// resume (U22).
+	steps []string
 }
 
 // newTree creates the job and sets the child to start suspended, so it joins the job before it
@@ -120,28 +123,16 @@ func newTree(cmd *exec.Cmd) (tree, error) {
 	if err != nil {
 		return tree{}, err
 	}
-	if err := checkLauncherPath(cmd.Path); err != nil {
-		return tree{}, err
-	}
 	attr := &syscall.SysProcAttr{CreationFlags: createSuspended}
-	if isBatchLauncher(cmd.Path) {
-		shell, err := k.commandShell()
-		if err != nil {
-			return tree{}, err
-		}
-		line, err := batchCommandLine(shell, cmd.Path, cmd.Args[1:])
-		if err != nil {
-			return tree{}, err
-		}
-		cmd.Path = shell
-		attr.CmdLine = line
+	if err := k.prepareLauncher(cmd, attr); err != nil {
+		return tree{}, err
 	}
 	cmd.SysProcAttr = attr
 	job, _, callErr := k.createJobObject.Call(0, 0)
 	if job == 0 {
 		return tree{}, fmt.Errorf("create job object: %w", callErr)
 	}
-	t := tree{k: k, job: syscall.Handle(job)}
+	t := tree{k: k, job: syscall.Handle(job), steps: []string{"create_suspended"}}
 	limit := jobExtendedLimit{limitFlags: jobLimitKillOnJobClose}
 	ok, _, callErr := k.setInformationJobObject.Call(job, jobExtendedLimitInfo,
 		uintptr(unsafe.Pointer(&limit)), unsafe.Sizeof(limit))
@@ -150,6 +141,44 @@ func newTree(cmd *exec.Cmd) (tree, error) {
 		return tree{}, fmt.Errorf("set the job to kill its processes on close: %w", callErr)
 	}
 	return t, nil
+}
+
+// prepareLauncher resolves the program of cmd to the file Start runs, so the batch decision is
+// made on that file and not on the name as given: Go adds a PATHEXT extension, so "solo" may run
+// solo.cmd through cmd.exe. A batch file is set to run through cmd.exe with a command line built
+// here (SPEC §5.20). A name that resolves to no file is refused.
+func (k kernel32) prepareLauncher(cmd *exec.Cmd, attr *syscall.SysProcAttr) error {
+	if err := checkLauncherPath(cmd.Path); err != nil {
+		return err
+	}
+	path, err := exec.LookPath(launcherCandidate(cmd.Path, cmd.Dir))
+	if err != nil {
+		return fmt.Errorf("resolve program %q: %w", cmd.Path, err)
+	}
+	cmd.Path = path // Start runs the file the decision below is made on
+	if !isBatchLauncher(path) {
+		return nil
+	}
+	shell, err := k.commandShell()
+	if err != nil {
+		return err
+	}
+	line, err := batchCommandLine(shell, path, cmd.Args[1:])
+	if err != nil {
+		return err
+	}
+	cmd.Path = shell
+	attr.CmdLine = line
+	return nil
+}
+
+// launcherCandidate joins a relative program path to dir, as Start does, so it names the file
+// Start would run. A path with a volume or a leading separator is used as given.
+func launcherCandidate(path, dir string) string {
+	if dir == "" || filepath.VolumeName(path) != "" || (path != "" && os.IsPathSeparator(path[0])) {
+		return path
+	}
+	return filepath.Join(dir, path)
 }
 
 // attach assigns the suspended child to the job, then resumes it.
@@ -164,7 +193,12 @@ func (t *tree) attach(p *os.Process) error {
 	if ok == 0 {
 		return fmt.Errorf("assign process %d to its job: %w", pid, callErr)
 	}
-	return t.k.resumeProcess(pid)
+	t.steps = append(t.steps, "assign_job")
+	if err := t.k.resumeProcess(pid); err != nil {
+		return err
+	}
+	t.steps = append(t.steps, "resume")
+	return nil
 }
 
 // stop terminates the job and waits for it to be empty. Windows has no ask a console-less child
