@@ -51,7 +51,9 @@ func init() {
 
 // runProcessHelper is the body of a helper process. tree starts a leaf as its first action
 // (U22: a grandchild started before the child joins its job would escape), records both pids and
-// beats; orphan starts a leaf, waits for its first beat and exits 0, leaving it behind; term beats
+// beats; orphan starts a leaf, waits for its first beat and exits 0, leaving it behind; engine
+// starts a tree through core.Start, waits for its leaf to beat and exits 0 without stopping it;
+// term beats
 // until SIGTERM, records it and exits 0; leaf records its pid and beats; argv records the arguments
 // it received.
 func runProcessHelper(role string) int {
@@ -115,6 +117,28 @@ func runProcessHelper(role string) int {
 			return 11
 		}
 		beatProcessFile(filepath.Join(dir, "leaf.beat"))
+	case "engine":
+		// The engine starts a tree through core.Start and exits without stopping it; DR-15 says
+		// the tree does not outlive the engine.
+		child, err := core.Start(context.Background(), core.ChildSpec{
+			Argv: []string{os.Args[0]},
+			Dir:  dir,
+			Env:  processEnv(dir, "tree", false),
+		})
+		if err != nil {
+			return 17
+		}
+		_ = child // never stopped: the engine exits with the tree running
+		end := time.Now().Add(processBound)
+		for {
+			if _, ok := readProcessBeat(filepath.Join(dir, "leaf.beat")); ok {
+				return 0
+			}
+			if time.Now().After(end) {
+				return 15
+			}
+			time.Sleep(processBeatEvery)
+		}
 	case "argv":
 		data, err := json.Marshal(os.Args[1:])
 		if err != nil {
@@ -397,6 +421,96 @@ func TestProcessTree(t *testing.T) {
 			t.Errorf("launcher expanded %q to the environment value: program received %s", arg, data)
 		}
 	})
+
+	// U22: the child is created suspended, joins its job, and only then runs; any other order lets
+	// a grandchild started first thing run outside the job.
+	t.Run("the child joins its job while suspended and resumes after", func(t *testing.T) {
+		dir := t.TempDir()
+		child := startProcessChild(t, t.Context(), dir, "argv")
+		if err := waitProcessChild(t, child, processBound); err != nil {
+			t.Fatalf("Wait = %v, want nil", err)
+		}
+		const createSuspended = 0x00000004 // CREATE_SUSPENDED
+		if flags, ok := core.ChildCreationFlags(child); !ok || flags&createSuspended == 0 {
+			t.Errorf("creation flags = %#x (known %v), want CREATE_SUSPENDED set", flags, ok)
+		}
+		want := []string{"create_suspended", "assign_job", "resume"}
+		if got := core.TreeSteps(child); !slices.Equal(got, want) {
+			t.Errorf("start steps = %q, want %q", got, want)
+		}
+	})
+
+	// DR-15: the job kills what it holds when its last handle closes, so a tree never outlives an
+	// engine that exits, or crashes, without stopping it. The test starts the engine in a tree of
+	// its own, so cleanup still ends a leaf that escaped.
+	t.Run("a tree does not outlive the engine that started it", func(t *testing.T) {
+		dir := t.TempDir()
+		engine := startProcessChild(t, t.Context(), dir, "engine")
+		if err := waitProcessChild(t, engine, processBound); err != nil {
+			t.Fatalf("engine Wait = %v, want nil: the engine did not see its tree run", err)
+		}
+		readProcessPids(t, dir)
+		requireProcessBeatsStoppedWithin(t, 3*time.Second,
+			filepath.Join(dir, "child.beat"), filepath.Join(dir, "leaf.beat"))
+	})
+
+	// Go finds a program path without an extension through PATHEXT, so "solo" runs solo.cmd through
+	// cmd.exe; a check of the path as given takes it for a program and quotes the arguments for
+	// CommandLineToArgvW, which cmd.exe does not honour.
+	t.Run("an extensionless batch launcher argument arrives intact or is refused", func(t *testing.T) {
+		const arg = `x" & type nul > MARK & "`
+		tests := []struct {
+			name  string
+			argv0 func(dir string) string
+		}{
+			{"absolute path", func(dir string) string { return filepath.Join(dir, "solo") }},
+			{"relative path", func(string) string { return `.\solo` }},
+			{"extended-length path", func(dir string) string { return `\\?\` + filepath.Join(dir, "solo") }},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				dir := t.TempDir()
+				body := "@\"" + os.Args[0] + "\" %*\r\n"
+				if err := os.WriteFile(filepath.Join(dir, "solo.cmd"), []byte(body), 0o600); err != nil {
+					t.Fatalf("write launcher: %v", err)
+				}
+				argv0 := tt.argv0(dir)
+				mark := filepath.Join(dir, "MARK") // cmd.exe runs in dir
+				ctx, cancel := context.WithTimeout(t.Context(), processBound)
+				defer cancel()
+				child, err := core.Start(ctx, core.ChildSpec{
+					Argv: []string{argv0, arg},
+					Dir:  dir,
+					Env:  processEnv(dir, "argv", false),
+				})
+				if err != nil {
+					if _, statErr := os.Stat(filepath.Join(dir, "argv.json")); statErr == nil {
+						t.Errorf("Start(%q) refused %q with %v, but the launcher ran", argv0, arg, err)
+					}
+					return
+				}
+				t.Cleanup(func() { _ = child.StopTree(200 * time.Millisecond) }) // best effort
+				waitErr := waitProcessChild(t, child, processBound)
+				if _, err := os.Stat(mark); err == nil {
+					t.Errorf("Start(%q): argument %q ran as a command: %s exists", argv0, arg, mark)
+				}
+				if waitErr != nil {
+					t.Fatalf("launcher %q with %q: Wait = %v, want nil", argv0, arg, waitErr)
+				}
+				data, err := os.ReadFile(filepath.Join(dir, "argv.json"))
+				if err != nil {
+					t.Fatalf("launcher %q with %q did not reach the program: %v", argv0, arg, err)
+				}
+				var got []string
+				if err := json.Unmarshal(data, &got); err != nil {
+					t.Fatalf("argv record %q: %v", data, err)
+				}
+				if want := []string{arg}; !slices.Equal(got, want) {
+					t.Errorf("launcher %q passed %q, program received %q", argv0, want, got)
+				}
+			})
+		}
+	})
 }
 
 // writeProcessLauncher writes a batch launcher that hands every argument to the test binary.
@@ -563,7 +677,13 @@ func requireProcessTreeGone(t *testing.T, dir string) {
 // beat that stays the same, or stays absent, for processQuiet counts as stopped.
 func requireProcessBeatsStopped(t *testing.T, paths ...string) {
 	t.Helper()
-	end := time.Now().Add(processBound)
+	requireProcessBeatsStoppedWithin(t, processBound, paths...)
+}
+
+// requireProcessBeatsStoppedWithin is requireProcessBeatsStopped with its own bound.
+func requireProcessBeatsStoppedWithin(t *testing.T, bound time.Duration, paths ...string) {
+	t.Helper()
+	end := time.Now().Add(bound)
 	pending := paths
 	for {
 		before := make(map[string]string, len(pending))
@@ -582,7 +702,7 @@ func requireProcessBeatsStopped(t *testing.T, paths ...string) {
 		}
 		if time.Now().After(end) {
 			for _, p := range still {
-				t.Errorf("%s still beats %v after the stop: a process of the tree outlived it", p, processBound)
+				t.Errorf("%s still beats %v after the stop: a process of the tree outlived it", p, bound)
 			}
 			return
 		}
