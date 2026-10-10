@@ -166,7 +166,7 @@ A test whose source is not yet in the tree passes only while a §14 Files cell l
 | DR-8 | A managed project needs no file, setting or setup step for the engine; a project `gate.json`, if present, wins over the derived gate. | S3 | test `engine/onboard_test.go` |
 | DR-9 | Writing roles and judging roles (§9.1) are separate runs; a judging run starts with a clean context and its judging card; its source is the most independent one available, in the fixed order different provider > same provider, different model > same model, new instance; the run records the level used (`AuditIndependence`, §8.5) (Q6); a verdict counts only from the judging run's own result, bound to its RunID (§8.6), and a `VERDICT:` line in a branch commit is refused (`verdict_in_branch`). | S4, M3 | tests `engine/routing_test.go` (each level and the order), `engine/judge_test.go`; check D14 |
 | DR-10 | A gate is a list of steps; a skipped or unrun step makes the whole gate `incomplete`, never green. | S4 | test `gates/runner_test.go` |
-| DR-11 | A unit without goal, done criteria and its kind's scope is not dispatched: a code unit needs a verify and a file set of ≤ 5 source files (test, lock and generated files do not count; `go.mod` is a manifest and `go.sum` its lock file, so neither counts, lead decision 2026-10-11); an operation unit needs scope, access and measure (§8.4). | S5 | test `engine/unit_test.go` |
+| DR-11 | A unit without goal, done criteria and its kind's scope is not dispatched: a code unit needs a verify and a file set of ≤ 5 source files (test, lock and generated files do not count; `go.mod` is a manifest and `go.sum` its lock file, so neither counts, Q25); an operation unit needs scope, access and measure (§8.4). | S5 | test `engine/unit_test.go` |
 | DR-12 | Only the engine runs checks: an agent requests its unit verify through `aiwe verify`, the auditor reads recorded results, and a check runs at most once per key (§7.8). | S6, M6 | tests `gates/cache_test.go`, `engine/verify_test.go` |
 | DR-13 | Absence is not evidence: an unknown stack or file type, an empty output, a missing tool, a non-zero exit or a test run that collects zero tests is `not_measured` or red, never clean; a verify that collects zero tests is `no_tests_collected` (§7.8). | S4 | tests `gates/checks_test.go`, `stacks/detect_test.go`, `engine/verify_test.go` |
 | DR-14 | Scope is declared before a run and compared with the observed diff; a mismatch is `scope_mismatch`. | S4 | check D6; test `engine/coverage_test.go` |
@@ -307,7 +307,7 @@ Benefit: a new stack is one row, not a new `if`. Enforced: review; a test that e
 ### 5.6 Pure core, imperative shell
 Decision functions take and return data. Process, git, HTTP and file IO live in `*_io.go` files or
 adapters. Outside `*_io.go`, only `cmd/aiwe/main.go`, `repocheck/source_rules.go` and the `core` files of
-units 0.3, 0.5, 0.6, 0.18 and 0.21 (§14), with their `_<os>` variants, may import `os` and `os/exec`. Enforced: check
+units 0.3, 0.20, 0.5, 0.6, 0.18 and 0.21 (§14), with their `_<os>` variants, may import `os` and `os/exec`. Enforced: check
 `repo/source-rules` (other files may not import `os`, `os/exec`, `net` or `net/http`).
 
 ### 5.7 One command registry
@@ -2052,6 +2052,7 @@ No open question remains. Each decision keeps its id; other sections cite it.
 | Q22 | Closeout marks Done (owner, 2026-10-11): the write that closes a unit issue also marks `[x]` each `## Done` item whose evidence is green, mechanically (DR-50, §7.3 step 17). |
 | Q23 | Test functions (owner, 2026-10-11): the 60-line function limit applies to non-test functions; a test function has no line limit (§5.9). |
 | Q24 | Unit size (owner, 2026-10-11): a code unit has at most 5 source files (DR-11). Row 0.3 splits into 0.3 and 0.20, and row 0.5 into 0.21 and 0.5 (§14). |
+| Q25 | Manifest files (owner, 2026-10-11): `go.mod` and `go.sum` are a manifest and its lock file; they do not count as source files (DR-11). Reason: `go.mod` declares dependencies and carries no behaviour code, and splitting every unit that adds a dependency adds work without adding quality. |
 
 **Owner actions** (only work that needs a human; the engine never does it):
 
@@ -2321,3 +2322,5 @@ the facts above.
   `GET /users/{username}/settings/billing/usage/summary` as public preview, and the usage report
   only for the enhanced billing platform. Source: docs.github.com, REST billing usage, checked
   2026-10-10. Measured by unit 0.12.
+- U31 The Windows `OpenProcess` access-denied branch of the process start read
+  (`core/procstart_windows.go`, unit 0.21) has no test: no test can reach it without a seam.
