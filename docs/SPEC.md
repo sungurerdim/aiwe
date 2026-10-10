@@ -759,11 +759,14 @@ A **red signature** = step id + sorted failing test ids (when the runner reports
 | Run over its run limit, or silent past its silence limit (both below) | `timed_out`, `stalled` | Stop the tree (DR-15); evidence per DR-38; counts as an attempt. |
 | Observed model differs from the requested one | `model_mismatch` | Red; the unit is requeued on another source; not charged. |
 | Source account restricted | `account_restricted` | Source → `restricted` (§7.6); the run returns to the queue; not charged; owner brief. |
+| No active source can serve a role | `no_capacity` | The unit waits; other roles continue (§7.6, §7.9). |
 | git missing or too old at start | `git_missing`, `git_too_old` | Exit 1 with the next action (§6.2). |
 | Rebase or merge conflict at integration | `conflict` | A resolution run on the same run branch, rebased onto the working-branch tip; the prompt names the conflicted files. Two failed resolutions → `skipped`, requeued (Q11). |
 | Three failures on one unit | `quarantined` | Stop offering the unit; label `help wanted`. |
 | First 5 units of a goal (default) have M1 < 70 % | `goal_paused` | Stop dispatching the goal's units; owner brief on the goal; label `question`. |
 | A revert pull request's CI is red after a red `main` CI (§7.3 step 16) | `revert_red` | Stop the queue: no unit is dispatched or merged; owner brief (§8.4). |
+| No CI run of a pull request head or of the squash commit observed within the wait limit | `ci_not_observed` | Never green; after the squash merge the unit issue stays open (§7.3 steps 15–17). |
+| A merge refused a second time because `main` moved | `push_rejected` | Batch requeued (§7.3 step 16). |
 | Run process killed or lost | `lost` (§8.6) | Unit returns to the queue. The record closes with the time since `StartedAt`, marked as an upper bound, and the collected tip; never 0 ms. |
 | Ledger not writable | `ledger_unavailable` | No dispatch (fail-closed). |
 | Prompt over its cap | `prompt_too_large` | Label `invalid` with the measured size (§9.2). |
@@ -778,6 +781,7 @@ A **red signature** = step id + sorted failing test ids (when the runner reports
 | Owner stops a run | `stopped_by_owner` | Unit back in the queue; not charged (§6.3). |
 | A unit verify or test step collects zero tests | `no_tests_collected` | Red; a fix round (DR-13, §7.8). |
 | A branch commit carries a `VERDICT:` line | `verdict_in_branch` | Refused; the verdict comes only from the judging run (DR-9). |
+| A RED verdict cites a `path:line` or identifier that does not resolve on the tip | `unverified_finding` | Sent to a new auditor run, never to the writer (§7.3 step 12). |
 | A unit commit is marked breaking (`!` or `BREAKING CHANGE`) | `breaking_change` | Not integrated; label `question`; owner brief; the owner answers with the terminal-only `aiwe unit approve-breaking` (§12.3). |
 | An approval expired, or the before-state changed since approval | `approval_expired`, `before_state_changed` | Not applied; a new plan check and approval (§7.9). |
 | A terminal-only command runs without a terminal | `not_a_terminal` | Refused (§5.7). |
