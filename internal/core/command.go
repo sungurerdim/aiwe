@@ -1,0 +1,63 @@
+package core
+
+import (
+	"context"
+	"errors"
+	"fmt"
+)
+
+// Sentinel errors of the parameter dictionary check.
+var (
+	ErrParamDuplicate  = errors.New("param_duplicate")
+	ErrParamUndeclared = errors.New("param_undeclared")
+)
+
+// ParamDef defines one parameter name and its one meaning across all commands.
+type ParamDef struct {
+	Name    string
+	Meaning string
+}
+
+// Input holds the parameter values of one command call, keyed by parameter name.
+type Input struct {
+	Params map[string]string
+}
+
+// Command is one entry of the command registry; every surface is built from it.
+type Command struct {
+	Module string
+	Object string
+	Verb   string
+	Params []string
+	Run    func(ctx context.Context, in Input) (Result[any], error)
+}
+
+// Dictionary returns the one parameter dictionary: one name, one meaning, everywhere.
+func Dictionary() []ParamDef {
+	return []ParamDef{
+		{Name: "format", Meaning: "output format of the result envelope: text or json"},
+	}
+}
+
+// CheckParams refuses a dictionary that defines a name twice or without a meaning, and a command
+// that uses a name the dictionary does not define.
+func CheckParams(dict []ParamDef, cmds []Command) error {
+	defined := make(map[string]bool, len(dict))
+	for _, p := range dict {
+		if defined[p.Name] {
+			return fmt.Errorf("parameter %q: %w", p.Name, ErrParamDuplicate)
+		}
+		defined[p.Name] = true
+		if p.Name == "" || p.Meaning == "" {
+			return fmt.Errorf("parameter %q has no meaning: %w", p.Name, ErrParamUndeclared)
+		}
+	}
+	for _, c := range cmds {
+		for _, name := range c.Params {
+			if !defined[name] {
+				return fmt.Errorf("command %s %s-%s parameter %q: %w", c.Module, c.Object, c.Verb, name, ErrParamUndeclared)
+			}
+		}
+	}
+	return nil
+}
