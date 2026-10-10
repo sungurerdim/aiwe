@@ -205,7 +205,7 @@ A test whose source is not yet in the tree passes only while a §14 Files cell l
 | DR-47 | Every engine diff is `git diff <base>...<tip>` from the run's base commit, so a base that advances during the run changes nothing; a D-check reports only lines of that diff, and a flagged line byte-identical on the base is `pre_existing`, never red; a unit line that counts from `HEAD~<n>` or `HEAD^` is refused. | S4, M3 | tests `engine/coverage_test.go`, `gates/checks_test.go`, `engine/unit_test.go` |
 | DR-48 | Every run starts through a sandbox adapter, and the run record names the level used; a live operation unit needs level `os-sandbox` (§6.7, Q19). | S4 | tests `core/sandbox_test.go`, `engine/clone_test.go`, `engine/operation_test.go` |
 | DR-49 | Every git call of the engine runs with repository-configured programs off, so a run clone's `.git/config` cannot make the engine run code (§5.21). | S4 | tests `core/git_test.go`, `engine/residue_test.go` |
-| DR-50 | Every done, planned or discovered piece of work is an issue in the §8.4 format before work starts, and issues are the single source of truth for work (DR-30); a merged pull request closes each issue it resolves through a closing keyword (`Closes #<n>`), and the engine closes the rest at closeout (§7.3 step 17). | S5 | §7.3 steps 14 and 17; CI flags a unit commit on `main` without a `Run-Id` trailer (unit 1.29); judgement: auditor (a finding outside the unit is a new issue) |
+| DR-50 | Every done, planned or discovered piece of work is an issue in the §8.4 format before work starts, and issues are the single source of truth for work (DR-30); the engine closes a unit issue at closeout, only after `main` CI of its squash commit is green (§7.3 step 17), and closes a goal issue and a milestone by the rules of §8.4. | S5 | intake and `aiwe unit check` (§7.3 step 1, §8.4: only an issue in the §8.4 format is dispatched); closeout (§7.3 step 17); judgement: auditor (a finding outside the unit is a new issue) |
 
 ---
 
@@ -737,10 +737,10 @@ parser (§8.4) validates every unit before work starts.
 | 11 mutation | M | Mutation run on changed lines where the profile names a tool; else `not_measured`. Evidence only (§11). |
 | 12 audit | J | `auditor` (DR-9) compares done criteria with the diff, using only engine-made evidence (§9.2). `security-reviewer` and `ux-reviewer` run beside it when their path tables match (§9.1). Each verdict comes from the judging run's own result, bound to its RunID (DR-9); integration needs every verdict GREEN; a `not_measured` dimension is recorded in the status comment and the ledger. Before a RED verdict is acted on, the engine resolves every `path:line` and identifier it cites on the tip; an unresolved citation makes the verdict `unverified_finding`, sent to a new auditor run, never to the writer. |
 | 13 fix loop | J | Returned or red → engineer fix round, up to the fix-round limit (§7.4), then `quarantined`. A repeated red signature calls the `debugger` (§7.4). |
-| 14 integrate | M | DR-19 at pull-request level (Q21). The engine pushes the run branch and opens one pull request per unit through the tracker port: title = the unit's Conventional Commit subject, body carries `Closes #<n>` for the unit issue (§8.4) and ends with the `Run-Id` trailer. A batch = several unit pull requests, gated together in a temporary integration clone of the working branch tip. A unit commit marked breaking waits for the owner (§12.3). Batch states: `queued → running → splitting → merged \| removed`. A red batch splits in halves until each red pull request is isolated; a removed one stays open with its reason in a comment and returns as a fix round. A conflict follows §7.4. |
+| 14 integrate | M | DR-19 at pull-request level (Q21). The engine pushes the run branch and opens one pull request per unit through the tracker port: title = the unit's Conventional Commit subject, body carries `Refs #<n>` for the unit issue (§8.4) and ends with the `Run-Id` trailer. A batch = several unit pull requests, gated together in a temporary integration clone of the working branch tip. A unit commit marked breaking waits for the owner (§12.3). Batch states: `queued → running → splitting → merged \| removed`. A red batch splits in halves until each red pull request is isolated; a removed one stays open with its reason in a comment and returns as a fix round. A conflict follows §7.4. |
 | 15 pull request CI | M | Wait for the CI run of each pull request head through the tracker port. Red → the pull request stays open with its reason; the unit returns as a fix round. No run observed within the wait limit → `ci_not_observed`: never green. |
 | 16 merge and main CI | M | Green CI and head = `AuditedTip` → the engine squash-merges the pull request through the tracker port, giving the head SHA, so a moved head is refused (`unaudited_commits`). The canonical repository's checked-out branch is never a push target. A merge refused because `main` moved rebuilds the batch on the new tip once; a second → `push_rejected`, batch requeued. The engine then waits for the CI run of the squash commit on `main`, which also feeds the release job (§12.3): red → the engine opens a revert pull request for the squash commit through the tracker port, never a direct push, because the `main` ruleset refuses a change without a pull request (§16, Q21); it squash-merges the revert pull request once that pull request's CI is green, then requeues the unit as a fix round; a red revert pull request CI → `revert_red` (§7.4); none within the wait limit → `ci_not_observed`, the issue stays open. |
-| 17 closeout | M | Close the unit issue `completed` if the merge did not close it, and every other issue the unit resolved (DR-50); the status comment's final state is the evidence (gate summary, pull request and CI links, Run-Id). Delete the claim ref, run refs, the run branch and the integration clone. |
+| 17 closeout | M | Only after `main` CI of the squash commit is green (step 16), close the unit issue `completed`; a red `main` CI or `ci_not_observed` leaves it open (DR-50); the status comment's final state is the evidence (gate summary, pull request and CI links, Run-Id). Delete the claim ref, run refs, the run branch and the integration clone. |
 | 18 ledger | M | Append the record (§8.5); run the escaped-defect scan (M3) and the footprint check (§6.4). |
 
 ### 7.4 Failure paths
@@ -1047,10 +1047,12 @@ Serves S3, S5. Built-in elements only (DR-31):
   red**: `help wanted`.
 - **Close reason**: `completed`, `not_planned`, `duplicate` (fact, §17).
 - **Pull request**: one per unit, opened and squash-merged by the engine (§7.3 steps 14–16, Q21).
-  Its body carries `Closes #<n>` for its unit issue (DR-50).
+  Its body carries `Refs #<n>` for its unit issue, never a closing keyword: the engine closes the
+  issue itself (§7.3 step 17, §10.1, DR-50).
 - **Finding outside the unit**: a new issue in this format, never an untracked note (DR-50).
 - **Assignee**: the human owner of a decision; the engine never assigns itself.
-- **Goal → units**: task list `- [ ] #N` in the goal body.
+- **Goal → units**: task list `- [ ] #N` in the goal body. The engine closes the goal issue
+  `completed` when every unit of its task list is closed (DR-50).
 - No custom labels, fields or title prefixes. Normalisation strips prefixes such as `ST2`
   or `(P1)` and maps them to type and milestone.
 
@@ -1549,7 +1551,7 @@ a moved tag cannot change a step; Dependabot updates both); check `repo/ci-shape
 
 **Minutes source** for `changes` and `ci-report`. This month's used minutes per OS: REST
 `GET /users/{username}/settings/billing/usage/summary` with `product=actions`, field
-`grossQuantity` per SKU. The plan's included minutes: the §17 row for the plan name that
+`grossQuantity` per SKU. The plan's included minutes: the §17 fact "GitHub Actions on private repositories", for the plan name that
 `GET /user` returns in `plan.name`. A source that does not answer gives `unknown`, never `0`
 (DR-21), and the 70 % rule does not apply (U30).
 
@@ -1784,7 +1786,7 @@ so. From the self-hosting point on, every unit is dispatched through aiwe.
 | 1.4 | One check run per key: `aiwe verify` | the lead session runs each verify once and records it |
 | 1.9 | The unit template check: `aiwe unit check` | a generator and validator over the plan file |
 | 1.21 | The goal split: `aiwe plan` | the architect role in the lead session |
-| 1.25 | **Self-hosting point**: `aiwe work --repo .` dispatches every later unit | test-author, engineer and auditor as separate runs, started by the lead session; the lead session opens and squash-merges each unit pull request as §7.3 steps 14–16 do (Q21) |
+| 1.25 | **Self-hosting point**: `aiwe work --repo .` dispatches every later unit | test-author, engineer and auditor as separate runs, started by the lead session; the lead session opens and squash-merges each unit pull request with `Refs #<n>`, and closes the unit issue with an evidence comment once `main` CI is green, as §7.3 steps 14–17 do (Q21, DR-50) |
 
 Unit 1.29 is the first unit dispatched through aiwe. It makes hand work after the self-hosting point
 visible in CI (DR-46).
