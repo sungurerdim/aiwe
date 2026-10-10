@@ -2,6 +2,7 @@ package core
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -182,5 +183,64 @@ func TestRealPath(t *testing.T) {
 	missing := filepath.Join(base, "missing")
 	if got, err := realPath(missing); err == nil {
 		t.Errorf("realPath(%q) of a missing path = %q, nil; want an error", missing, got)
+	}
+}
+
+// procTestChildEnv marks the test binary started by procTestChild: it then waits on its stdin.
+const procTestChildEnv = "PROCSTART_TEST_CHILD"
+
+// TestProcStartChild is the body of the child that procTestChild starts; in the parent run it skips.
+func TestProcStartChild(t *testing.T) {
+	if os.Getenv(procTestChildEnv) != "1" {
+		t.Skip("child body of procTestChild only")
+	}
+	_, _ = io.Copy(io.Discard, os.Stdin)
+}
+
+// procTestChild starts a child that runs until the test ends and returns its pid together with
+// the wall clock just before and just after the start.
+func procTestChild(t *testing.T) (pid int, before, after time.Time) {
+	t.Helper()
+	cmd := exec.Command(os.Args[0], "-test.run=^TestProcStartChild$")
+	cmd.Env = append(os.Environ(), procTestChildEnv+"=1")
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatalf("child stdin: %v", err)
+	}
+	before = time.Now()
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start child: %v", err)
+	}
+	after = time.Now()
+	t.Cleanup(func() {
+		stdin.Close()
+		if err := cmd.Wait(); err != nil {
+			t.Errorf("child: %v", err)
+		}
+	})
+	return cmd.Process.Pid, before, after
+}
+
+// TestProcessStartOfChild catches a start time that is not the moment the process started: one
+// shifted by any amount over a second, or the boot time in place of the start (U13). The start of a
+// fresh child must fall between the wall clock read just before and just after it started, within
+// 1 s, plus 20 ms for the 10 ms start tick of Linux.
+func TestProcessStartOfChild(t *testing.T) {
+	const tolerance = time.Second + 20*time.Millisecond
+	pid, before, after := procTestChild(t)
+	start, running, err := processStart(pid)
+	if err != nil || !running {
+		t.Fatalf("processStart(%d) of a running child = %v, %v, %v; want its start, running", pid, start, running, err)
+	}
+	if start.Before(before.Add(-tolerance)) || start.After(after.Add(tolerance)) {
+		t.Errorf("processStart(%d) = %v, want between %v and %v within %v", pid, start, before, after, tolerance)
+	}
+}
+
+// TestRealPathEmpty catches an empty path read as a real path, such as the current directory "."
+// (§5.15): an empty path names no file on any OS.
+func TestRealPathEmpty(t *testing.T) {
+	if got, err := realPath(""); err == nil {
+		t.Errorf("realPath(\"\") = %q, nil; want an error", got)
 	}
 }
