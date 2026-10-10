@@ -35,8 +35,6 @@ func Outcomes() []OutcomeRow {
 			Next: "re-save the file as UTF-8; the detail names the first invalid byte"},
 		{Outcome: "root_unresolved", Status: StatusError, Err: ErrRootUnresolved,
 			Next: "set the named root override to an absolute local directory, or unset it"},
-		{Outcome: "config_invalid", Status: StatusError, Err: ErrConfigInvalid,
-			Next: "fix or remove the state file the detail names; it must hold one JSON object"},
 	}
 }
 
