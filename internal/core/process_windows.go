@@ -16,6 +16,8 @@ const (
 	processSetQuota          = 0x0100     // PROCESS_SET_QUOTA
 	threadSuspendResume      = 0x0002     // THREAD_SUSPEND_RESUME
 	jobBasicAccountingInfo   = 1          // JobObjectBasicAccountingInformation
+	jobExtendedLimitInfo     = 9          // JobObjectExtendedLimitInformation
+	jobLimitKillOnJobClose   = 0x00002000 // JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
 	jobStoppedExitCode       = 1          // exit code of every process of a stopped job
 	resumeThreadFailed       = 0xFFFFFFFF // (DWORD)-1 returned by ResumeThread
 	systemDirectoryMaxLength = syscall.MAX_PATH
@@ -28,6 +30,7 @@ type kernel32 struct {
 	assignProcessToJobObject  *syscall.LazyProc
 	terminateJobObject        *syscall.LazyProc
 	queryInformationJobObject *syscall.LazyProc
+	setInformationJobObject   *syscall.LazyProc
 	thread32First             *syscall.LazyProc
 	thread32Next              *syscall.LazyProc
 	openThread                *syscall.LazyProc
@@ -42,6 +45,7 @@ func loadKernel32() (kernel32, error) {
 		assignProcessToJobObject:  dll.NewProc("AssignProcessToJobObject"),
 		terminateJobObject:        dll.NewProc("TerminateJobObject"),
 		queryInformationJobObject: dll.NewProc("QueryInformationJobObject"),
+		setInformationJobObject:   dll.NewProc("SetInformationJobObject"),
 		thread32First:             dll.NewProc("Thread32First"),
 		thread32Next:              dll.NewProc("Thread32Next"),
 		openThread:                dll.NewProc("OpenThread"),
@@ -51,7 +55,7 @@ func loadKernel32() (kernel32, error) {
 	// Find each procedure now, because Call on a missing one panics.
 	for _, p := range []*syscall.LazyProc{
 		k.createJobObject, k.assignProcessToJobObject, k.terminateJobObject,
-		k.queryInformationJobObject, k.thread32First, k.thread32Next, k.openThread,
+		k.queryInformationJobObject, k.setInformationJobObject, k.thread32First, k.thread32Next, k.openThread,
 		k.resumeThread, k.getSystemDirectory,
 	} {
 		if err := p.Find(); err != nil {
@@ -85,6 +89,22 @@ type jobAccounting struct {
 	totalTerminatedProcesses  uint32
 }
 
+// jobExtendedLimit is JOBOBJECT_EXTENDED_LIMIT_INFORMATION; only LimitFlags is set. C aligns its
+// 64-bit fields to 8 bytes on every architecture, which Go does not on 32-bit Windows, so the
+// padding C adds after JOBOBJECT_BASIC_LIMIT_INFORMATION there is written out. A wrong size makes
+// SetInformationJobObject fail, so Start fails instead of running a tree without the limit.
+type jobExtendedLimit struct {
+	_          [2]int64                            // PerProcessUserTimeLimit, PerJobUserTimeLimit
+	limitFlags uint32                              // LimitFlags
+	_          [2]uintptr                          // MinimumWorkingSetSize, MaximumWorkingSetSize
+	_          uint32                              // ActiveProcessLimit
+	_          uintptr                             // Affinity
+	_          [2]uint32                           // PriorityClass, SchedulingClass
+	_          [8 - unsafe.Sizeof(uintptr(0))]byte // tail padding of the basic limits on 32-bit Windows
+	_          [6]uint64                           // IoInfo (IO_COUNTERS)
+	_          [4]uintptr                          // ProcessMemoryLimit, JobMemoryLimit, PeakProcessMemoryUsed, PeakJobMemoryUsed
+}
+
 // tree is the Job Object that holds the child and every process it starts.
 type tree struct {
 	k   kernel32
@@ -92,11 +112,15 @@ type tree struct {
 }
 
 // newTree creates the job and sets the child to start suspended, so it joins the job before it
-// can start a process of its own (U22). A batch launcher runs through cmd.exe with a command line
-// built here (SPEC §5.20).
+// can start a process of its own (U22). Closing the last handle of the job kills every process
+// left in it, so a tree never outlives the engine (DR-15). A batch launcher runs through cmd.exe
+// with a command line built here (SPEC §5.20).
 func newTree(cmd *exec.Cmd) (tree, error) {
 	k, err := loadKernel32()
 	if err != nil {
+		return tree{}, err
+	}
+	if err := checkLauncherPath(cmd.Path); err != nil {
 		return tree{}, err
 	}
 	attr := &syscall.SysProcAttr{CreationFlags: createSuspended}
@@ -117,7 +141,15 @@ func newTree(cmd *exec.Cmd) (tree, error) {
 	if job == 0 {
 		return tree{}, fmt.Errorf("create job object: %w", callErr)
 	}
-	return tree{k: k, job: syscall.Handle(job)}, nil
+	t := tree{k: k, job: syscall.Handle(job)}
+	limit := jobExtendedLimit{limitFlags: jobLimitKillOnJobClose}
+	ok, _, callErr := k.setInformationJobObject.Call(job, jobExtendedLimitInfo,
+		uintptr(unsafe.Pointer(&limit)), unsafe.Sizeof(limit))
+	if ok == 0 {
+		t.release()
+		return tree{}, fmt.Errorf("set the job to kill its processes on close: %w", callErr)
+	}
+	return t, nil
 }
 
 // attach assigns the suspended child to the job, then resumes it.
@@ -138,9 +170,6 @@ func (t *tree) attach(p *os.Process) error {
 // stop terminates the job and waits for it to be empty. Windows has no ask a console-less child
 // is bound to obey, so the grace is not used (SPEC §5.20: StopTree terminates the job).
 func (t *tree) stop(_ time.Duration) error {
-	if t.job == 0 {
-		return nil
-	}
 	ok, _, callErr := t.k.terminateJobObject.Call(uintptr(t.job), jobStoppedExitCode)
 	if ok == 0 {
 		return fmt.Errorf("terminate job: %w", callErr)
@@ -166,7 +195,8 @@ func (t *tree) empty() (bool, error) {
 	return info.activeProcesses == 0, nil
 }
 
-// release closes the job handle once the child has exited.
+// release closes the job handle once the tree is stopped or empty, or the child did not start.
+// The job kills on close what it still holds, so a handle closed too early kills, never leaks.
 func (t *tree) release() {
 	if t.job != 0 {
 		_ = syscall.CloseHandle(t.job) // nothing is left to stop through it

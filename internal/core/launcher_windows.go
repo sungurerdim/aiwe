@@ -7,9 +7,22 @@ import (
 	"unicode"
 )
 
-// isBatchLauncher reports whether path is a batch file, which cmd.exe runs.
+// windowsStrippedTail is what Windows strips from the end of a file name before it opens it.
+const windowsStrippedTail = ". "
+
+// checkLauncherPath refuses a program path that ends in a dot or a space. Windows strips them, so
+// "launch.cmd." runs as the batch file "launch.cmd" while its own extension says it is not one.
+func checkLauncherPath(path string) error {
+	if strings.TrimRight(path, windowsStrippedTail) != path {
+		return fmt.Errorf("program %q ends in a dot or a space, which Windows strips: refused", path)
+	}
+	return nil
+}
+
+// isBatchLauncher reports whether path is a batch file, which cmd.exe runs. It reads the extension
+// as Windows does: after the trailing dots and spaces, in any letter case.
 func isBatchLauncher(path string) bool {
-	ext := filepath.Ext(path)
+	ext := filepath.Ext(strings.TrimRight(path, windowsStrippedTail))
 	return strings.EqualFold(ext, ".cmd") || strings.EqualFold(ext, ".bat")
 }
 
@@ -17,7 +30,7 @@ func isBatchLauncher(path string) bool {
 // Go quotes argv for CommandLineToArgvW, which cmd.exe does not follow (SPEC §5.20), so every
 // word is put in double quotes, where cmd.exe takes & | < > ( ) ^ , ; = literally. An argument
 // cmd.exe would still change inside quotes is refused. /d skips AutoRun commands, /v:OFF keeps !
-// literal and /s strips exactly the outer pair of quotes.
+// literal on this command line and /s strips exactly the outer pair of quotes.
 func batchCommandLine(shell, script string, args []string) (string, error) {
 	var b strings.Builder
 	b.WriteString(`"` + shell + `" /d /e:ON /v:OFF /s /c "`)
@@ -35,10 +48,11 @@ func batchCommandLine(shell, script string, args []string) (string, error) {
 }
 
 // checkBatchWord refuses what cmd.exe changes even inside quotes: a double quote ends the quotes,
-// % expands a variable, and a line break or another control character ends or breaks the line.
+// % expands a variable, ! expands one in a script that turns on delayed expansion, and a line
+// break or another control character ends or breaks the line.
 func checkBatchWord(word string) error {
 	for _, r := range word {
-		if r == '"' || r == '%' || (unicode.IsControl(r) && r != '\t') {
+		if r == '"' || r == '%' || r == '!' || (unicode.IsControl(r) && r != '\t') {
 			return fmt.Errorf("batch launcher argument %q: %q cannot be passed through cmd.exe safely", word, r)
 		}
 	}
