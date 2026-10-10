@@ -20,6 +20,8 @@ func TestLog(t *testing.T) {
 		write func(l *slog.Logger)
 		// want holds the string keys each line must carry with these exact values.
 		want map[string]string
+		// absent holds text that must not appear anywhere in the raw output.
+		absent []string
 	}{
 		{
 			name:  "plain event not one JSON object with ts, level, event and detail",
@@ -50,6 +52,14 @@ func TestLog(t *testing.T) {
 			write: func(l *slog.Logger) { l.Info("note", "detail", "çalışma ağacı temiz") },
 			want:  map[string]string{"event": "note", "detail": "çalışma ağacı temiz"},
 		},
+		{
+			name: "foreign key or group leaks a token into the log line",
+			write: func(l *slog.Logger) {
+				l.Info("e", "token", "ghp_x", "detail", "d", slog.Group("auth", "token", "ghp_x"))
+			},
+			want:   map[string]string{"event": "e", "detail": "d"},
+			absent: []string{"ghp_x", "token", "auth"},
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -58,6 +68,11 @@ func TestLog(t *testing.T) {
 			out := buf.Bytes()
 			if bytes.IndexByte(out, 0x1b) >= 0 {
 				t.Fatalf("log output carries an escape byte: %q", out)
+			}
+			for _, s := range tc.absent {
+				if bytes.Contains(out, []byte(s)) {
+					t.Errorf("log output %q carries %q; want it dropped", out, s)
+				}
 			}
 			lines := strings.Split(strings.TrimSuffix(string(out), "\n"), "\n")
 			if len(lines) != 1 || !strings.HasSuffix(string(out), "\n") {
