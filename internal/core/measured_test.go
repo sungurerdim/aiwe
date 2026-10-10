@@ -108,6 +108,7 @@ func TestMeasured(t *testing.T) {
 			{"array accepted", `[]`},
 			{"fraction accepted as a token count", `1.5`},
 			{"token count above int64 accepted", `9223372036854775808`},
+			{"null read as a measured 0", `null`},
 		}
 		for _, tc := range tests {
 			t.Run(tc.name, func(t *testing.T) {
