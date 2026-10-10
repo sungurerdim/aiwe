@@ -13,10 +13,11 @@ func secretMarkers() []string {
 // CleanEnv returns a copy of parent for a child process without secret-shaped variables, the
 // listed credentials, a git credential helper, or a variable that reaches a credential or a
 // program outside the run (DR-35). An entry with an empty name is dropped too. Names compare
-// without case, as Windows does. git is told to skip the system config, never to prompt, and to use an empty
-// credential.helper, which clears every helper set in a config file.
+// without case, as Windows does. git is told to skip the system config, to read the null device
+// as its global config, so no user-level setting such as core.askPass applies, never to prompt,
+// and to use an empty credential.helper, which clears every helper set in a config file.
 func CleanEnv(parent, credentials []string) []string {
-	child := make([]string, 0, len(parent)+5)
+	child := make([]string, 0, len(parent)+6)
 	for _, kv := range parent {
 		name, _, ok := strings.Cut(kv, "=")
 		if !ok {
@@ -29,6 +30,7 @@ func CleanEnv(parent, credentials []string) []string {
 	}
 	return append(child,
 		"GIT_CONFIG_NOSYSTEM=1",
+		"GIT_CONFIG_GLOBAL="+os.DevNull,
 		"GIT_TERMINAL_PROMPT=0",
 		"GIT_CONFIG_COUNT=1",
 		"GIT_CONFIG_KEY_0=credential.helper",
@@ -60,7 +62,8 @@ func dropFromChild(upper string, credentials []string) bool {
 // program outside the run, or that CleanEnv sets itself (DR-35, SPEC §6.5).
 func reachNames() []string {
 	return []string{
-		"GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT", "GIT_CONFIG_NOSYSTEM", "GIT_TERMINAL_PROMPT",
+		"GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT", "GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_GLOBAL",
+		"GIT_TERMINAL_PROMPT",
 		"GIT_ASKPASS", "SSH_ASKPASS", "SSH_AUTH_SOCK", "VSCODE_GIT_IPC_HANDLE",
 		"GIT_SSH_COMMAND", "GIT_SSH", "GIT_EXEC_PATH", "GIT_PROXY_COMMAND",
 	}

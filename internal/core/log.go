@@ -6,13 +6,14 @@ import (
 	"log/slog"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 )
 
 // NewLogger returns a logger that writes one JSON object per line to w with only the keys ts,
 // level, runId, unit, event and detail (SPEC §5.11). Other keys and groups are dropped, so a
-// caller's time, msg or level attribute cannot forge the record's own; colour and other escape
-// sequences are removed from every value.
+// caller's time, msg or level attribute cannot forge the record's own; escape sequences and every
+// control character but tab and newline are removed from every value.
 func NewLogger(w io.Writer) *slog.Logger {
 	return slog.New(lineHandler{next: slog.NewJSONHandler(w, &slog.HandlerOptions{ReplaceAttr: logAttr})})
 }
@@ -67,28 +68,29 @@ func logAttr(groups []string, a slog.Attr) slog.Attr {
 	case slog.LevelKey:
 		return a
 	case slog.MessageKey:
-		return slog.String("event", stripEscapes(a.Value.String()))
+		return slog.String("event", stripControls(a.Value.String()))
 	case "runId", "unit", "detail":
-		return slog.String(a.Key, stripEscapes(a.Value.Resolve().String()))
+		return slog.String(a.Key, stripControls(a.Value.Resolve().String()))
 	default:
 		return slog.Attr{}
 	}
 }
 
-// stripEscapes removes ESC and the C1 CSI character U+009B with the escape sequence each starts.
-// Other bytes stay as they are.
-func stripEscapes(s string) string {
-	if !strings.ContainsAny(s, "\x1b\u009b") {
-		return s
-	}
+// stripControls removes the escape sequences ESC and the C1 CSI character U+009B start, then every
+// C0 control but tab and newline, DEL and every C1 control. It works rune by rune and writes a
+// byte that is not UTF-8 as U+FFFD, so the bytes that remain cannot join into a new control.
+func stripControls(s string) string {
 	var b strings.Builder
 	for i := 0; i < len(s); {
 		if n := escapeLen(s[i:]); n > 0 {
 			i += n
 			continue
 		}
-		b.WriteByte(s[i])
-		i++
+		r, size := utf8.DecodeRuneInString(s[i:])
+		i += size
+		if r == '\t' || r == '\n' || !unicode.IsControl(r) {
+			b.WriteRune(r)
+		}
 	}
 	return b.String()
 }

@@ -55,15 +55,16 @@ func ResolveRoots(goos string, getenv func(string) string, home string) (Roots, 
 func resolveRoot(getenv func(string) string, suffix string, convention func() (string, error)) (string, error) {
 	name := productEnv(suffix)
 	if v := getenv(name); v != "" {
-		return overrideDir(name, v)
+		return checkedDir(name, v)
 	}
 	return convention()
 }
 
-// overrideDir returns the override v of name when it is an absolute local directory below a
-// file system root. A .. element, a network or long-path form and a bare root are refused,
-// since cleaning or following them can differ from the OS walk (fail-closed, DR-37).
-func overrideDir(name, v string) (string, error) {
+// checkedDir returns v of name, cleaned, when it is an absolute local directory below a file
+// system root; overrides and the convention variables pass it. A .. element, a network, long-path
+// or NT device form and a bare root are refused, since cleaning or following them can differ from
+// the OS walk (fail-closed, DR-37). A trailing separator is cleaned away, not taken as a root.
+func checkedDir(name, v string) (string, error) {
 	dir, err := absDir(name, v)
 	if err != nil {
 		return "", err
@@ -73,19 +74,22 @@ func overrideDir(name, v string) (string, error) {
 			return "", fmt.Errorf("%w: %s %s", ErrRootUnresolved, name, c.reason)
 		}
 	}
-	return dir, nil
+	return filepath.Clean(dir), nil
 }
 
-// unsafeRootCheck is one form of override path that is refused as a root.
+// unsafeRootCheck is one form of path that is refused as a root.
 type unsafeRootCheck struct {
 	reason string
 	unsafe func(string) bool
 }
 
+// unsafeRootChecks read the path as given, before cleaning, since cleaning drops a .. element
+// and a leading double separator.
 func unsafeRootChecks() []unsafeRootCheck {
 	return []unsafeRootCheck{
-		{"is a network or long-path form", func(p string) bool {
-			return strings.HasPrefix(strings.ReplaceAll(p, `\`, "/"), "//")
+		{"is a network, long-path or NT device form", func(p string) bool {
+			s := strings.ReplaceAll(p, `\`, "/")
+			return strings.HasPrefix(s, "//") || strings.HasPrefix(s, "/??/")
 		}},
 		{"has a .. element", func(p string) bool {
 			for _, e := range strings.FieldsFunc(p, func(r rune) bool { return r == '/' || r == '\\' }) {
@@ -95,20 +99,23 @@ func unsafeRootChecks() []unsafeRootCheck {
 			}
 			return false
 		}},
-		{"is a file system root", func(p string) bool { return filepath.Dir(p) == filepath.Clean(p) }},
+		{"is a file system root", func(p string) bool {
+			c := filepath.Clean(p)
+			return filepath.Dir(c) == c
+		}},
 	}
 }
 
 func stateConvention(goos string, getenv func(string) string, home string) (string, error) {
 	switch goos {
 	case "windows":
-		local, err := absDir("LOCALAPPDATA", getenv("LOCALAPPDATA"))
+		local, err := checkedDir("LOCALAPPDATA", getenv("LOCALAPPDATA"))
 		return filepath.Join(local, Product, "state"), err
 	case "darwin":
 		h, err := absDir("home directory", home)
 		return filepath.Join(h, "Library", "Application Support", Product), err
 	default:
-		if x, err := absDir("XDG_STATE_HOME", getenv("XDG_STATE_HOME")); err == nil {
+		if x, err := checkedDir("XDG_STATE_HOME", getenv("XDG_STATE_HOME")); err == nil {
 			return filepath.Join(x, Product), nil
 		}
 		h, err := absDir("home directory", home)
@@ -119,13 +126,13 @@ func stateConvention(goos string, getenv func(string) string, home string) (stri
 func cacheConvention(goos string, getenv func(string) string, home string) (string, error) {
 	switch goos {
 	case "windows":
-		local, err := absDir("LOCALAPPDATA", getenv("LOCALAPPDATA"))
+		local, err := checkedDir("LOCALAPPDATA", getenv("LOCALAPPDATA"))
 		return filepath.Join(local, Product, "cache"), err
 	case "darwin":
 		h, err := absDir("home directory", home)
 		return filepath.Join(h, "Library", "Caches", Product), err
 	default:
-		if x, err := absDir("XDG_CACHE_HOME", getenv("XDG_CACHE_HOME")); err == nil {
+		if x, err := checkedDir("XDG_CACHE_HOME", getenv("XDG_CACHE_HOME")); err == nil {
 			return filepath.Join(x, Product), nil
 		}
 		h, err := absDir("home directory", home)
@@ -136,13 +143,13 @@ func cacheConvention(goos string, getenv func(string) string, home string) (stri
 func tempConvention(goos string, getenv func(string) string) (string, error) {
 	switch goos {
 	case "windows":
-		t, err := absDir("TEMP", getenv("TEMP"))
+		t, err := checkedDir("TEMP", getenv("TEMP"))
 		return filepath.Join(t, Product), err
 	case "darwin":
-		t, err := absDir("TMPDIR", getenv("TMPDIR"))
+		t, err := checkedDir("TMPDIR", getenv("TMPDIR"))
 		return filepath.Join(t, Product), err
 	default:
-		if t, err := absDir("TMPDIR", getenv("TMPDIR")); err == nil {
+		if t, err := checkedDir("TMPDIR", getenv("TMPDIR")); err == nil {
 			return filepath.Join(t, Product), nil
 		}
 		return filepath.Join("/tmp", Product), nil
