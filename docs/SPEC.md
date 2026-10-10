@@ -750,6 +750,11 @@ A **red signature** = step id + sorted failing test ids (when the runner reports
 
 | Event | Outcome | Engine action |
 |---|---|---|
+| Onboarding detects two or more stacks | `multi_stack` | Onboarding stops with this named outcome (§7.1 step 3, §15). |
+| Onboarding detects no known stack | `unknown_stack` | The stack profile comes from the adaptation ladder (§7.7, §8.2). |
+| Stack detection fails | `detect_error` | Red, reported by name (§7.1 step 3). |
+| A plan fails its parse or audit a second time | `plan_invalid` | Planning stops; owner brief on the goal (§7.2 step 4, §8.4). |
+| No adapter can run rung 2 of the adaptation ladder | `artefact_requested` | MCP reply to the lead session; the owner enters the answer with the terminal-only `aiwe artefact submit`, then the same verify and proof (§7.7, §5.7). |
 | Unit text invalid | `unit_invalid` | Label `invalid` + one comment with the findings. |
 | Product decision needed | `owner_decision` | Label `question`; owner brief; ledger `owner_action`; other units continue. |
 | Gate red, agent fault | `red` | Fix round. |
@@ -762,6 +767,7 @@ A **red signature** = step id + sorted failing test ids (when the runner reports
 | No active source can serve a role | `no_capacity` | The unit waits; other roles continue (§7.6, §7.9). |
 | git missing or too old at start | `git_missing`, `git_too_old` | Exit 1 with the next action (§6.2). |
 | Rebase or merge conflict at integration | `conflict` | A resolution run on the same run branch, rebased onto the working-branch tip; the prompt names the conflicted files. Two failed resolutions → `skipped`, requeued (Q11). |
+| Two failed conflict resolutions on one unit | `skipped` | Unit requeued (Q11). |
 | Three failures on one unit | `quarantined` | Stop offering the unit; label `help wanted`. |
 | First 5 units of a goal (default) have M1 < 70 % | `goal_paused` | Stop dispatching the goal's units; owner brief on the goal; label `question`. |
 | A revert pull request's CI is red after a red `main` CI (§7.3 step 16) | `revert_red` | Stop the queue: no unit is dispatched or merged; owner brief (§8.4). |
