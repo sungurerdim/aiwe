@@ -1,0 +1,43 @@
+# Release build (SPEC §6.2, §12.3). The version comes from the tag only.
+version: 2
+
+builds:
+  - main: ./cmd/aiwe
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -X main.version={{.Version}}
+    goos:
+      - windows
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+
+checksum:
+  name_template: checksums.txt
+
+# Release notes in Keep a Changelog layout (Q15).
+changelog:
+  use: git
+  sort: asc
+  groups:
+    - title: Added
+      regexp: '^feat(\([^)]*\))?!?:'
+      order: 0
+    - title: Fixed
+      regexp: '^fix(\([^)]*\))?!?:'
+      order: 1
+    - title: Changed
+      order: 999

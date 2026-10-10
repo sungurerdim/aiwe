@@ -166,7 +166,7 @@ A test whose source is not yet in the tree passes only while a §14 Files cell l
 | DR-8 | A managed project needs no file, setting or setup step for the engine; a project `gate.json`, if present, wins over the derived gate. | S3 | test `engine/onboard_test.go` |
 | DR-9 | Writing roles and judging roles (§9.1) are separate runs; a judging run starts with a clean context and its judging card; its source is the most independent one available, in the fixed order different provider > same provider, different model > same model, new instance; the run records the level used (`AuditIndependence`, §8.5) (Q6); a verdict counts only from the judging run's own result, bound to its RunID (§8.6), and a `VERDICT:` line in a branch commit is refused (`verdict_in_branch`). | S4, M3 | tests `engine/routing_test.go` (each level and the order), `engine/judge_test.go`; check D14 |
 | DR-10 | A gate is a list of steps; a skipped or unrun step makes the whole gate `incomplete`, never green. | S4 | test `gates/runner_test.go` |
-| DR-11 | A unit without goal, done criteria and its kind's scope is not dispatched: a code unit needs a verify and a file set of ≤ 5 source files (test, lock and generated files do not count); an operation unit needs scope, access and measure (§8.4). | S5 | test `engine/unit_test.go` |
+| DR-11 | A unit without goal, done criteria and its kind's scope is not dispatched: a code unit needs a verify and a file set of ≤ 5 source files (test, lock and generated files do not count; `go.mod` is a manifest and `go.sum` its lock file, so neither counts, Q25); an operation unit needs scope, access and measure (§8.4). | S5 | test `engine/unit_test.go` |
 | DR-12 | Only the engine runs checks: an agent requests its unit verify through `aiwe verify`, the auditor reads recorded results, and a check runs at most once per key (§7.8). | S6, M6 | tests `gates/cache_test.go`, `engine/verify_test.go` |
 | DR-13 | Absence is not evidence: an unknown stack or file type, an empty output, a missing tool, a non-zero exit or a test run that collects zero tests is `not_measured` or red, never clean; a verify that collects zero tests is `no_tests_collected` (§7.8). | S4 | tests `gates/checks_test.go`, `stacks/detect_test.go`, `engine/verify_test.go` |
 | DR-14 | Scope is declared before a run and compared with the observed diff; a mismatch is `scope_mismatch`. | S4 | check D6; test `engine/coverage_test.go` |
@@ -205,6 +205,7 @@ A test whose source is not yet in the tree passes only while a §14 Files cell l
 | DR-47 | Every engine diff is `git diff <base>...<tip>` from the run's base commit, so a base that advances during the run changes nothing; a D-check reports only lines of that diff, and a flagged line byte-identical on the base is `pre_existing`, never red; a unit line that counts from `HEAD~<n>` or `HEAD^` is refused. | S4, M3 | tests `engine/coverage_test.go`, `gates/checks_test.go`, `engine/unit_test.go` |
 | DR-48 | Every run starts through a sandbox adapter, and the run record names the level used; a live operation unit needs level `os-sandbox` (§6.7, Q19). | S4 | tests `core/sandbox_test.go`, `engine/clone_test.go`, `engine/operation_test.go` |
 | DR-49 | Every git call of the engine runs with repository-configured programs off, so a run clone's `.git/config` cannot make the engine run code (§5.21). | S4 | tests `core/git_test.go`, `engine/residue_test.go` |
+| DR-50 | Every done, planned or discovered piece of work is an issue in the §8.4 format before work starts, and issues are the single source of truth for work (DR-30); the engine closes a code unit issue at closeout, only after `main` CI of its squash commit is green, and in the same write marks `[x]` each `## Done` item whose evidence is green (§7.3 step 17, Q22; before unit 0.12, §14 row 0.12), an operation unit issue at its own closeout (§7.9 step 9), an owner unit issue once `main` CI of a commit that references it is green and a goal issue once every unit of its task list is closed and a milestone once every issue in it is closed and its phase gate is green (§7.3 step 17). | S5 | intake and `aiwe unit check` (§7.3 step 1, §8.4: only an issue in the §8.4 format is dispatched); closeout (§7.3 step 17, §7.9 step 9); judgement: auditor (a finding outside the unit is a new issue) |
 
 ---
 
@@ -293,7 +294,8 @@ Benefit: CLI exit code, MCP reply and ledger outcome come from one value. Enforc
 type Router struct { Now func() time.Time; Ledger LedgerView }
 func (r Router) Route(in RouteInput) RouteOutcome
 ```
-No package-level mutable variable except sentinel errors and compiled patterns. The process
+No package-level mutable variable except sentinel errors, compiled patterns and `var version
+string` in `cmd/aiwe/main.go`, which the linker sets at release build (§6.3, §12.3). The process
 environment is read only in `core/env.go`. Benefit: tests pass fakes; runs are reproducible.
 Enforced: check `repo/source-rules` (package-level `var`); gate step `lint` (`forbidigo` on
 `os.Getenv`, `os.LookupEnv`, `os.Environ` outside `core/env.go`).
@@ -304,8 +306,9 @@ Benefit: a new stack is one row, not a new `if`. Enforced: review; a test that e
 
 ### 5.6 Pure core, imperative shell
 Decision functions take and return data. Process, git, HTTP and file IO live in `*_io.go` files or
-adapters. Enforced: check `repo/source-rules` (other files may not import `os`, `os/exec`, `net`
-or `net/http`).
+adapters. Outside `*_io.go`, only `cmd/aiwe/main.go`, `repocheck/source_rules.go` and the `core` files of
+units 0.3, 0.20, 0.5, 0.6, 0.18 and 0.21 (§14), with their `_<os>` variants, may import `os` and `os/exec`. Enforced: check
+`repo/source-rules` (other files may not import `os`, `os/exec`, `net` or `net/http`).
 
 ### 5.7 One command registry
 ```go
@@ -323,10 +326,11 @@ Package names short and lower case; files `snake_case.go`; exported identifiers 
 Enforced: gate step `format`; check `repo/source-rules` (file names).
 
 ### 5.9 Size limits
-Source file ≤ 400 lines; test file ≤ 500 lines; function ≤ 60 lines and cognitive complexity ≤ 12
-(Q12); a module's root package holds its public surface only. Benefit: a unit fits one context (S5),
-and no single test package dominates the test step (DR-38). Enforced: check `repo/size` (`go/ast`);
-complexity by gate step `lint` (§5.17).
+Source file ≤ 400 lines; test file ≤ 500 lines; non-test function ≤ 60 lines and cognitive
+complexity ≤ 12 (Q12); a module's root package holds its public surface only. A test function has
+no line limit (Q23). Benefit: a unit fits one context (S5), and no single test package
+dominates the test step (DR-38). Enforced: check `repo/size` (`go/ast`, unit 0.9), with the same
+limits; complexity by gate step `lint` (§5.17).
 
 ### 5.10 Error message format
 `<outcome>: expected <x>; found <y>; next: <one action>`. `core.Error` renders it. Benefit: the
@@ -343,7 +347,9 @@ a relative path without `--repo` is a `usage` error; the process working directo
 Enforced: tests `core/config_test.go`, `core/args_test.go`.
 
 ### 5.13 Test structure
-- `x.go` → `x_test.go` beside it, run by `go test`.
+- A source file `x.go` has its behaviour test in `x_test.go` beside it when one exists, run by
+  `go test`. A file covered by another file's test needs no own test file; the covering test names
+  it.
 - Tests are table-driven: one `[]struct{ name string; … }`, one `t.Run(tc.name, …)` per row. Each
   row name names the failure it catches.
 - One contract suite per port, in a non-test package next to the port, run against every
@@ -538,7 +544,7 @@ matrix compiles every code path that differs. Targets that no CI runner runs: U2
 | npm (optional, off) | Node and npm | not GoReleaser OSS: npm publishing is Pro (§17) | convenience only; trigger in §15 |
 
 Unit 3.6 configures GitHub Releases, winget, Scoop and Homebrew; unit 3.9 configures the MCP
-Registry entry. No channel publishes before the owner closes unit 3.10.
+Registry entry. No channel publishes before unit 3.10 is closed.
 
 External tools:
 - **git is the only prerequisite.** The binary runs `git --version` at start; missing →
@@ -628,7 +634,8 @@ Serves DR-35, DR-16.
   plugins off, through the harness's documented flag or an isolated config home that keeps the
   login (U28). `HOME` points to the run's scratch directory. `GIT_CONFIG_NOSYSTEM=1` and an
   environment-set `credential.helper` with an empty value clear git's credential helpers, and
-  `GIT_TERMINAL_PROMPT=0` stops git from asking (§17). Push stays the engine's (DR-18). These are
+  `GIT_TERMINAL_PROMPT=0` stops git from asking (§17). `GIT_CONFIG_GLOBAL` points to the null
+  device, so no user-level git setting such as `core.askPass` applies (`core/env.go`). Push stays the engine's (DR-18). These are
   cheap measures, not a sandbox (§6.7).
 - **Check environment**: every check process (unit verify, gate step, the restore command) gets the
   same secret-free environment from `core/env.go` (DR-35); only an operation's own steps get a
@@ -736,10 +743,10 @@ parser (§8.4) validates every unit before work starts.
 | 11 mutation | M | Mutation run on changed lines where the profile names a tool; else `not_measured`. Evidence only (§11). |
 | 12 audit | J | `auditor` (DR-9) compares done criteria with the diff, using only engine-made evidence (§9.2). `security-reviewer` and `ux-reviewer` run beside it when their path tables match (§9.1). Each verdict comes from the judging run's own result, bound to its RunID (DR-9); integration needs every verdict GREEN; a `not_measured` dimension is recorded in the status comment and the ledger. Before a RED verdict is acted on, the engine resolves every `path:line` and identifier it cites on the tip; an unresolved citation makes the verdict `unverified_finding`, sent to a new auditor run, never to the writer. |
 | 13 fix loop | J | Returned or red → engineer fix round, up to the fix-round limit (§7.4), then `quarantined`. A repeated red signature calls the `debugger` (§7.4). |
-| 14 integrate | M | DR-19 at pull-request level (Q21). The engine pushes the run branch and opens one pull request per unit through the tracker port: title = the unit's Conventional Commit subject, body ends with the `Run-Id` trailer. A batch = several unit pull requests, gated together in a temporary integration clone of the working branch tip. A unit commit marked breaking waits for the owner (§12.3). Batch states: `queued → running → splitting → merged \| removed`. A red batch splits in halves until each red pull request is isolated; a removed one stays open with its reason in a comment and returns as a fix round. A conflict follows §7.4. |
+| 14 integrate | M | DR-19 at pull-request level (Q21). The engine pushes the run branch and opens one pull request per unit through the tracker port: title = `<type>(<scope>)` of the unit's first non-test commit, then `: `, then the unit issue's title with its first letter in lower case; body carries `Refs #<n>` for the unit issue (§8.4) and ends with the `Run-Id` trailer. A batch = several unit pull requests, gated together in a temporary integration clone of the working branch tip. A unit commit marked breaking waits for the owner (§12.3). Batch states: `queued → running → splitting → merged \| removed`. A red batch splits in halves until each red pull request is isolated; a removed one stays open with its reason in a comment and returns as a fix round. A conflict follows §7.4. |
 | 15 pull request CI | M | Wait for the CI run of each pull request head through the tracker port. Red → the pull request stays open with its reason; the unit returns as a fix round. No run observed within the wait limit → `ci_not_observed`: never green. |
-| 16 merge and main CI | M | Green CI and head = `AuditedTip` → the engine squash-merges the pull request through the tracker port, giving the head SHA, so a moved head is refused (`unaudited_commits`). The canonical repository's checked-out branch is never a push target. A merge refused because `main` moved rebuilds the batch on the new tip once; a second → `push_rejected`, batch requeued. The engine then waits for the CI run of the squash commit on `main`, which also feeds the release job (§12.3): red → the engine opens a revert pull request for the squash commit through the tracker port, never a direct push, because the `main` ruleset refuses a change without a pull request (§16, Q21); it squash-merges the revert pull request once that pull request's CI is green, then requeues the unit as a fix round; a red revert pull request CI stops the queue and posts an owner brief (§8.4); none within the wait limit → `ci_not_observed`, the issue stays open. |
-| 17 closeout | M | Close the issue `completed`; the status comment's final state is the evidence (gate summary, pull request and CI links, Run-Id). Delete the claim ref, run refs, the run branch and the integration clone. |
+| 16 merge and main CI | M | Green CI and head = `AuditedTip` → the engine squash-merges the pull request through the tracker port, giving the head SHA, so a moved head is refused (`unaudited_commits`). The canonical repository's checked-out branch is never a push target. A merge refused because `main` moved rebuilds the batch on the new tip once; a second → `push_rejected`, batch requeued. The engine then waits for the CI run of the squash commit on `main`, which also feeds the release job (§12.3): red → the engine opens a revert pull request for the squash commit through the tracker port, never a direct push, because the `main` ruleset refuses a change without a pull request (§16, Q21); it squash-merges the revert pull request once that pull request's CI is green, then requeues the unit as a fix round; a red revert pull request CI → `revert_red` (§7.4); none within the wait limit → `ci_not_observed`, the issue stays open. |
+| 17 closeout | M | Only after `main` CI of the squash commit is green (step 16), close the unit issue `completed`; a red `main` CI or `ci_not_observed` leaves it open (DR-50). The same write that closes the issue marks `[x]` each `## Done` item whose evidence is green (Q22). Before unit 0.12 brings CI, the §14 row 0.12 applies. The status comment's final state is the evidence (gate summary, pull request and CI links, Run-Id). Delete the claim ref, run refs, the run branch and the integration clone. On each pass, close `completed` every open `runnable: owner` unit issue that a commit on `main` references once `main` CI of that commit is green; a red `main` CI leaves it open. Then close `completed` every goal issue whose task-list units are all closed (DR-50). Then close every milestone whose issues are all closed and whose phase gate (§14) is green; a gate that is not green leaves the milestone open (DR-50). |
 | 18 ledger | M | Append the record (§8.5); run the escaped-defect scan (M3) and the footprint check (§6.4). |
 
 ### 7.4 Failure paths
@@ -749,6 +756,11 @@ A **red signature** = step id + sorted failing test ids (when the runner reports
 
 | Event | Outcome | Engine action |
 |---|---|---|
+| Onboarding detects two or more stacks | `multi_stack` | Onboarding stops with this named outcome (§7.1 step 3, §15). |
+| Onboarding detects no known stack | `unknown_stack` | The stack profile comes from the adaptation ladder (§7.7, §8.2). |
+| Stack detection fails | `detect_error` | Red, reported by name (§7.1 step 3). |
+| A plan fails its parse or audit a second time | `plan_invalid` | Planning stops; owner brief on the goal (§7.2 step 4, §8.4). |
+| No adapter can run rung 2 of the adaptation ladder | `artefact_requested` | MCP reply to the lead session; the owner enters the answer with the terminal-only `aiwe artefact submit`, then the same verify and proof (§7.7, §5.7). |
 | Unit text invalid | `unit_invalid` | Label `invalid` + one comment with the findings. |
 | Product decision needed | `owner_decision` | Label `question`; owner brief; ledger `owner_action`; other units continue. |
 | Gate red, agent fault | `red` | Fix round. |
@@ -758,10 +770,15 @@ A **red signature** = step id + sorted failing test ids (when the runner reports
 | Run over its run limit, or silent past its silence limit (both below) | `timed_out`, `stalled` | Stop the tree (DR-15); evidence per DR-38; counts as an attempt. |
 | Observed model differs from the requested one | `model_mismatch` | Red; the unit is requeued on another source; not charged. |
 | Source account restricted | `account_restricted` | Source → `restricted` (§7.6); the run returns to the queue; not charged; owner brief. |
+| No active source can serve a role | `no_capacity` | The unit waits; other roles continue (§7.6, §7.9). |
 | git missing or too old at start | `git_missing`, `git_too_old` | Exit 1 with the next action (§6.2). |
 | Rebase or merge conflict at integration | `conflict` | A resolution run on the same run branch, rebased onto the working-branch tip; the prompt names the conflicted files. Two failed resolutions → `skipped`, requeued (Q11). |
+| Two failed conflict resolutions on one unit | `skipped` | Unit requeued (Q11). |
 | Three failures on one unit | `quarantined` | Stop offering the unit; label `help wanted`. |
 | First 5 units of a goal (default) have M1 < 70 % | `goal_paused` | Stop dispatching the goal's units; owner brief on the goal; label `question`. |
+| A revert pull request's CI is red after a red `main` CI (§7.3 step 16) | `revert_red` | Stop the queue: no unit is dispatched or merged; owner brief (§8.4). |
+| No CI run of a pull request head or of the squash commit observed within the wait limit | `ci_not_observed` | Never green; after the squash merge the unit issue stays open (§7.3 steps 15–17). |
+| A merge refused a second time because `main` moved | `push_rejected` | Batch requeued (§7.3 step 16). |
 | Run process killed or lost | `lost` (§8.6) | Unit returns to the queue. The record closes with the time since `StartedAt`, marked as an upper bound, and the collected tip; never 0 ms. |
 | Ledger not writable | `ledger_unavailable` | No dispatch (fail-closed). |
 | Prompt over its cap | `prompt_too_large` | Label `invalid` with the measured size (§9.2). |
@@ -776,10 +793,14 @@ A **red signature** = step id + sorted failing test ids (when the runner reports
 | Owner stops a run | `stopped_by_owner` | Unit back in the queue; not charged (§6.3). |
 | A unit verify or test step collects zero tests | `no_tests_collected` | Red; a fix round (DR-13, §7.8). |
 | A branch commit carries a `VERDICT:` line | `verdict_in_branch` | Refused; the verdict comes only from the judging run (DR-9). |
+| A RED verdict cites a `path:line` or identifier that does not resolve on the tip | `unverified_finding` | Sent to a new auditor run, never to the writer (§7.3 step 12). |
 | A unit commit is marked breaking (`!` or `BREAKING CHANGE`) | `breaking_change` | Not integrated; label `question`; owner brief; the owner answers with the terminal-only `aiwe unit approve-breaking` (§12.3). |
 | An approval expired, or the before-state changed since approval | `approval_expired`, `before_state_changed` | Not applied; a new plan check and approval (§7.9). |
 | A terminal-only command runs without a terminal | `not_a_terminal` | Refused (§5.7). |
 | A temp or cache root contains home, state, a canonical repository or a file-system root | `root_unsafe` | Exit 1; nothing is removed (§5.15). |
+| A directory's `owned_dir` record or `.owner` marker does not prove that aiwe made it | `not_owned` | Refused; the directory stays (§5.15). |
+| A file in an owned directory stays locked after the removal retries | `residue_locked` | The directory stays; the next sweep retries (§6.4). |
+| Text is not valid UTF-8 | `invalid_utf8` | Refused; the detail names the first invalid byte (§5.14). |
 
 **Limits derived from the ledger** (DR-38). Each value is printed with its basis. Until its sample
 exists, the default holds. Measured basis: §17, the previous engine's run ledger.
@@ -903,7 +924,7 @@ the engine executes. The agent never reaches the resource and never sees a secre
 | 6 execute | M | The engine measures the before-state again; a result that differs from the approved one stops the unit (`before_state_changed`). Then, through the access method, in this order: backup → change → syntax check (red → restore the backup, stop) → apply → after-measurement. Each command is a check record (§8.5). |
 | 7 verify | M | The after-measurement meets the Done items, else `rolled_back`: the engine runs the rollback command, measures again and records both. |
 | 8 audit | J | The auditor (DR-9) judges the Done items against the before-state, the plan and the after-measurement. RED → `rolled_back`. |
-| 9 closeout | M | The backup path exists (checked through the access method) and the rollback command is in the status comment; then close `completed`. Ledger record (§8.5). |
+| 9 closeout | M | The backup path exists (checked through the access method) and the rollback command is in the status comment; then close `completed` (DR-50). Ledger record (§8.5). |
 
 Access file: `<state>/projects/<repo-id>/operations.json` (§6.4) maps each access id to an argv
 prefix and the env variable names of its secrets, each measure id to an argv command, and marks a
@@ -1039,14 +1060,17 @@ Serves S3, S5. Built-in elements only (DR-31):
   repository → the built-in type `Bug`, `Feature` or `Task`. REST `issue-types` is not used: on a
   personal-account repository it misleads. The tracker contract suite proves both paths.
 - **Order / priority**: milestone, one per phase. A unit is not claimed while an earlier milestone
-  is open; the engine closes a milestone when every issue in it is closed and its phase gate (§14)
-  is green.
+  is open; closeout closes a milestone (§7.3 step 17).
 - **Waiting on owner**: label `question`. **Bad unit text**: `invalid`. **Quarantined or repeated
   red**: `help wanted`.
 - **Close reason**: `completed`, `not_planned`, `duplicate` (fact, §17).
 - **Pull request**: one per unit, opened and squash-merged by the engine (§7.3 steps 14–16, Q21).
+  Its body carries `Refs #<n>` for its unit issue, never a closing keyword: the engine closes the
+  issue itself (§7.3 step 17, §10.1, DR-50).
+- **Finding outside the unit**: a new issue in this format, never an untracked note (DR-50).
 - **Assignee**: the human owner of a decision; the engine never assigns itself.
-- **Goal → units**: task list `- [ ] #N` in the goal body.
+- **Goal → units**: task list `- [ ] #N` in the goal body. Closeout closes the goal issue
+  `completed` when every unit of its task list is closed (§7.3 step 17, DR-50).
 - No custom labels, fields or title prefixes. Normalisation strips prefixes such as `ST2`
   or `(P1)` and maps them to type and milestone.
 
@@ -1080,7 +1104,7 @@ markers; all other text may be in any language (DR-27).
 | Element | Code | Operation | Rule |
 |---|---|---|---|
 | `- kind:` | required | required | `code` or `operation`; missing or other → `role_unresolved` (DR-44). |
-| `- runnable:` | required | required | `agent` allows dispatch. `owner` marks human work: never dispatched; the engine posts an owner brief. A harness or model name as the worker is refused; routing is by capability (DR-6). |
+| `- runnable:` | required | required | `agent` allows dispatch. `owner` marks human work: never dispatched; the engine posts an owner brief. The owner's pull request carries `Refs #<n>`, never a closing keyword. Closeout closes the owner unit issue (§7.3 step 17). A harness or model name as the worker is refused; routing is by capability (DR-6). |
 | `- test-exempt:` | required when not a behaviour unit, else absent | absent | One line: why the unit has no behaviour to test (DR-45). |
 | `## Goal` | required | required | One sentence: an imperative, or what is true when the unit is done. |
 | `## Files` | required | — | `- <path>` or `- <path> (new)`, optionally followed by one parenthesised note. DR-11; plain paths must exist, `(new)` paths must not. A tracked test file that contains a backticked identifier of `## Steps` and is not listed → `scope_outside_files`, naming each path. |
@@ -1153,7 +1177,9 @@ type RunRecord struct { RecordBase
 type CheckRecord struct { RecordBase
     Key, StepID, Commit string /* or "uncommitted" */; ExitCode int; Killed bool
     DurationMS int64; Tail /* masked before write (§11) */, Signature, RerunReason string }
-type TempDirRecord struct { RecordBase; Path string; PID int; RemovedAt *time.Time }
+type TempDirRecord struct { RecordBase; Root, Path, Owner string; PID int
+    StartID string /* "none" without an exact start identity */; RemovedAt *time.Time
+    HMAC string /* HMAC-SHA256 under <state>/owner.key (§5.15) */ }
 ```
 - `Measured` makes "unknown" a separate state from 0 at the type level (DR-21).
 - Integrity: each run start gets exactly one end record, or a `lost` record at the next start
@@ -1377,7 +1403,8 @@ type Tracker interface {
   sent.
 - Pull requests, a built-in GitHub element (DR-31): `pr-create` is REST
   `POST /repos/{owner}/{repo}/pulls`; `pr-merge` is REST `PUT /repos/{owner}/{repo}/pulls/{pull_number}/merge`
-  with `merge_method: squash`, `commit_title` = the unit's Conventional Commit subject,
+  with `merge_method: squash`, `commit_title` = `<type>(<scope>)` of the unit's first non-test
+  commit, then `: `, then the unit issue's title with its first letter in lower case (§7.3 step 14),
   `commit_message` = `Refs #N` for the unit issue N followed by the `Run-Id` trailer (DR-22, Q17),
   and `sha` = the audited head, which GitHub requires the head to match (§17). The message uses
   `Refs`, not `Closes`: the engine closes the issue itself at closeout, after `main` CI (§7.3
@@ -1470,7 +1497,8 @@ reporting, open from Gate 1, Q16; the open risk of §6.7) · `CODE_OF_CONDUCT.md
 Contributor Covenant 3.0; conduct reports go to the maintainer directly on GitHub, never through the
 vulnerability form; U5) · `go.mod`, `go.sum` ·
 `gate.json` (§12.2) · `.golangci.yml`, `.custom-gcl.yml` (§12.2) · `.goreleaser.yaml` (§12.3) ·
-`.githooks/commit-msg` · `.github/dependabot.yml` (ecosystems `gomod` and `github-actions`; why:
+`.githooks/commit-msg` · `.gitattributes` (LF in every checkout, DR-27) · `.gitignore` (`/dist/`,
+the release output, §12.3) · `.github/dependabot.yml` (ecosystems `gomod` and `github-actions`; why:
 security updates for pinned modules and actions; its pull requests follow Q17) ·
 `.github/workflows/ci.yml` (the only workflow).
 No issue form and no pull-request template: templates come from the tool (DR-34), and
@@ -1537,11 +1565,17 @@ a moved tag cannot change a step; Dependabot updates both); check `repo/ci-shape
 
 | Job | Runs on | Runs when | Steps (why) |
 |---|---|---|---|
-| `changes` | Linux | always | checkout; setup-go (module and build cache on by default, §17); `repocheck changes` → outputs `code`, `release`, `docs`, `green-tree` and `os-variant` (why: later jobs skip unchanged inputs; `green-tree` skips a job whose tree and OS already have a green run, DR-12, U23; `os-variant` is on when an OS-specific file changed (a Go file with an OS suffix or build constraint, `core/platform.go`, `core/process*.go`), when `go.mod` or `ci.yml` changed, on `workflow_dispatch` with `all-os`, and on a push the release job publishes live, Q20; once this month's minutes pass 70 % of the plan's included minutes, only the last two turn it on, U29) |
+| `changes` | Linux | always | checkout; setup-go (module and build cache on by default, §17); `repocheck changes` → outputs `code`, `release`, `docs`, `green-tree` and `os-variant` (why: later jobs skip unchanged inputs; `green-tree` skips a job whose tree and OS already have a green run, DR-12, U23; `os-variant` is on when an OS-specific file changed (a Go file with an OS suffix or build constraint, `core/platform.go`, `core/process*.go`), when `go.mod` or `ci.yml` changed, on `workflow_dispatch` with `all-os`, and on a push the release job publishes live, Q20; once this month's minutes pass 70 % of the plan's included minutes, only the last two turn it on, U29; both minute counts come from the minutes source below the table) |
 | `static` | Linux only | `code`, `docs` or `release` | checkout; setup-go; restore `custom-gcl` from cache keyed by `.custom-gcl.yml` (why: building it is slow, U18); `gates gate --step format,lint,vuln,tidy,deadcode,repo` (docs only → `--step repo`) (why: these results do not depend on the OS); `repocheck commit-msg` over the PR's commits, PR only (why: contributors without the hook); `repocheck run-id` over the pushed range, push to `main` only: from the first `main` commit with a `Run-Id` trailer on, a first-parent unit commit (Q17) without a `Run-Id` trailer is red, a commit that references a `runnable: owner` unit is listed as `owner`, and every other commit is listed as `external` in the job summary (why: DR-46, Q17, unit 1.29); `go tool svu next` and the release notes, PR only (why: the author sees the computed version and notes before merge, Q15; method: U3); `go tool goreleaser release --snapshot --clean`, only when `release` (why: a broken release config fails before merge, §17) |
 | `test` | Linux; Windows and macOS only when `os-variant` | `code` | checkout; setup-go; `go env GOARCH CGO_ENABLED CC` (why: U9); `gates gate --step test` (why: processes, paths, file locks and launchers differ by OS, DR-6, DR-37; other pushes test on Linux only, Q20); step `race`, Linux only: `go test -race ./...` (why: data races, §5.17; the Linux image has cgo and a C compiler, U9); `go build ./cmd/aiwe` and step `clean-os-smoke` with `PATH` reduced to git and the binary: `--help` and `version` from unit 0.12, `mcp snippet` and onboarding of a fixture repository from unit 1.25 (why: DR-40; clean images: U12) |
-| `required` | Linux | always, after all jobs (`needs`, `if: always()`) | checkout; setup-go; `repocheck ci-report`: fails when a needed job failed or was cancelled, and writes run duration, per-job duration, step count, cache hits, and this run's and this month's minutes per OS against the plan's included minutes (§17) to the job summary, and says so when this month's minutes pass 70 % of them (why: the one required check, since a job skipped through a failed dependency reports no failure, §17; the DR-42 metric; U29) |
+| `required` | Linux | always, after all jobs (`needs`, `if: always()`) | checkout; setup-go; `repocheck ci-report`: fails when a needed job failed or was cancelled, and writes run duration, per-job duration, step count, cache hits, and this run's and this month's minutes per OS against the plan's included minutes (§17) to the job summary, and says so when this month's minutes pass 70 % of them, both from the minutes source below the table (why: the one required check, since a job skipped through a failed dependency reports no failure, §17; the DR-42 metric; U29) |
 | `release` | Linux | push to `main`, `required` green, `code` or `release` | §12.3 |
+
+**Minutes source** for `changes` and `ci-report`. This month's used minutes per OS: REST
+`GET /users/{username}/settings/billing/usage/summary` with `product=actions`, field
+`grossQuantity` per SKU. The plan's included minutes: the §17 fact "GitHub Actions on private repositories", for the plan name that
+`GET /user` returns in `plan.name`. A source that does not answer gives `unknown`, never `0`
+(DR-21), and the 70 % rule does not apply (U30).
 
 Merged or removed elements: separate `go vet` step (inside `lint`); separate
 `release.yml` (job in `ci.yml`); separate `clean-os-smoke` job (step in `test`); separate report
@@ -1567,7 +1601,7 @@ Release job steps (each states its reason):
 3. `go tool svu next` prints the next tag: `v` and the SemVer version, svu's default prefix (§17);
    equal to the current tag → stop with `no_change` (why: idempotent; a rerun on a tagged commit
    releases nothing; U4).
-4. Dry mode, until the owner closes unit 3.10 (Q3): print the computed version, then stop (why:
+4. Dry mode, until unit 3.10 is closed (Q3): print the computed version, then stop (why:
    Gate 0 proves the computation; the build is proved by the snapshot in `static`). A live run
    needs the three-OS `test` job of the same push (`os-variant`, Q20).
 5. Live mode: `git tag` with the computed version; `go tool goreleaser release --clean` (why: one run builds
@@ -1714,7 +1748,7 @@ table-driven case in the named Go test, and the unit that owns the test file cit
 | BC-36 | A red comes from the machine, not the agent | a fix round charged to the agent | `engine/quarantine_test.go` · 2.10 |
 | BC-37 | More runs are offered than the measured cores carry | an overloaded machine that slows gates and turns them red (DR-7) | `engine/admission_test.go` · 2.11 |
 | BC-38 | A source is at its concurrent-run ceiling | another run started on it (§8.1) | `engine/routing_test.go` · 2.14 |
-| BC-39 | `main` CI turns red after a squash merge | a direct push to `main` instead of a revert pull request, or a red revert pull request CI that does not stop the queue with an owner brief (§7.3 step 16) | `engine/ci_test.go` · 1.20 |
+| BC-39 | `main` CI turns red after a squash merge | a direct push to `main` instead of a revert pull request, or a red revert pull request CI that does not end in `revert_red` (§7.3 step 16, §7.4) | `engine/ci_test.go` · 1.20 |
 
 ### 13.2 Reference code per group
 
@@ -1724,13 +1758,14 @@ The maintainer keeps the per-group reference map (exact commits of the previous 
 
 ## 14. Delivery plan
 
-Every unit obeys DR-11: the Files column names source files; tests sit beside them (§5.13). Paths
-are under `internal/` unless they start with `cmd/`, `.github/` or name a root file. Verify is the
+Every unit obeys DR-11 and Q24: the Files column names source files; tests sit beside them (§5.13). Paths
+are under `internal/` unless they start with `internal/`, `cmd/`, `.github/`, `.githooks/` or `docs/`, or name a
+root file. Verify is the
 unit's own command. A phase gate is `aiwe gates gate --repo .` green in CI (§12.2) plus the phase
 criterion. Each phase is one milestone (§8.4). Each issue body is generated from these tables in the
 unit template (§8.4).
 
-**Test items** (DR-45): the 69 behaviour units carry 169 `— test:` items; an item cites the §13.1
+**Test items** (DR-45): the 71 behaviour units carry 179 `— test:` items; an item cites the §13.1
 contract rows its test covers. Ten units are `test-exempt` (documents, configuration or an owner
 approval only): 0.16, 0.13, 0.14, 0.11, 1.18, 1.27, 3.9, 3.10, 3.6, 4.5.
 
@@ -1745,7 +1780,7 @@ creates each file the check reads (`rules`: `gate.json`; `ci-shape`: `.github/wo
 (5) the unit that creates the CI workflow, and a verify that runs the whole gate, `aiwe work`,
 `aiwe metrics`, a smoke test or the release build, depend on every earlier unit of their phase;
 (6) a unit whose code calls another unit's new code depends on it: 0.7 on 0.6 (process control),
-0.18 on 0.6 (git through process control), 0.19 on 0.3 (config), 1.3 on 1.5 (masking), 1.4 on 1.5
+0.18 on 0.6 (git through process control), 0.19 on 0.20 (config), 0.5 on 0.21 (process identity), 1.3 on 1.5 (masking), 1.4 on 1.5
 (early diff checks), 1.8 on 1.5 (payload scan), 1.13 on 1.12 (harness runs), 1.19 on 1.3, 1.8,
 1.9, 1.15, 1.16, 1.26 and 1.30 (gate clone, status, unit parser, routing, clones, roles, sandbox),
 1.20 on 1.19, 1.21 on 1.2, 1.7, 1.19 and 1.20 (gate derivation, GitHub adapter, lifecycle,
@@ -1770,11 +1805,12 @@ so. From the self-hosting point on, every unit is dispatched through aiwe.
 |---|---|---|
 | 0.7 | The gate result: `aiwe gates gate` | the unit's own verify |
 | 0.10 | The commit message check: `.githooks/commit-msg` | the lead session checks each message |
-| 0.12 | The push gate: the CI workflow | the full gate, run locally |
+| 0.12 | The push gate: the CI workflow | the full gate, run locally; the closeout records "no workflow on main yet" and closes the issue on the lead session's integration evidence (DR-50) |
 | 1.4 | One check run per key: `aiwe verify` | the lead session runs each verify once and records it |
 | 1.9 | The unit template check: `aiwe unit check` | a generator and validator over the plan file |
+| 1.16 | Run isolation: the run clone, its scratch `HOME` and `TEMP`, and a secret-free environment (DR-35, §6.5) | the lead session makes one shallow clone per unit with `core.autocrlf=false`; scratch `HOME` and `TEMP` and the secret-free environment wait for the engine |
 | 1.21 | The goal split: `aiwe plan` | the architect role in the lead session |
-| 1.25 | **Self-hosting point**: `aiwe work --repo .` dispatches every later unit | test-author, engineer and auditor as separate runs, started by the lead session; the lead session opens and squash-merges each unit pull request as §7.3 steps 14–16 do (Q21) |
+| 1.25 | **Self-hosting point**: `aiwe work --repo .` dispatches every later unit | test-author, engineer and auditor as separate runs, started by the lead session; the lead session opens and squash-merges each unit pull request with `Refs #<n>`, and closes the unit issue with an evidence comment once `main` CI is green, as §7.3 steps 14–17 do (Q21, DR-50) |
 
 Unit 1.29 is the first unit dispatched through aiwe. It makes hand work after the self-hosting point
 visible in CI (DR-46).
@@ -1794,9 +1830,11 @@ Serves S1, S7.
 | 0.1 | The CLI prints every command result in one result envelope. | `go.mod`, `cmd/aiwe/main.go`, `core/result.go`, `core/command.go`, `core/output.go` | `go test ./internal/core/ ./cmd/...` |
 | 0.16 | The release configuration builds every target in a snapshot. | `.goreleaser.yaml`, `go.mod` (`tool` line for GoReleaser) | `go tool goreleaser release --snapshot --clean` |
 | 0.2 | Every error maps to one named outcome and one exit code. | `core/args.go`, `core/cli.go`, `core/errors.go`, `core/outcomes.go`, `core/assert.go` | `go test ./internal/core/` |
-| 0.3 | Disk roots, module edges, env, config and logs resolve in one place each. | `core/platform.go`, `core/modules.go`, `core/env.go`, `core/config.go`, `core/log.go` | `go test ./internal/core/` |
+| 0.3 | Disk roots, module edges and env resolve in one place each. | `core/platform.go`, `core/modules.go`, `core/env.go`, `core/outcomes.go` | `go test ./internal/core/` |
+| 0.20 | Config and logs resolve in one place each. | `core/config.go`, `core/log.go`, `core/outcomes.go` | `go test ./internal/core/` |
 | 0.4 | Text round-trips byte-exact in UTF-8, whatever the locale. | `core/text.go`, `repocheck/source_rules.go` | `go test -run 'Text|SourceRules' ./internal/core/ ./internal/repocheck/` |
-| 0.5 | Only owned directories are removed, and leftovers are swept and counted. | `core/remove.go`, `core/sweep.go`, `core/footprint.go` | `go test -run 'Owned|Sweep|Footprint' ./internal/core/` |
+| 0.21 | Process identity and real paths resolve in one place on every OS. | `core/procstart.go`, `core/procstart_windows.go`, `core/procstart_unix.go`, `core/procstart_darwin.go`, `core/realpath_unix.go`, `go.mod`, `go.sum` | `go test -run 'CurrentProcess|StartID|ProcessStart|RealPath' ./internal/core/` |
+| 0.5 | Only owned directories are removed, and leftovers are swept and counted. | `core/remove.go`, `core/owner_key.go`, `core/sweep.go`, `core/footprint.go`, `core/outcomes.go` | `go test -run 'Owned|Sweep|Footprint' ./internal/core/` |
 | 0.6 | A stopped process tree leaves no child running on any OS. | `core/process.go`, `core/process_unix.go`, `core/process_windows.go`, `core/launcher_windows.go` | `go test -run Process ./internal/core/` |
 | 0.17 | Measured values and identities are core types that every module shares. | `core/measured.go`, `core/identified.go` | `go test -run Measured ./internal/core/` |
 | 0.18 | Every engine git call runs with repository-configured programs off. | `core/git.go` | `go test -run Git ./internal/core/` |
@@ -1908,7 +1946,7 @@ Serves M3, M6, M7.
 | 3.10 | The owner approves the 1.0.0 release once Gate 3, Q7 and U19 hold. | `docs/SPEC.md` | `aiwe metrics --repo .` |
 | 3.6 | The release job publishes `v1.0.0` and verifies its attestation. | `.goreleaser.yaml`, `.github/workflows/ci.yml` | `go tool goreleaser release --snapshot --clean` |
 
-Unit 3.10 is `runnable: owner`: the engine never dispatches it, and 3.6 waits for it. The live
+Unit 3.10 is `runnable: owner`: the engine never dispatches it, closes it by the owner unit rule (§8.4), and 3.6 waits for it. The live
 release is checked after the merge of 3.6: the release job of that push publishes `v1.0.0`
 and verifies its attestation (§12.3 step 6); the closeout of 3.6 waits for that CI run (§7.3 step
 16). The owner makes the `docs/SPEC.md` change of 3.10 through a pull request too, because the
@@ -1918,7 +1956,7 @@ no run made it: the `Run-Id` check (Q17, unit 1.29) lists a commit that referenc
 
 Gate 3: M1 ≥ 70 % over the last 20 units; M3 = 0 in the window; M6 = 0; M7 within ceilings; a
 security fixture finding is reproduced by the engine; a UI fixture without a runner records
-`not_measured: ux`; the owner has decided code signing (Q7) and closed unit 3.10.
+`not_measured: ux`; the owner has decided code signing (Q7), and unit 3.10 is closed.
 
 ### Phase 4 — Operation units
 
@@ -2011,6 +2049,10 @@ No open question remains. Each decision keeps its id; other sections cite it.
 | Q19 | Sandbox (owner, 2026-10-10): the MVP runs agents at sandbox level `env-scrub`; a stronger level comes after Gate 1 and is required before the first live operation (§6.7, §15). README and SECURITY state the open risk. |
 | Q20 | CI minutes (owner, 2026-10-10): Windows and macOS tests run only when `os-variant` is on (an OS-specific file, `go.mod` or `ci.yml` changed), at a phase gate (`workflow_dispatch` with `all-os`) and before a live release; every other push tests on Linux only (§12.2, U29). |
 | Q21 | Branch model (owner, 2026-10-10): trunk-based, no development branch. Each unit works on a short-lived run branch and merges through its own pull request: CI runs on the pull request, and the engine squash-merges it when CI is green and the head equals the audited tip; batch gate and bisect work on pull requests (DR-19, §7.3 steps 14–16). Before the self-hosting point the lead session does the same by hand (§14). |
+| Q22 | Closeout marks Done (owner, 2026-10-11): the write that closes a unit issue also marks `[x]` each `## Done` item whose evidence is green, mechanically (DR-50, §7.3 step 17). |
+| Q23 | Test functions (owner, 2026-10-11): the 60-line function limit applies to non-test functions; a test function has no line limit (§5.9). |
+| Q24 | Unit size (owner, 2026-10-11): a code unit has at most 5 source files (DR-11). Row 0.3 splits into 0.3 and 0.20, and row 0.5 into 0.21 and 0.5 (§14). |
+| Q25 | Manifest files (owner, 2026-10-11): `go.mod` and `go.sum` are a manifest and its lock file; they do not count as source files (DR-11). Reason: `go.mod` declares dependencies and carries no behaviour code, and splitting every unit that adds a dependency adds work without adding quality. |
 
 **Owner actions** (only work that needs a human; the engine never does it):
 
@@ -2240,7 +2282,7 @@ the facts above.
 - U11 Resolved: §10.1 states the least permissions as a default; unit 1.25 proves them.
 - U12 Clean OS images for `clean-os-smoke`; the minimum git version. Measured by unit 0.12 (images)
   and unit 1.20 (the oldest git that passes the git tests).
-- U13 Detecting pid reuse per OS (process start time). Measured by unit 0.5.
+- U13 Detecting pid reuse per OS (process start time). Measured by unit 0.21.
 - U14 Effect of git's long-path option on Windows clones. Measured by unit 2.12.
 - U15 Which harnesses report the model they ran and accept a command restriction. Measured by unit
   1.13.
@@ -2275,3 +2317,10 @@ the facts above.
 - U29 GitHub Actions minutes for private repositories on the owner's plan: the aiwe repository
   runs CI while it is private (Q16), and `aiwe-sandbox` runs its fixture CI (Q18). Measured by unit
   0.12: the `required` job prints the month's minutes per OS against the plan (§17, Q20).
+- U30 The minutes source of §12.2: which token the CI job uses to read user-level billing, and
+  whether the usage summary answers for the owner's account. The REST docs list
+  `GET /users/{username}/settings/billing/usage/summary` as public preview, and the usage report
+  only for the enhanced billing platform. Source: docs.github.com, REST billing usage, checked
+  2026-10-10. Measured by unit 0.12.
+- U31 The Windows `OpenProcess` access-denied branch of the process start read
+  (`core/procstart_windows.go`, unit 0.21) has no test: no test can reach it without a seam.

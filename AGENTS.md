@@ -15,6 +15,8 @@ SPEC §9.4). It asks for its unit verify through `aiwe verify`, and the engine r
 the result. Until unit 1.4 brings `aiwe verify`, the lead session runs each verify once and records
 it (SPEC §14). Until a release exists, the gate is `go run ./cmd/aiwe gates gate --repo .` (SPEC
 §12.2, §14); the engine or the lead session runs it, and it must exit 0 before a unit is done.
+Until unit 0.7 brings `aiwe gates gate`, the gate result is the unit's own verify (SPEC §14, row
+0.7).
 
 ## Red lines
 
@@ -25,6 +27,9 @@ Each line names the rule; the rule text is in SPEC §3.
   same standard. After it, no unit is worked outside aiwe; a unit worked by hand is a defect and is
   recorded as one. From unit 1.29 on, CI flags a `main` commit that closes or references a unit
   issue and has no `Run-Id` trailer; Dependabot and outside commits are `external` (Q17).
+- Every piece of work is an issue before it starts, and a finished one closes mechanically (DR-50).
+  Until unit 0.12 brings CI, the closeout records "no workflow on main yet" and closes on the lead
+  session's integration evidence (SPEC §14, row 0.12).
 - Every diff counts from the run's base commit (DR-47).
 - Commit only on your run branch; no push, merge, issue close or tracker write (DR-18).
 - A unit stays inside its declared file set (DR-11, DR-14).
@@ -42,7 +47,7 @@ Each line names the rule; the rule text is in SPEC §3.
 | Need | Place |
 |---|---|
 | Purpose, users, metrics | SPEC §1 |
-| Design rules DR-1…DR-49 | SPEC §3 |
+| Design rules DR-1…DR-50 | SPEC §3 |
 | Coding rules and patterns | SPEC §4, §5 |
 | Modules and package layout | SPEC §6.1 |
 | Sandbox levels and the open risk | SPEC §6.7 |

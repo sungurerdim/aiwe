@@ -1,0 +1,120 @@
+package core_test
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"strings"
+	"testing"
+
+	"github.com/sungurerdim/aiwe/internal/core"
+)
+
+// cliRegistry is a registry of commands that only use dictionary parameters.
+func cliRegistry() []core.Command {
+	ok := func(_ context.Context, _ core.Input) (core.Result[any], error) {
+		return core.Result[any]{Status: core.StatusOK, Outcome: "ok",
+			Data: map[string]string{"version": "v0.2.0"}, Detail: "v0.2.0"}, nil
+	}
+	return []core.Command{
+		{Module: "front", Object: "version", Params: []string{"format"},
+			Purpose: "print the version of this binary", Run: ok},
+		{Module: "gates", Object: "gates", Verb: "gate", Params: []string{"format"},
+			Purpose: "run the gate steps and print their evidence", Run: ok},
+		{Module: "engine", Object: "unit", Verb: "check", Params: []string{"format"},
+			Purpose: "check a unit issue against the unit template", Run: ok},
+	}
+}
+
+func TestHelp(t *testing.T) {
+	cmds := cliRegistry()
+	var out bytes.Buffer
+	code := core.RunCLI(context.Background(), cmds, []string{"--help"}, &out)
+	if code != 0 {
+		t.Errorf("aiwe --help exits %d, want 0; output:\n%s", code, out.String())
+	}
+	lines := strings.Split(out.String(), "\n")
+	for _, c := range cmds {
+		t.Run("help omits "+strings.TrimSpace(c.Object+" "+c.Verb)+" or its purpose", func(t *testing.T) {
+			for _, line := range lines {
+				if !strings.Contains(line, c.Purpose) {
+					continue
+				}
+				words := strings.Fields(line)
+				if !containsWord(words, c.Object) || (c.Verb != "" && !containsWord(words, c.Verb)) {
+					t.Errorf("help line %q carries the purpose of %s %s but not its name", line, c.Object, c.Verb)
+				}
+				return
+			}
+			t.Errorf("aiwe --help has no line with the purpose %q of %s %s; output:\n%s",
+				c.Purpose, c.Object, c.Verb, out.String())
+		})
+	}
+}
+
+func containsWord(words []string, w string) bool {
+	for _, x := range words {
+		if strings.Trim(x, ":,") == w {
+			return true
+		}
+	}
+	return false
+}
+
+func TestParseFormat(t *testing.T) {
+	tests := []struct {
+		name     string
+		args     []string
+		wantJSON bool
+		status   core.Status
+		exitCode int
+	}{
+		{name: "valid --format json call not printed as JSON",
+			args: []string{"version", "--format", "json"}, wantJSON: true, status: core.StatusOK, exitCode: 0},
+		{name: "parse error after --format json printed as text",
+			args: []string{"version", "--format", "json", "--bogus", "x"}, wantJSON: true, status: core.StatusUsage, exitCode: 2},
+		{name: "parse error before --format json printed as text",
+			args: []string{"version", "--bogus", "x", "--format", "json"}, wantJSON: true, status: core.StatusUsage, exitCode: 2},
+		{name: "parse error with --format=json printed as text",
+			args: []string{"version", "--format=json", "--bogus=x"}, wantJSON: true, status: core.StatusUsage, exitCode: 2},
+		{name: "stray positional argument after --format json printed as text",
+			args: []string{"version", "--format", "json", "extra"}, wantJSON: true, status: core.StatusUsage, exitCode: 2},
+		{name: "unknown command with --format json printed as text",
+			args: []string{"versoin", "--format", "json"}, wantJSON: true, status: core.StatusUsage, exitCode: 2},
+		{name: "repeated --format with the same value accepted silently",
+			args: []string{"version", "--format", "json", "--format", "json"}, wantJSON: true, status: core.StatusUsage, exitCode: 2},
+		{name: "repeated --format in both spellings accepted silently",
+			args: []string{"version", "--format=json", "--format", "json"}, wantJSON: true, status: core.StatusUsage, exitCode: 2},
+		{name: "repeated --format with two values accepted with the last one winning",
+			args: []string{"version", "--format", "text", "--format", "json"}, status: core.StatusUsage, exitCode: 2},
+		{name: "repeated --format with an empty second value accepted silently",
+			args: []string{"version", "--format", "text", "--format="}, status: core.StatusUsage, exitCode: 2},
+		{name: "unknown format accepted",
+			args: []string{"version", "--format", "yaml"}, status: core.StatusUsage, exitCode: 2},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+			code := core.RunCLI(context.Background(), cliRegistry(), tc.args, &out)
+			if code != tc.exitCode {
+				t.Errorf("aiwe %s exits %d, want %d; output: %q", strings.Join(tc.args, " "), code, tc.exitCode, out.String())
+			}
+			if tc.wantJSON {
+				var env map[string]any
+				if err := json.Unmarshal(out.Bytes(), &env); err != nil {
+					t.Fatalf("aiwe %s printed %q, want one JSON result envelope: %v", strings.Join(tc.args, " "), out.String(), err)
+				}
+				if env["status"] != string(tc.status) {
+					t.Errorf("aiwe %s envelope status = %v, want %q", strings.Join(tc.args, " "), env["status"], tc.status)
+				}
+				return
+			}
+			// The format is ambiguous here: either envelope is right if it carries the status.
+			var env map[string]any
+			isJSON := json.Unmarshal(out.Bytes(), &env) == nil && env["status"] == string(tc.status)
+			if !isJSON && !strings.HasPrefix(out.String(), string(tc.status)+":") {
+				t.Errorf("aiwe %s printed %q, want a result envelope with status %q", strings.Join(tc.args, " "), out.String(), tc.status)
+			}
+		})
+	}
+}

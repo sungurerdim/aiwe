@@ -1,0 +1,105 @@
+package core
+
+import "errors"
+
+// The outcomes the core itself names; every other outcome is a row of Outcomes.
+const (
+	OutcomeOK    Outcome = "ok"
+	OutcomeError Outcome = "error"
+	OutcomeUsage Outcome = "usage"
+)
+
+// OutcomeRow is one row of the outcome table: the name, the status word it carries and the one
+// next action a reader takes. Err is the sentinel that maps to the row, or nil.
+type OutcomeRow struct {
+	Outcome Outcome
+	Status  Status
+	Next    string
+	Err     error
+}
+
+// Outcomes returns the one outcome table (SPEC §5.3, §5.5): every outcome used in code is a row.
+func Outcomes() []OutcomeRow {
+	return []OutcomeRow{
+		{Outcome: OutcomeOK, Status: StatusOK, Next: "read the data of the result"},
+		{Outcome: OutcomeError, Status: StatusError,
+			Next: "fix the condition the detail names, then run the command again"},
+		{Outcome: OutcomeUsage, Status: StatusUsage, Next: "run aiwe --help and correct the call"},
+		{Outcome: "red", Status: StatusRed, Next: "fix the failing step, then run the gate again"},
+		{Outcome: "no_change", Status: StatusNoChange, Next: "nothing to do: the target already holds"},
+		{Outcome: "param_duplicate", Status: StatusError, Err: ErrParamDuplicate,
+			Next: "remove the second definition of the parameter from the dictionary"},
+		{Outcome: "param_undeclared", Status: StatusError, Err: ErrParamUndeclared,
+			Next: "define the parameter and its meaning in the dictionary, or remove it from the command"},
+		{Outcome: "invalid_utf8", Status: StatusError, Err: ErrInvalidUTF8,
+			Next: "re-save the file as UTF-8; the detail names the first invalid byte"},
+		{Outcome: "root_unresolved", Status: StatusError, Err: ErrRootUnresolved,
+			Next: "set the named root override to an absolute local directory, or unset it"},
+	}
+}
+
+// exitCodeRow maps one status word to its process exit code.
+type exitCodeRow struct {
+	Status Status
+	Code   int
+}
+
+// exitCodes returns the status word → exit code table of SPEC §5.3.
+func exitCodes() []exitCodeRow {
+	return []exitCodeRow{
+		{Status: StatusOK, Code: 0},
+		{Status: StatusError, Code: 1},
+		{Status: StatusUsage, Code: 2},
+		{Status: StatusRed, Code: 3},
+		{Status: StatusNoChange, Code: 4},
+	}
+}
+
+// ExitCode returns the process exit code of s; an unknown status exits 1, as an error (fail-closed).
+func (s Status) ExitCode() int {
+	for _, r := range exitCodes() {
+		if r.Status == s {
+			return r.Code
+		}
+	}
+	return 1
+}
+
+// outcomeRow returns the row named o, or the error row when no row has that name (fail-closed).
+func outcomeRow(o Outcome) OutcomeRow {
+	var fallback OutcomeRow
+	for _, r := range Outcomes() {
+		if r.Outcome == o {
+			return r
+		}
+		if r.Outcome == OutcomeError {
+			fallback = r
+		}
+	}
+	Assert(fallback.Outcome == OutcomeError, "the outcome table has no %q row", OutcomeError)
+	return fallback
+}
+
+// classify returns the outcome row of err: a *Error by its outcome, a sentinel by errors.Is, and
+// anything else as an error. An error never maps to ok.
+func classify(err error) OutcomeRow {
+	var e *Error
+	if errors.As(err, &e) {
+		if r := outcomeRow(e.Outcome); r.Status != StatusOK {
+			return r
+		}
+		return outcomeRow(OutcomeError)
+	}
+	for _, r := range Outcomes() {
+		if r.Err != nil && errors.Is(err, r.Err) {
+			return r
+		}
+	}
+	return outcomeRow(OutcomeError)
+}
+
+// ErrorResult maps err to its result: the outcome, status and exit code come from the outcome table.
+func ErrorResult(err error) Result[any] {
+	r := classify(err)
+	return Result[any]{Status: r.Status, Outcome: r.Outcome, Detail: err.Error()}
+}
