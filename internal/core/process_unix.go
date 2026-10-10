@@ -83,25 +83,36 @@ func onlyZombies(pgid int) (bool, error) {
 		return false, fmt.Errorf("list processes: %w", err)
 	}
 	for _, e := range entries {
-		if _, err := strconv.Atoi(e.Name()); err != nil {
-			continue // not a process directory
-		}
-		stat, err := os.ReadFile(filepath.Join("/proc", e.Name(), "stat"))
-		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ESRCH) {
-			continue // the process ended after the listing
-		}
+		live, err := liveMember(e.Name(), pgid)
 		if err != nil {
-			return false, fmt.Errorf("read status of process %s: %w", e.Name(), err)
+			return false, err
 		}
-		state, group, err := parseProcStat(stat)
-		if err != nil {
-			return false, fmt.Errorf("read status of process %s: %w", e.Name(), err)
-		}
-		if group == pgid && state != 'Z' && state != 'X' {
+		if live {
 			return false, nil
 		}
 	}
 	return true, nil
+}
+
+// liveMember reports whether the /proc entry name is a process of group pgid that is not a
+// zombie. An entry that is not a process directory, or whose process ended after the listing,
+// is not a live member.
+func liveMember(name string, pgid int) (bool, error) {
+	if _, err := strconv.Atoi(name); err != nil {
+		return false, nil // not a process directory
+	}
+	stat, err := os.ReadFile(filepath.Join("/proc", name, "stat"))
+	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ESRCH) {
+		return false, nil // the process ended after the listing
+	}
+	if err != nil {
+		return false, fmt.Errorf("read status of process %s: %w", name, err)
+	}
+	state, group, err := parseProcStat(stat)
+	if err != nil {
+		return false, fmt.Errorf("read status of process %s: %w", name, err)
+	}
+	return group == pgid && state != 'Z' && state != 'X', nil
 }
 
 // parseProcStat returns the state and the process group from /proc/<pid>/stat. The command name
