@@ -203,6 +203,8 @@ func platformConventionChecks(t *testing.T) {
 	tmp := filepath.Join(t.TempDir(), "Temp")
 	local := filepath.Join(t.TempDir(), "Local")
 	home := filepath.Join(t.TempDir(), "home", "zeynep")
+	ovState := filepath.Join(t.TempDir(), "override-state")
+	ovCache := filepath.Join(t.TempDir(), "override-cache")
 	p := core.Product
 	state := filepath.Join(home, ".local", "state", p)
 	cache := filepath.Join(home, ".cache", p)
@@ -223,6 +225,11 @@ func platformConventionChecks(t *testing.T) {
 		}{
 			{"windows", "LOCALAPPDATA", map[string]string{"TEMP": tmp},
 				func(r core.Roots) string { return r.State }, ""},
+			// An override for one root must not let LOCALAPPDATA skip the checks for the other.
+			{"windows", "LOCALAPPDATA", map[string]string{"TEMP": tmp, platformOverride("CACHE"): ovCache},
+				func(r core.Roots) string { return r.State }, ""},
+			{"windows", "LOCALAPPDATA", map[string]string{"TEMP": tmp, platformOverride("HOME"): ovState},
+				func(r core.Roots) string { return r.Cache }, ""},
 			{"windows", "TEMP", map[string]string{"LOCALAPPDATA": local},
 				func(r core.Roots) string { return r.Temp }, ""},
 			{"darwin", "TMPDIR", map[string]string{}, func(r core.Roots) string { return r.Temp }, ""},
