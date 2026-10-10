@@ -205,7 +205,7 @@ A test whose source is not yet in the tree passes only while a §14 Files cell l
 | DR-47 | Every engine diff is `git diff <base>...<tip>` from the run's base commit, so a base that advances during the run changes nothing; a D-check reports only lines of that diff, and a flagged line byte-identical on the base is `pre_existing`, never red; a unit line that counts from `HEAD~<n>` or `HEAD^` is refused. | S4, M3 | tests `engine/coverage_test.go`, `gates/checks_test.go`, `engine/unit_test.go` |
 | DR-48 | Every run starts through a sandbox adapter, and the run record names the level used; a live operation unit needs level `os-sandbox` (§6.7, Q19). | S4 | tests `core/sandbox_test.go`, `engine/clone_test.go`, `engine/operation_test.go` |
 | DR-49 | Every git call of the engine runs with repository-configured programs off, so a run clone's `.git/config` cannot make the engine run code (§5.21). | S4 | tests `core/git_test.go`, `engine/residue_test.go` |
-| DR-50 | Every done, planned or discovered piece of work is an issue in the §8.4 format before work starts, and issues are the single source of truth for work (DR-30); the engine closes a unit issue at closeout, only after `main` CI of its squash commit is green (§7.3 step 17), and closes a goal issue and a milestone by the rules of §8.4. | S5 | intake and `aiwe unit check` (§7.3 step 1, §8.4: only an issue in the §8.4 format is dispatched); closeout (§7.3 step 17); judgement: auditor (a finding outside the unit is a new issue) |
+| DR-50 | Every done, planned or discovered piece of work is an issue in the §8.4 format before work starts, and issues are the single source of truth for work (DR-30); the engine closes a code unit issue at closeout, only after `main` CI of its squash commit is green (§7.3 step 17), an operation unit issue at its own closeout (§7.9 step 9), an owner unit issue once `main` CI of a commit that references it is green (§8.4), and a goal issue and a milestone by the rules of §8.4. | S5 | intake and `aiwe unit check` (§7.3 step 1, §8.4: only an issue in the §8.4 format is dispatched); closeout (§7.3 step 17, §7.9 step 9); owner unit close (§8.4); judgement: auditor (a finding outside the unit is a new issue) |
 
 ---
 
@@ -905,7 +905,7 @@ the engine executes. The agent never reaches the resource and never sees a secre
 | 6 execute | M | The engine measures the before-state again; a result that differs from the approved one stops the unit (`before_state_changed`). Then, through the access method, in this order: backup → change → syntax check (red → restore the backup, stop) → apply → after-measurement. Each command is a check record (§8.5). |
 | 7 verify | M | The after-measurement meets the Done items, else `rolled_back`: the engine runs the rollback command, measures again and records both. |
 | 8 audit | J | The auditor (DR-9) judges the Done items against the before-state, the plan and the after-measurement. RED → `rolled_back`. |
-| 9 closeout | M | The backup path exists (checked through the access method) and the rollback command is in the status comment; then close `completed`. Ledger record (§8.5). |
+| 9 closeout | M | The backup path exists (checked through the access method) and the rollback command is in the status comment; then close `completed` (DR-50). Ledger record (§8.5). |
 
 Access file: `<state>/projects/<repo-id>/operations.json` (§6.4) maps each access id to an argv
 prefix and the env variable names of its secrets, each measure id to an argv command, and marks a
@@ -1086,7 +1086,7 @@ markers; all other text may be in any language (DR-27).
 | Element | Code | Operation | Rule |
 |---|---|---|---|
 | `- kind:` | required | required | `code` or `operation`; missing or other → `role_unresolved` (DR-44). |
-| `- runnable:` | required | required | `agent` allows dispatch. `owner` marks human work: never dispatched; the engine posts an owner brief. A harness or model name as the worker is refused; routing is by capability (DR-6). |
+| `- runnable:` | required | required | `agent` allows dispatch. `owner` marks human work: never dispatched; the engine posts an owner brief. The owner's pull request carries `Refs #<n>`, never a closing keyword. The engine closes an owner unit issue `completed` once a commit that references it is on `main` and `main` CI of that commit is green; a red `main` CI leaves it open (DR-50). A harness or model name as the worker is refused; routing is by capability (DR-6). |
 | `- test-exempt:` | required when not a behaviour unit, else absent | absent | One line: why the unit has no behaviour to test (DR-45). |
 | `## Goal` | required | required | One sentence: an imperative, or what is true when the unit is done. |
 | `## Files` | required | — | `- <path>` or `- <path> (new)`, optionally followed by one parenthesised note. DR-11; plain paths must exist, `(new)` paths must not. A tracked test file that contains a backticked identifier of `## Steps` and is not listed → `scope_outside_files`, naming each path. |
@@ -1920,7 +1920,7 @@ Serves M3, M6, M7.
 | 3.10 | The owner approves the 1.0.0 release once Gate 3, Q7 and U19 hold. | `docs/SPEC.md` | `aiwe metrics --repo .` |
 | 3.6 | The release job publishes `v1.0.0` and verifies its attestation. | `.goreleaser.yaml`, `.github/workflows/ci.yml` | `go tool goreleaser release --snapshot --clean` |
 
-Unit 3.10 is `runnable: owner`: the engine never dispatches it, and 3.6 waits for it. The live
+Unit 3.10 is `runnable: owner`: the engine never dispatches it, closes it by the owner unit rule (§8.4), and 3.6 waits for it. The live
 release is checked after the merge of 3.6: the release job of that push publishes `v1.0.0`
 and verifies its attestation (§12.3 step 6); the closeout of 3.6 waits for that CI run (§7.3 step
 16). The owner makes the `docs/SPEC.md` change of 3.10 through a pull request too, because the
