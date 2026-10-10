@@ -29,7 +29,9 @@ type Command struct {
 	Object string
 	Verb   string
 	Params []string
-	Run    func(ctx context.Context, in Input) (Result[any], error)
+	// Purpose is the one-line purpose that --help prints next to the command name (DR-23).
+	Purpose string
+	Run     func(ctx context.Context, in Input) (Result[any], error)
 }
 
 // Dictionary returns the one parameter dictionary: one name, one meaning, everywhere.
