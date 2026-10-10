@@ -116,28 +116,25 @@ func procStartTicks(pid int) (uint64, bool, error) {
 	if err != nil {
 		return 0, false, fmt.Errorf("start time of process %d: %w", pid, err)
 	}
-	ticks, err := parseProcStat(b)
-	if err != nil {
-		return 0, false, fmt.Errorf("start time of process %d: %w", pid, err)
-	}
-	if f, _ := procStatFields(b); f[0] == "Z" || f[0] == "X" {
-		return 0, false, nil
-	}
-	return ticks, true, nil
+	return parseProcStat(b)
 }
 
-// parseProcStat returns the start tick, field 22, of the contents of a /proc/<pid>/stat file. Any
-// malformed input is an error, never a start, so the start counts as unknown (fail-closed).
-func parseProcStat(data []byte) (uint64, error) {
+// parseProcStat returns the start tick, field 22, of the contents of a /proc/<pid>/stat file, and
+// whether the process runs: a process in state Z or X has exited. Any malformed input is an error,
+// never a start, so the start counts as unknown (fail-closed).
+func parseProcStat(data []byte) (uint64, bool, error) {
 	f, err := procStatFields(data)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	ticks, err := strconv.ParseUint(f[19], 10, 64)
 	if err != nil {
-		return 0, fmt.Errorf("malformed stat %q: %w", data, err)
+		return 0, false, fmt.Errorf("malformed stat %q: %w", data, err)
 	}
-	return ticks, nil
+	if f[0] == "Z" || f[0] == "X" {
+		return 0, false, nil
+	}
+	return ticks, true, nil
 }
 
 // procStatFields returns the fields of a /proc/<pid>/stat file that follow the command name, from
