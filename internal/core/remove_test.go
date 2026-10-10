@@ -450,3 +450,30 @@ func TestOwnedRemoveLocked(t *testing.T) {
 		t.Errorf("dir %q left after the handle closed", d.Path())
 	}
 }
+
+// TestRemoveTreeEscape catches an owned name that leaves its root, or was swapped for a link out
+// of it after the check, reported as residue_locked after 5 retries instead of not_owned at once.
+func TestRemoveTreeEscape(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "temp")
+	keep := filepath.Join(base, "outside", "keep.txt")
+	removeTestMkdir(t, root)
+	removeTestWrite(t, keep, "outside the temp root")
+	swapped := "run-20261011-0004-0123456789abcdef"
+	removeTestLink(t, filepath.Dir(keep), filepath.Join(root, swapped))
+
+	for _, name := range []string{filepath.Join("..", "outside"), swapped} {
+		begin := time.Now()
+		err := removeTree(context.Background(), root, name)
+		took := time.Since(begin)
+		if !errors.Is(err, ErrNotOwned) || errors.Is(err, ErrResidueLocked) {
+			t.Errorf("removeTree(%q) = %v, want not_owned, not residue_locked", name, err)
+		}
+		if took >= removeWait {
+			t.Errorf("removeTree(%q) took %v, want no retry of an escape (under %v)", name, took, removeWait)
+		}
+		if !removeTestExists(t, keep) {
+			t.Fatalf("file %q outside the root was removed through %q", keep, name)
+		}
+	}
+}

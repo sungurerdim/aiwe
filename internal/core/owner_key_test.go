@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -285,5 +287,45 @@ func TestOwnedRecordFields(t *testing.T) {
 	}
 	if json.Unmarshal(rec["pid"], &pid) != nil || pid != os.Getpid() {
 		t.Errorf("owned_dir record pid = %s, want %d", rec["pid"], os.Getpid())
+	}
+}
+
+// ownerKeyTestGrant gives Authenticated Users (SID S-1-5-11) the access perm on p with icacls.
+func ownerKeyTestGrant(t *testing.T, p, perm string) {
+	t.Helper()
+	out, err := exec.Command("icacls", p, "/grant", "*S-1-5-11:"+perm).CombinedOutput()
+	if err != nil {
+		t.Fatalf("icacls %s /grant *S-1-5-11:%s: %v: %s", p, perm, err, out)
+	}
+}
+
+// TestOwnerKeyACL catches an owner key, or a state dir, that a principal other than the owner,
+// SYSTEM or Administrators can read or write and that OpenOwner still loads or creates on Windows,
+// where the 0o600/0o700 modes do nothing (security review of #6, medium).
+func TestOwnerKeyACL(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("the key ACL check is Windows-only; Unix key modes are not measured (#109)")
+	}
+	for _, c := range []struct{ name, target, perm string }{
+		{"key readable by Authenticated Users", "owner.key", "(R)"},
+		{"key writable by Authenticated Users", "owner.key", "(M)"},
+		{"state dir writable by Authenticated Users", ".", "(OI)(CI)(M)"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			r := removeTestRoots(t, t.TempDir())
+			if c.target == ownerKeyFile {
+				// The user-only default under the test temp dir loads: the grant alone makes the refusal.
+				removeTestOpen(t, r)
+			}
+			ownerKeyTestGrant(t, filepath.Join(r.State, c.target), c.perm)
+			self, err := CurrentProcess()
+			if err != nil {
+				t.Fatalf("CurrentProcess: %v", err)
+			}
+			if o, err := OpenOwner(r, self); err == nil {
+				t.Errorf("OpenOwner with %s granted %s on %s = owner with a key of %d bytes, want an error",
+					"Authenticated Users", c.perm, filepath.Join(r.State, c.target), len(o.key))
+			}
+		})
 	}
 }

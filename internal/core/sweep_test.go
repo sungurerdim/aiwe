@@ -384,3 +384,45 @@ func TestSweepUnownedOrphan(t *testing.T) {
 		t.Errorf("Sweep report Refused = %d, want 2 (dangling link, link out of the root)", got)
 	}
 }
+
+// TestSweepRecordEscape catches a record signed under the owner key whose Path leaves the temp
+// root, which makes the sweep remove an empty dir outside it (security review of #6, low).
+func TestSweepRecordEscape(t *testing.T) {
+	r := sweepTestRoots(t)
+	outside := filepath.Join(filepath.Dir(r.Temp), "outside", "empty")
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	o := sweepTestOpen(t, r, sweepTestDeadProcess(t))
+	dead := o.self
+	rec := ownedRecord{
+		FormatVersion: ownedFormatVersion,
+		Kind:          kindOwnedDir,
+		At:            time.Now().UTC(),
+		RepoID:        noneField,
+		Goal:          noneField,
+		Unit:          noneField,
+		RunID:         noneField,
+		Root:          "temp",
+		Path:          filepath.Join("..", "outside", "empty"),
+		Owner:         "run-20261011-0003",
+		PID:           dead.PID,
+		Start:         dead.Start.UTC(),
+		StartID:       noneField,
+	}
+	rec.HMAC = o.mac(kindOwnedDir, o.temp, rec)
+	if err := o.appendRecord(rec); err != nil {
+		t.Fatalf("append the signed record: %v", err)
+	}
+
+	rep, err := sweepTestOpen(t, r, sweepTestSelf(t)).Sweep(context.Background())
+	if err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+	if !sweepTestExists(t, outside) {
+		t.Errorf("empty dir %q outside the temp root was removed by a record with Path %q", outside, rec.Path)
+	}
+	if rep != (SweepReport{}) {
+		t.Errorf("Sweep report = %+v, want zero: a record whose Path is not a plain name is no record", rep)
+	}
+}
