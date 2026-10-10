@@ -1,10 +1,14 @@
 package core_test
 
 import (
+	"context"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sungurerdim/aiwe/internal/core"
 )
@@ -139,6 +143,126 @@ func TestCleanEnv(t *testing.T) {
 		got := core.CleanEnv(os.Environ(), nil)
 		if v, ok := envCleanLookup(got, "GH_TOKEN"); ok {
 			t.Errorf("child of os.Environ keeps GH_TOKEN=%q; want it dropped", v)
+		}
+	})
+}
+
+// envExact reports whether env holds a variable named exactly name, with this exact case.
+func envExact(env []string, name string) (string, bool) {
+	for _, kv := range env {
+		if v, ok := strings.CutPrefix(kv, name+"="); ok {
+			return v, true
+		}
+	}
+	return "", false
+}
+
+func TestCleanEnvGitReach(t *testing.T) {
+	// Each variable lets a child reach a credential or run a program outside the run: an askpass
+	// program, the ssh agent, the editor's git bridge, an ssh or proxy command, git's own programs.
+	parent := []struct{ name, value string }{
+		{"GIT_ASKPASS", "/usr/lib/git-core/git-gui--askpass"},
+		{"SSH_ASKPASS", "/usr/bin/ssh-askpass"},
+		{"SSH_AUTH_SOCK", "/tmp/ssh-XXXXk3Jd9q/agent.2841"},
+		{"VSCODE_GIT_IPC_HANDLE", "/run/user/1000/vscode-git-6e1f2a9c4b.sock"},
+		{"GIT_SSH_COMMAND", "ssh -i /home/zeynep/.ssh/id_ed25519_deploy"},
+		{"GIT_SSH", "/usr/bin/plink"},
+		{"GIT_EXEC_PATH", "/home/zeynep/.local/libexec/git-core"},
+		{"GIT_PROXY_COMMAND", "/home/zeynep/bin/corp-proxy"},
+		{"git_askpass", `C:\Program Files\Git\mingw64\bin\git-askpass.exe`},
+		{"Ssh_Auth_Sock", `\.\pipe\openssh-ssh-agent`},
+		{"vscode_git_ipc_handle", `\.\pipe\vscode-git-6e1f2a9c4b-sock`},
+		{"Git_Ssh_Command", `ssh -i C:\Users\zeynep\.ssh\id_ed25519_deploy`},
+		{"git_exec_path", `C:\Users\zeynep\tools\git-core`},
+		{"Git_Proxy_Command", `C:\Users\zeynep\bin\corp-proxy.exe`},
+	}
+	env := []string{"PATH=/usr/local/bin:/usr/bin:/bin"}
+	for _, p := range parent {
+		env = append(env, p.name+"="+p.value)
+	}
+	child := core.CleanEnv(env, nil)
+	for _, p := range parent {
+		t.Run(p.name+" passed to the child, so git can reach a credential outside the run", func(t *testing.T) {
+			if v, ok := envExact(child, p.name); ok {
+				t.Errorf("child keeps %s=%q; want it dropped (SPEC §6.5)", p.name, v)
+			}
+		})
+	}
+	t.Run("PATH lost while dropping git reach variables", func(t *testing.T) {
+		if v, _ := envExact(child, "PATH"); v != "/usr/local/bin:/usr/bin:/bin" {
+			t.Errorf("child PATH = %q; want it kept", v)
+		}
+	})
+}
+
+func TestCleanEnvEmptyName(t *testing.T) {
+	const secret = "ghp_emptyName7Hq2xKfLm9Pz3RtWvYb4Nc8Jd"
+	parent := []string{
+		"PATH=/usr/local/bin:/usr/bin:/bin",
+		"=GH_TOKEN=" + secret,
+	}
+	child := core.CleanEnv(parent, nil)
+	t.Run("entry with an empty-looking name carries a token to the child", func(t *testing.T) {
+		for _, kv := range child {
+			if strings.Contains(kv, secret) {
+				t.Errorf("child entry %q holds the parent secret; want it dropped", kv)
+			}
+		}
+	})
+}
+
+func TestCleanEnvGitAskpass(t *testing.T) {
+	gitPath, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatalf("git is the only prerequisite (SPEC §6.2) and is not on PATH: %v", err)
+	}
+	const secret = "ghp_askpassLeak7Qm2Xv9Rt4Lp8Zc1Wn6Bh3"
+	dir := t.TempDir()
+	script := filepath.Join(dir, "askpass.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\necho "+secret+"\n"), 0o700); err != nil {
+		t.Fatalf("write askpass script: %v", err)
+	}
+	home := filepath.Join(dir, "home")
+	if err := os.Mkdir(home, 0o700); err != nil {
+		t.Fatalf("make home: %v", err)
+	}
+	// The parent is this process's environment with a home that holds no git config and an
+	// askpass program that answers every prompt with the secret.
+	var parent []string
+	for _, kv := range os.Environ() {
+		name, _, _ := strings.Cut(kv, "=")
+		switch strings.ToUpper(name) {
+		case "HOME", "USERPROFILE", "XDG_CONFIG_HOME", "GIT_CONFIG_GLOBAL", "GIT_ASKPASS", "SSH_ASKPASS":
+			continue
+		}
+		parent = append(parent, kv)
+	}
+	parent = append(parent, "HOME="+home, "USERPROFILE="+home, "XDG_CONFIG_HOME="+home,
+		"GIT_ASKPASS="+script, "SSH_ASKPASS="+script)
+	child := core.CleanEnv(parent, nil)
+
+	fill := func(t *testing.T, env []string) string {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, gitPath, "credential", "fill")
+		cmd.Env = env
+		cmd.Dir = dir
+		cmd.Stdin = strings.NewReader("protocol=https\nhost=example.invalid\n\n")
+		out, _ := cmd.CombinedOutput()
+		if ctx.Err() != nil {
+			t.Fatalf("git credential fill did not finish in 30 s: %s", out)
+		}
+		return string(out)
+	}
+	t.Run("fixture askpass program not reached by git", func(t *testing.T) {
+		if out := fill(t, append(append([]string{}, child...), "GIT_ASKPASS="+script)); !strings.Contains(out, secret) {
+			t.Fatalf("git credential fill with GIT_ASKPASS set = %q; want the askpass answer, so the check below is live", out)
+		}
+	})
+	t.Run("git credential fill in the child returns a secret from the parent askpass", func(t *testing.T) {
+		if out := fill(t, child); strings.Contains(out, secret) {
+			t.Errorf("git credential fill in the child = %q; want no credential (SPEC §6.5)", out)
 		}
 	})
 }

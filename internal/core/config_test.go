@@ -1,6 +1,7 @@
 package core_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -134,6 +135,15 @@ func TestConfig(t *testing.T) {
 			t.Errorf("ResolveConfig with a truncated settings.json = %+v, nil; want an error", got)
 		}
 	})
+	for _, body := range []string{`null`, `[]`, `"json"`, `1`} {
+		t.Run("state file holding "+body+" instead of an object not refused as config_invalid", func(t *testing.T) {
+			dir := configWriteState(t, t.TempDir(), "settings.json", body)
+			got, err := core.ResolveConfig(keys, core.ConfigLayers{LookupEnv: func(string) (string, bool) { return "", false }, StateDir: dir})
+			if !errors.Is(err, core.ErrConfigInvalid) {
+				t.Errorf("ResolveConfig with settings.json = %s: %+v, %v; want %v", body, got, err, core.ErrConfigInvalid)
+			}
+		})
+	}
 	t.Run("process environment not read through the env layer", func(t *testing.T) {
 		t.Setenv(configEnvName("FORMAT"), "json")
 		got, err := core.ResolveConfig(keys[:1], core.ConfigLayers{LookupEnv: os.LookupEnv, StateDir: t.TempDir()})

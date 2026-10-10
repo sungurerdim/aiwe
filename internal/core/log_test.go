@@ -104,6 +104,66 @@ func TestLog(t *testing.T) {
 			}
 		})
 	}
+	t.Run("C1 CSI colour sequence written raw", func(t *testing.T) {
+		// U+009B is the one-character form of ESC [; its whole sequence is removed like ESC [.
+		obj := logOneLine(t, func(l *slog.Logger) { l.Error("gate_red", "detail", "\u009b31mFAIL\u009b0m internal/core 0.412s") })
+		if got, _ := obj["detail"].(string); got != "FAIL internal/core 0.412s" {
+			t.Errorf("log line detail = %q; want %q", got, "FAIL internal/core 0.412s")
+		}
+	})
+	// A CSI that ends before its final byte is no sequence: only ESC and [ are removed and the
+	// text after them stays, so a cut escape cannot hide the rest of a line.
+	for _, tc := range []struct{ name, detail, want string }{
+		{"unterminated CSI at the end swallows the visible text after it",
+			"visible\x1b[ 1234 ...", "visible 1234 ..."},
+		{"unterminated CSI before a newline swallows the next output lines",
+			"step test\x1b[12\nexit 1\n--- FAIL: TestLog", "step test12\nexit 1\n--- FAIL: TestLog"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			obj := logOneLine(t, func(l *slog.Logger) { l.Error("gate_red", "detail", tc.detail) })
+			if got, _ := obj["detail"].(string); got != tc.want {
+				t.Errorf("log line detail = %q; want %q", got, tc.want)
+			}
+		})
+	}
+	t.Run("user attribute named time panics or adds a second ts", func(t *testing.T) {
+		for _, v := range []any{"2001-02-03T04:05:06Z", time.Date(2001, 2, 3, 4, 5, 6, 0, time.UTC)} {
+			var buf bytes.Buffer
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						t.Fatalf("logging a user attribute time=%v panics: %v", v, r)
+					}
+				}()
+				core.NewLogger(&buf).Info("gate_started", "time", v, "detail", "go test ./...")
+			}()
+			out := buf.String()
+			if strings.Count(out, `"ts":`) != 1 || strings.Contains(out, "2001-02-03") {
+				t.Errorf("log output = %q; want one ts from the record and the user time attribute dropped", out)
+			}
+		}
+	})
+	t.Run("user attributes msg and level forge a second event or level", func(t *testing.T) {
+		var buf bytes.Buffer
+		core.NewLogger(&buf).Info("gate_started", "msg", "gate_green", "level", "ERROR", "detail", "go test ./...")
+		out := buf.String()
+		if n := strings.Count(out, `"event":`); n != 1 {
+			t.Errorf("log output %q has %d event keys; want 1", out, n)
+		}
+		if n := strings.Count(out, `"level":`); n != 1 {
+			t.Errorf("log output %q has %d level keys; want 1", out, n)
+		}
+		if strings.Contains(out, "gate_green") || strings.Contains(out, "ERROR") {
+			t.Errorf("log output %q carries a forged event or level; want the user attributes dropped", out)
+		}
+		var obj map[string]any
+		if err := json.Unmarshal([]byte(out), &obj); err != nil {
+			t.Fatalf("log line %q is not one JSON object: %v", out, err)
+		}
+		if obj["event"] != "gate_started" || obj["level"] != "INFO" {
+			t.Errorf("log line event = %v, level = %v; want gate_started, INFO", obj["event"], obj["level"])
+		}
+	})
 	t.Run("two events not two lines", func(t *testing.T) {
 		var buf bytes.Buffer
 		l := core.NewLogger(&buf)
@@ -120,4 +180,22 @@ func TestLog(t *testing.T) {
 			}
 		}
 	})
+}
+
+// logOneLine writes through a new logger and returns its one JSON line, decoded; it fails when a
+// decoded value still carries an ESC or a C1 CSI character.
+func logOneLine(t *testing.T, write func(l *slog.Logger)) map[string]any {
+	t.Helper()
+	var buf bytes.Buffer
+	write(core.NewLogger(&buf))
+	var obj map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &obj); err != nil {
+		t.Fatalf("log output %q is not one JSON object: %v", buf.Bytes(), err)
+	}
+	for k, v := range obj {
+		if s, _ := v.(string); strings.ContainsAny(s, "\x1b\u009b") {
+			t.Errorf("log line %s = %q carries an escape character once decoded", k, s)
+		}
+	}
+	return obj
 }

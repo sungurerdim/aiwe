@@ -1,6 +1,7 @@
 package core_test
 
 import (
+	"errors"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -122,6 +123,32 @@ func TestPlatform(t *testing.T) {
 				t.Errorf("ResolveRoots(%s)\n got  %+v\n want %+v", tc.goos, got, tc.want)
 			}
 		})
+	}
+	sep := string(filepath.Separator)
+	for _, tc := range []struct{ name, override string }{
+		// Cleaning a path with .. can differ from the OS walk through a link, so the root is
+		// refused rather than cleaned (fail-closed, DR-37).
+		{"override with a .. element accepted instead of refused, since cleaning can differ from the OS walk",
+			ovState + sep + ".." + sep + "elsewhere"},
+		{"override with a trailing .. element accepted instead of refused", ovState + sep + "x" + sep + ".."},
+		{"override with a slash-separated .. element accepted instead of refused", ovState + "/../elsewhere"},
+		{"network share override with forward slashes accepted as a root", "//fileserver/share/aiwe"},
+		{"network share override with backslashes accepted as a root", `\\fileserver\share`},
+		{"network share override in long-path form accepted as a root", `\\?\UNC\fileserver\share\aiwe`},
+		{"drive root override with a forward slash accepted as a root", "C:/"},
+		{"drive root override with a backslash accepted as a root", `C:\`},
+		{"file system root override accepted as a root", "/"},
+	} {
+		for _, suffix := range []string{"HOME", "CACHE", "TMP"} {
+			t.Run(tc.name+" ("+platformOverride(suffix)+")", func(t *testing.T) {
+				env := map[string]string{"LOCALAPPDATA": local, "TEMP": tmp, "TMPDIR": tmp, platformOverride(suffix): tc.override}
+				got, err := core.ResolveRoots(runtime.GOOS, func(k string) string { return env[k] }, home)
+				if !errors.Is(err, core.ErrRootUnresolved) {
+					t.Errorf("ResolveRoots with %s=%q = %+v, %v; want %v",
+						platformOverride(suffix), tc.override, got, err, core.ErrRootUnresolved)
+				}
+			})
+		}
 	}
 	t.Run("user roots read on this OS from a fixed path instead of its env", func(t *testing.T) {
 		platformUserRoots(t)
