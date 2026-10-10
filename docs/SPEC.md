@@ -539,7 +539,7 @@ matrix compiles every code path that differs. Targets that no CI runner runs: U2
 | npm (optional, off) | Node and npm | not GoReleaser OSS: npm publishing is Pro (§17) | convenience only; trigger in §15 |
 
 Unit 3.6 configures GitHub Releases, winget, Scoop and Homebrew; unit 3.9 configures the MCP
-Registry entry. No channel publishes before the owner closes unit 3.10.
+Registry entry. No channel publishes before unit 3.10 is closed.
 
 External tools:
 - **git is the only prerequisite.** The binary runs `git --version` at start; missing →
@@ -1578,7 +1578,7 @@ Release job steps (each states its reason):
 3. `go tool svu next` prints the next tag: `v` and the SemVer version, svu's default prefix (§17);
    equal to the current tag → stop with `no_change` (why: idempotent; a rerun on a tagged commit
    releases nothing; U4).
-4. Dry mode, until the owner closes unit 3.10 (Q3): print the computed version, then stop (why:
+4. Dry mode, until unit 3.10 is closed (Q3): print the computed version, then stop (why:
    Gate 0 proves the computation; the build is proved by the snapshot in `static`). A live run
    needs the three-OS `test` job of the same push (`os-variant`, Q20).
 5. Live mode: `git tag` with the computed version; `go tool goreleaser release --clean` (why: one run builds
