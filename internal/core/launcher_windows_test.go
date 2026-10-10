@@ -17,10 +17,10 @@ import (
 func TestProcessTreeBatchLauncher(t *testing.T) {
 	t.Run("a time limit stops a tree started by a batch launcher", func(t *testing.T) {
 		launcher := writeProcessLauncher(t, t.TempDir())
-		ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), processOuterBound)
 		defer cancel()
 		child, dir := startProcessTree(t, ctx, []string{launcher}, true)
-		if err := waitProcessChild(t, child, 3*time.Second+processBound); err == nil {
+		if err := waitProcessChild(t, child, processOuterBound+processBound); err == nil {
 			t.Error("Wait after the time limit = nil, want the error of a launcher stopped by its limit")
 		}
 		requireProcessTreeGone(t, dir)
@@ -56,7 +56,7 @@ func TestProcessTreeBatchLauncher(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				dir := t.TempDir()
-				ctx, cancel := context.WithTimeout(t.Context(), processBound)
+				ctx, cancel := context.WithTimeout(t.Context(), processOuterBound)
 				defer cancel()
 				child, err := core.Start(ctx, core.ChildSpec{
 					Argv: []string{launcher, tt.arg},
@@ -111,7 +111,7 @@ func TestProcessTreeBatchLauncher(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				dir := t.TempDir()
-				ctx, cancel := context.WithTimeout(t.Context(), processBound)
+				ctx, cancel := context.WithTimeout(t.Context(), processOuterBound)
 				defer cancel()
 				injected := filepath.Join(dir, "injected") // cmd.exe runs in dir
 				child, err := core.Start(ctx, core.ChildSpec{
@@ -157,7 +157,7 @@ func TestProcessTreeBatchLauncher(t *testing.T) {
 			t.Fatalf("write launcher: %v", err)
 		}
 		dir := t.TempDir()
-		ctx, cancel := context.WithTimeout(t.Context(), processBound)
+		ctx, cancel := context.WithTimeout(t.Context(), processOuterBound)
 		defer cancel()
 		arg := "!" + secretName + "!"
 		child, err := core.Start(ctx, core.ChildSpec{
@@ -202,7 +202,7 @@ func TestProcessTreeBatchLauncher(t *testing.T) {
 				}
 				argv0 := tt.argv0(dir)
 				mark := filepath.Join(dir, "MARK") // cmd.exe runs in dir
-				ctx, cancel := context.WithTimeout(t.Context(), processBound)
+				ctx, cancel := context.WithTimeout(t.Context(), processOuterBound)
 				defer cancel()
 				child, err := core.Start(ctx, core.ChildSpec{
 					Argv: []string{argv0, arg},

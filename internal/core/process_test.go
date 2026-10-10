@@ -29,8 +29,11 @@ const (
 	// processHelperLifetime bounds every helper process, so a failed test cannot leave one
 	// running for longer than this.
 	processHelperLifetime = 30 * time.Second
-	// processBound bounds each wait of the test: setup, a stop, a time limit, a quiet check.
+	// processBound bounds each wait of the test: setup, a stop, a quiet check, a helper's wait.
 	processBound = 5 * time.Second
+	// processOuterBound bounds what holds a wait of processBound: a time limit over a setup or a
+	// waiting helper, a wait on a waiting helper. Its margin of processBound covers start-up.
+	processOuterBound = 2 * processBound
 	// processQuiet is how long a heartbeat must stay unchanged to count as stopped.
 	processQuiet     = 300 * time.Millisecond
 	processBeatEvery = 10 * time.Millisecond
@@ -183,10 +186,10 @@ func TestProcessTree(t *testing.T) {
 	})
 
 	t.Run("a time limit stops the whole tree", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), processOuterBound)
 		defer cancel()
 		child, dir := startProcessTree(t, ctx, nil, true)
-		if err := waitProcessChild(t, child, 3*time.Second+processBound); err == nil {
+		if err := waitProcessChild(t, child, processOuterBound+processBound); err == nil {
 			t.Error("Wait after the time limit = nil, want the error of a child stopped by its limit")
 		}
 		requireProcessTreeGone(t, dir)
@@ -195,7 +198,7 @@ func TestProcessTree(t *testing.T) {
 	t.Run("stop ends a grandchild left behind by a child that exited", func(t *testing.T) {
 		dir := t.TempDir()
 		child := startProcessChild(t, t.Context(), dir, "orphan")
-		if err := waitProcessChild(t, child, processBound); err != nil {
+		if err := waitProcessChild(t, child, processOuterBound); err != nil {
 			t.Fatalf("Wait = %v, want nil: the child did not see its grandchild run", err)
 		}
 		stopProcessTree(t, child, 200*time.Millisecond)
@@ -203,11 +206,11 @@ func TestProcessTree(t *testing.T) {
 	})
 
 	t.Run("a time limit stops a grandchild left behind by a child that exited", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), processOuterBound)
 		defer cancel()
 		dir := t.TempDir()
 		child := startProcessChild(t, ctx, dir, "orphan")
-		if err := waitProcessChild(t, child, processBound); err != nil {
+		if err := waitProcessChild(t, child, processOuterBound); err != nil {
 			t.Fatalf("Wait = %v, want nil: the child did not see its grandchild run before the limit", err)
 		}
 		<-ctx.Done()
@@ -230,7 +233,7 @@ func TestProcessTree(t *testing.T) {
 		t.Run("stop ends a child that obeys the ask within the grace, without a kill", func(t *testing.T) {
 			dir := t.TempDir()
 			child := startProcessChild(t, t.Context(), dir, "term")
-			requireProcessBeating(t, filepath.Join(dir, "child.beat"))
+			requireProcessBeating(t, filepath.Join(dir, "child.beat"), time.Now().Add(processBound))
 			grace := processBound
 			start := time.Now()
 			done := make(chan error, 1)
@@ -262,10 +265,10 @@ func TestProcessTree(t *testing.T) {
 	t.Run("a tree does not outlive the engine that started it", func(t *testing.T) {
 		dir := t.TempDir()
 		engine := startProcessChild(t, t.Context(), dir, "engine")
-		if err := waitProcessChild(t, engine, processBound); err != nil {
+		if err := waitProcessChild(t, engine, processOuterBound); err != nil {
 			t.Fatalf("engine Wait = %v, want nil: the engine did not see its tree run", err)
 		}
-		readProcessPids(t, dir)
+		readProcessPids(t, dir, time.Now().Add(processBound))
 		requireProcessBeatsStoppedWithin(t, 3*time.Second,
 			filepath.Join(dir, "child.beat"), filepath.Join(dir, "leaf.beat"))
 	})
@@ -279,8 +282,8 @@ func processEnv(dir, role string, ignoreTerm bool) []string {
 	return env
 }
 
-// startProcessTree starts a child that starts a grandchild, and returns once both beat. argv
-// nil runs the test binary itself as the child.
+// startProcessTree starts a child that starts a grandchild, and returns once both beat. The setup
+// is one wait of processBound. argv nil runs the test binary itself as the child.
 func startProcessTree(t *testing.T, ctx context.Context, argv []string, ignoreTerm bool) (*core.Child, string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -292,9 +295,10 @@ func startProcessTree(t *testing.T, ctx context.Context, argv []string, ignoreTe
 		t.Fatalf("Start(%q) = %v, want a running child", argv, err)
 	}
 	t.Cleanup(func() { killProcessTreeAfterFailure(t, dir) })
-	readProcessPids(t, dir)
-	requireProcessBeating(t, filepath.Join(dir, "child.beat"))
-	requireProcessBeating(t, filepath.Join(dir, "leaf.beat"))
+	end := time.Now().Add(processBound)
+	readProcessPids(t, dir, end)
+	requireProcessBeating(t, filepath.Join(dir, "child.beat"), end)
+	requireProcessBeating(t, filepath.Join(dir, "leaf.beat"), end)
 	return child, dir
 }
 
@@ -329,9 +333,9 @@ func requireProcessFile(t *testing.T, path string) {
 	}
 }
 
-func readProcessPids(t *testing.T, dir string) []int {
+// readProcessPids waits until end for the pids the child records.
+func readProcessPids(t *testing.T, dir string, end time.Time) []int {
 	t.Helper()
-	end := time.Now().Add(processBound)
 	for {
 		data, err := os.ReadFile(filepath.Join(dir, "pids"))
 		if err == nil {
@@ -346,7 +350,7 @@ func readProcessPids(t *testing.T, dir string) []int {
 			return pids
 		}
 		if time.Now().After(end) {
-			t.Fatalf("the child recorded no pids within %v: %v", processBound, err)
+			t.Fatalf("the child recorded no pids by the deadline: %v", err)
 		}
 		time.Sleep(processPollEvery)
 	}
@@ -381,10 +385,10 @@ func readProcessBeat(path string) (string, bool) {
 	return string(data), true
 }
 
-// requireProcessBeating proves the process behind path runs, so a later quiet beat means stopped.
-func requireProcessBeating(t *testing.T, path string) {
+// requireProcessBeating proves by end that the process behind path runs, so a later quiet beat
+// means stopped.
+func requireProcessBeating(t *testing.T, path string, end time.Time) {
 	t.Helper()
-	end := time.Now().Add(processBound)
 	first, ok := readProcessBeat(path)
 	for time.Now().Before(end) {
 		time.Sleep(processPollEvery)
@@ -396,7 +400,7 @@ func requireProcessBeating(t *testing.T, path string) {
 			first, ok = now, nowOK
 		}
 	}
-	t.Fatalf("%s did not beat within %v: the helper process is not running", filepath.Base(path), processBound)
+	t.Fatalf("%s did not beat by the deadline: the helper process is not running", filepath.Base(path))
 }
 
 // requireProcessTreeGone fails when the child or the grandchild still beats.
