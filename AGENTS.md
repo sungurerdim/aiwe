@@ -29,7 +29,7 @@ Each line names the rule; the rule text is in SPEC §3.
   issue and has no `Run-Id` trailer; Dependabot and outside commits are `external` (Q17).
 - Every piece of work is an issue before it starts, and a finished one closes mechanically (DR-50).
   Until unit 0.12 brings CI, the closeout records "no workflow on main yet" and closes on the lead
-  session's integration evidence.
+  session's integration evidence (SPEC §14, row 0.12).
 - Every diff counts from the run's base commit (DR-47).
 - Commit only on your run branch; no push, merge, issue close or tracker write (DR-18).
 - A unit stays inside its declared file set (DR-11, DR-14).
