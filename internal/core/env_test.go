@@ -360,3 +360,89 @@ func envGitFill(t *testing.T, gitPath, dir string, env []string) string {
 	}
 	return string(out)
 }
+
+// TestCleanEnvSecretsDropped pins the credential forms the #4 security review found kept: a name
+// ending in _PAT or _PASS, NPM_CONFIG__AUTH, GOOGLE_APPLICATION_CREDENTIALS, and a _URL value that
+// carries user:password@ (DR-35).
+func TestCleanEnvSecretsDropped(t *testing.T) {
+	tests := []struct {
+		name string
+		kv   string
+	}{
+		{"fine-grained GitHub token GITHUB_PAT kept",
+			"GITHUB_PAT=github_pat_11AEXAMPLE0aBcDeFgHiJkL_EXAMPLEmNoPqRsTuVwXyZ0123456789aBcDeFgHiJkLmN"},
+		{"GitHub token GH_PAT kept", "GH_PAT=ghp_EXAMPLE0aBcDeFgHiJkLmNoPqRsTuVwXyZ01"},
+		{"lower-case github_pat kept, which Windows reads as GITHUB_PAT",
+			"github_pat=ghp_EXAMPLE1lowerCaseNameReachesWindows2"},
+		{"Azure DevOps token AZURE_DEVOPS_EXT_PAT kept", "AZURE_DEVOPS_EXT_PAT=EXAMPLEazdo0pat1value2abcdefghijklmnopqrstu"},
+		{"database password DB_PASS kept", "DB_PASS=EXAMPLE-db-Pass-2026"},
+		{"mail password SMTP_PASS kept", "SMTP_PASS=EXAMPLEsmtpPass9"},
+		{"mixed-case Redis_Pass kept", "Redis_Pass=EXAMPLEredisPass7"},
+		{"npm registry auth NPM_CONFIG__AUTH kept", "NPM_CONFIG__AUTH=emV5bmVwOkVYQU1QTEVucG1QYXNz"},
+		{"lower-case npm_config__auth kept, which npm reads", "npm_config__auth=emV5bmVwOkVYQU1QTEVucG1QYXNz"},
+		{"Google credentials file GOOGLE_APPLICATION_CREDENTIALS kept",
+			"GOOGLE_APPLICATION_CREDENTIALS=/home/zeynep/.config/gcloud/EXAMPLE-service-account.json"},
+		{"DATABASE_URL with user:password@ kept", "DATABASE_URL=postgres://user:secret@db.example.com/app"},
+		{"lower-case database_url with user:password@ kept",
+			"database_url=postgresql://app_rw:EXAMPLEpgPass@db.example.com:5432/app?sslmode=require"},
+		{"REDIS_URL with an empty user and a password kept", "REDIS_URL=redis://:EXAMPLEredisPw@cache.example.com:6379/0"},
+		{"AMQP_URL with a percent-encoded password kept",
+			"AMQP_URL=amqps://svc:EXAMPLE%40mqPw@mq.example.com/vhost"},
+		{"git remote URL with a token as password kept",
+			"UPSTREAM_URL=https://zeynep:ghp_EXAMPLE2tokenInUrlAbCdEfGhIjKlMnOp@github.com/sungurerdim/aiwe.git"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			name, value, _ := strings.Cut(tc.kv, "=")
+			child := core.CleanEnv([]string{"PATH=/usr/local/bin:/usr/bin:/bin", tc.kv}, nil)
+			if got, ok := envCleanLookup(child, name); ok {
+				t.Errorf("child keeps %s=%q; want it dropped", name, got)
+			}
+			for _, kv := range child {
+				if strings.Contains(kv, value) {
+					t.Errorf("child entry %q holds the parent secret %q", kv, value)
+				}
+			}
+			if got, _ := envCleanLookup(child, "PATH"); got != "/usr/local/bin:/usr/bin:/bin" {
+				t.Errorf("child PATH = %q; want it kept beside the dropped %s", got, name)
+			}
+		})
+	}
+}
+
+// TestCleanEnvSecretsKept pins the boundaries of the new forms: a name that only starts with, or
+// holds, PAT or PASS, and a _URL value without a password in its authority, still reach the child.
+func TestCleanEnvSecretsKept(t *testing.T) {
+	tests := []struct {
+		name string
+		kv   string
+	}{
+		{"PATH dropped as a _PAT name", "PATH=/usr/local/bin:/usr/bin:/bin"},
+		{"lower-case path dropped", "path=/usr/bin:/bin"},
+		{"PATHEXT dropped", "PATHEXT=.COM;.EXE;.BAT;.CMD"},
+		{"GOPATH dropped", "GOPATH=/home/zeynep/go"},
+		{"HOME dropped", "HOME=/home/zeynep"},
+		{"USERPROFILE dropped", "USERPROFILE=/Users/zeynep"},
+		{"QUILT_PATCHES dropped as a _PAT name", "QUILT_PATCHES=debian/patches"},
+		{"PATTERN_DIR dropped as a _PAT name", "PATTERN_DIR=/srv/patterns"},
+		{"PASSENGER_APP_ENV dropped as a _PASS name", "PASSENGER_APP_ENV=production"},
+		{"COMPASS_HOME dropped as a _PASS name", "COMPASS_HOME=/opt/compass"},
+		{"NPM_CONFIG_REGISTRY dropped as NPM_CONFIG__AUTH", "NPM_CONFIG_REGISTRY=https://registry.npmjs.org/"},
+		{"GIT_AUTHOR_NAME dropped", "GIT_AUTHOR_NAME=Zeynep Çağlar"},
+		{"_URL without user info dropped", "HOMEPAGE_URL=https://docs.example.com/aiwe"},
+		{"_URL with @ only in its path dropped", "REGISTRY_URL=https://registry.npmjs.org/@types%2fnode"},
+		{"_URL with user:server@ only in its path dropped",
+			"MATRIX_URL=https://matrix.example.com/_matrix/client/v3/profile/@zeynep:example.com"},
+		{"scp-style _URL without a password dropped", "MIRROR_URL=git@github.com:sungurerdim/aiwe.git"},
+		{"_URL with a port and no user info dropped", "CACHE_URL=redis://cache.example.com:6379/0"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			name, value, _ := strings.Cut(tc.kv, "=")
+			child := core.CleanEnv([]string{tc.kv}, nil)
+			if got, ok := envExact(child, name); !ok || got != value {
+				t.Errorf("child %s = %q (present %v); want %q", name, got, ok, value)
+			}
+		})
+	}
+}
