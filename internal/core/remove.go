@@ -98,7 +98,7 @@ func resolveOwnedRoots(r OwnedRoots) (map[string]string, error) {
 		if err := os.MkdirAll(n.path, 0o700); err != nil {
 			return nil, fmt.Errorf("%s root: %w", n.name, err)
 		}
-		p, err := resolveRoot(n)
+		p, err := realDir(n)
 		if err != nil {
 			return nil, err
 		}
@@ -115,7 +115,7 @@ func protectedPaths(state string, r OwnedRoots) ([]namedPath, error) {
 		if n.path == "" || !filepath.IsAbs(n.path) {
 			return nil, fmt.Errorf("%w: %s %q is not an absolute path", ErrRootUnsafe, n.name, n.path)
 		}
-		p, err := resolveRoot(n)
+		p, err := realDir(n)
 		if err != nil {
 			return nil, err
 		}
@@ -132,9 +132,9 @@ func canonicalPaths(c []string) []namedPath {
 	return out
 }
 
-// resolveRoot returns the real path of an existing directory; a path that cannot be resolved
+// realDir returns the real path of an existing directory; a path that cannot be resolved
 // cannot be proven safe, so it fails with ErrRootUnsafe.
-func resolveRoot(n namedPath) (string, error) {
+func realDir(n namedPath) (string, error) {
 	p, err := realPath(n.path)
 	if err != nil {
 		return "", fmt.Errorf("%w: %s: %v", ErrRootUnsafe, n.name, err)

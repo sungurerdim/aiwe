@@ -4,8 +4,11 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
+	"runtime"
+	"time"
 )
 
 // SweepReport counts the registered temp directories one sweep found.
@@ -116,5 +119,19 @@ func ownerAlive(p ProcessID) bool {
 	if d < 0 {
 		d = -d
 	}
-	return d <= startTolerance
+	return d <= startTolerance()
+}
+
+// startTolerance is how far the OS start time of a p without an exact start identity may lie from
+// p.Start. On Windows and macOS the start is a stored value, read the same way at every call, so the
+// tolerance absorbs rounding only. Elsewhere it is read from /proc and moves with the wall clock, so
+// it is the widest Duration: a p built by hand whose pid runs always counts as a live owner and
+// nothing is removed (fail-closed, DR-25). On Linux CurrentProcess sets the exact identity, so the
+// tolerance applies only to a p built by hand.
+func startTolerance() time.Duration {
+	switch runtime.GOOS {
+	case "windows", "darwin":
+		return time.Second
+	}
+	return time.Duration(math.MaxInt64)
 }
