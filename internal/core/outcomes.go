@@ -33,6 +33,16 @@ func Outcomes() []OutcomeRow {
 			Next: "define the parameter and its meaning in the dictionary, or remove it from the command"},
 		{Outcome: "invalid_utf8", Status: StatusError, Err: ErrInvalidUTF8,
 			Next: "re-save the file as UTF-8; the detail names the first invalid byte"},
+		{Outcome: "root_unresolved", Status: StatusError, Err: ErrRootUnresolved,
+			Next: "set the named root override to an absolute local directory, or unset it"},
+		{Outcome: "not_owned", Status: StatusError, Err: ErrNotOwned,
+			Next: "leave the directory in place: its ledger record does not prove this process made it"},
+		{Outcome: "root_unsafe", Status: StatusError, Err: ErrRootUnsafe,
+			Next: "set the root the detail names to an absolute directory apart from the repository"},
+		{Outcome: "residue_locked", Status: StatusError, Err: ErrResidueLocked,
+			Next: "close the process that holds a file in the directory the detail names; the next sweep retries"},
+		{Outcome: "footprint_exceeded", Status: StatusError, Err: ErrFootprintExceeded,
+			Next: "free space under the footprint the detail names, or raise its ceiling"},
 	}
 }
 
