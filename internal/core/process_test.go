@@ -36,6 +36,9 @@ const (
 	processQuiet     = 300 * time.Millisecond
 	processBeatEvery = 10 * time.Millisecond
 	processPollEvery = 25 * time.Millisecond
+	// processRaceAttempts is how many trees the U22 case starts: each is a chance for a grandchild
+	// started first thing to run before its child joins the tree.
+	processRaceAttempts = 20
 )
 
 func init() {
@@ -48,7 +51,9 @@ func init() {
 
 // runProcessHelper is the body of a helper process. tree starts a leaf as its first action
 // (U22: a grandchild started before the child joins its job would escape), records both pids and
-// beats; leaf beats; argv records the arguments it received.
+// beats; orphan starts a leaf, waits for its first beat and exits 0, leaving it behind; term beats
+// until SIGTERM, records it and exits 0; leaf records its pid and beats; argv records the arguments
+// it received.
 func runProcessHelper(role string) int {
 	dir := os.Getenv(processDirEnv)
 	if os.Getenv(processIgnoreTermEnv) == "1" {
@@ -66,7 +71,49 @@ func runProcessHelper(role string) int {
 			return 11
 		}
 		beatProcessFile(filepath.Join(dir, "child.beat"))
+	case "orphan":
+		leaf := exec.Command(os.Args[0])
+		leaf.Env = append(os.Environ(), processRoleEnv+"=leaf")
+		if err := leaf.Start(); err != nil {
+			return 10
+		}
+		pids := fmt.Sprintf("%d %d", os.Getpid(), leaf.Process.Pid)
+		if err := writeProcessFile(filepath.Join(dir, "pids"), []byte(pids)); err != nil {
+			return 11
+		}
+		end := time.Now().Add(processBound)
+		for {
+			if _, ok := readProcessBeat(filepath.Join(dir, "leaf.beat")); ok {
+				return 0
+			}
+			if time.Now().After(end) {
+				return 15
+			}
+			time.Sleep(processBeatEvery)
+		}
+	case "term":
+		term := make(chan os.Signal, 1)
+		signal.Notify(term, syscall.SIGTERM)
+		if err := writeProcessFile(filepath.Join(dir, "pids"), []byte(strconv.Itoa(os.Getpid()))); err != nil {
+			return 11
+		}
+		beat := filepath.Join(dir, "child.beat")
+		end := time.Now().Add(processHelperLifetime)
+		for n := 1; time.Now().Before(end); n++ {
+			select {
+			case <-term:
+				if err := writeProcessFile(filepath.Join(dir, "term"), []byte("SIGTERM")); err != nil {
+					return 16
+				}
+				return 0
+			case <-time.After(processBeatEvery):
+				_ = writeProcessFile(beat, []byte(strconv.Itoa(n))) // a write lost to a reader is retried
+			}
+		}
 	case "leaf":
+		if err := writeProcessFile(filepath.Join(dir, "leaf.pid"), []byte(strconv.Itoa(os.Getpid()))); err != nil {
+			return 11
+		}
 		beatProcessFile(filepath.Join(dir, "leaf.beat"))
 	case "argv":
 		data, err := json.Marshal(os.Args[1:])
@@ -122,7 +169,67 @@ func TestProcessTree(t *testing.T) {
 		requireProcessTreeGone(t, dir)
 	})
 
+	t.Run("stop ends a grandchild left behind by a child that exited", func(t *testing.T) {
+		dir := t.TempDir()
+		child := startProcessChild(t, t.Context(), dir, "orphan")
+		if err := waitProcessChild(t, child, processBound); err != nil {
+			t.Fatalf("Wait = %v, want nil: the child did not see its grandchild run", err)
+		}
+		stopProcessTree(t, child, 200*time.Millisecond)
+		requireProcessBeatsStopped(t, filepath.Join(dir, "leaf.beat"))
+	})
+
+	t.Run("a time limit stops a grandchild left behind by a child that exited", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+		defer cancel()
+		dir := t.TempDir()
+		child := startProcessChild(t, ctx, dir, "orphan")
+		if err := waitProcessChild(t, child, processBound); err != nil {
+			t.Fatalf("Wait = %v, want nil: the child did not see its grandchild run before the limit", err)
+		}
+		<-ctx.Done()
+		requireProcessBeatsStopped(t, filepath.Join(dir, "leaf.beat"))
+	})
+
+	t.Run("a grandchild started first thing cannot run outside the tree", func(t *testing.T) {
+		beats := make([]string, 0, processRaceAttempts)
+		for range processRaceAttempts {
+			dir := t.TempDir()
+			child := startProcessChild(t, t.Context(), dir, "tree")
+			requireProcessFile(t, filepath.Join(dir, "leaf.pid"))
+			stopProcessTree(t, child, 200*time.Millisecond)
+			beats = append(beats, filepath.Join(dir, "leaf.beat"))
+		}
+		requireProcessBeatsStopped(t, beats...) // U22: a leaf that escaped the tree outlives its stop
+	})
+
 	if runtime.GOOS != "windows" {
+		t.Run("stop ends a child that obeys the ask within the grace, without a kill", func(t *testing.T) {
+			dir := t.TempDir()
+			child := startProcessChild(t, t.Context(), dir, "term")
+			requireProcessBeating(t, filepath.Join(dir, "child.beat"))
+			grace := processBound
+			start := time.Now()
+			done := make(chan error, 1)
+			go func() { done <- child.StopTree(grace) }()
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Errorf("StopTree(%v) = %v, want nil", grace, err)
+				}
+			case <-time.After(grace + processBound):
+				t.Fatalf("StopTree(%v) did not return within %v", grace, grace+processBound)
+			}
+			if took := time.Since(start); took >= grace {
+				t.Errorf("StopTree took %v, want less than the grace %v: the child that obeys SIGTERM was not asked", took, grace)
+			}
+			if err := waitProcessChild(t, child, processBound); err != nil {
+				t.Errorf("Wait = %v, want nil: the child was killed instead of ending on SIGTERM", err)
+			}
+			if _, err := os.Stat(filepath.Join(dir, "term")); err != nil {
+				t.Errorf("the child recorded no SIGTERM: %v", err)
+			}
+		})
 		return // batch launchers exist only on Windows (SPEC §5.20)
 	}
 
@@ -243,6 +350,37 @@ func startProcessTree(t *testing.T, ctx context.Context, argv []string, ignoreTe
 	return child, dir
 }
 
+// startProcessChild starts the test binary in role; cleanup stops its tree and kills what a failed
+// test left.
+func startProcessChild(t *testing.T, ctx context.Context, dir, role string) *core.Child {
+	t.Helper()
+	child, err := core.Start(ctx, core.ChildSpec{Argv: []string{os.Args[0]}, Dir: dir, Env: processEnv(dir, role, false)})
+	if err != nil {
+		t.Fatalf("Start(%s) = %v, want a running child", role, err)
+	}
+	t.Cleanup(func() {
+		_ = child.StopTree(200 * time.Millisecond) // best effort: a passed test has proven the tree gone
+		killProcessTreeAfterFailure(t, dir)
+	})
+	return child
+}
+
+// requireProcessFile waits for path to exist.
+func requireProcessFile(t *testing.T, path string) {
+	t.Helper()
+	end := time.Now().Add(processBound)
+	for {
+		_, err := os.Stat(path)
+		if err == nil {
+			return
+		}
+		if time.Now().After(end) {
+			t.Fatalf("%s did not appear within %v: %v", filepath.Base(path), processBound, err)
+		}
+		time.Sleep(processPollEvery)
+	}
+}
+
 func readProcessPids(t *testing.T, dir string) []int {
 	t.Helper()
 	end := time.Now().Add(processBound)
@@ -331,6 +469,37 @@ func requireProcessTreeGone(t *testing.T, dir string) {
 				break
 			}
 		}
+	}
+}
+
+// requireProcessBeatsStopped fails when a beat at any path still changes after processBound; a
+// beat that stays the same, or stays absent, for processQuiet counts as stopped.
+func requireProcessBeatsStopped(t *testing.T, paths ...string) {
+	t.Helper()
+	end := time.Now().Add(processBound)
+	pending := paths
+	for {
+		before := make(map[string]string, len(pending))
+		for _, p := range pending {
+			before[p], _ = readProcessBeat(p)
+		}
+		time.Sleep(processQuiet)
+		var still []string
+		for _, p := range pending {
+			if now, _ := readProcessBeat(p); now != before[p] {
+				still = append(still, p)
+			}
+		}
+		if len(still) == 0 {
+			return
+		}
+		if time.Now().After(end) {
+			for _, p := range still {
+				t.Errorf("%s still beats %v after the stop: a process of the tree outlived it", p, processBound)
+			}
+			return
+		}
+		pending = still
 	}
 }
 
