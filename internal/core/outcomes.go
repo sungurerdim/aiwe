@@ -31,6 +31,8 @@ func Outcomes() []OutcomeRow {
 			Next: "remove the second definition of the parameter from the dictionary"},
 		{Outcome: "param_undeclared", Status: StatusError, Err: ErrParamUndeclared,
 			Next: "define the parameter and its meaning in the dictionary, or remove it from the command"},
+		{Outcome: "invalid_utf8", Status: StatusError, Err: ErrInvalidUTF8,
+			Next: "re-save the file as UTF-8; the detail names the first invalid byte"},
 	}
 }
 
