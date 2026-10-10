@@ -11,8 +11,9 @@ func secretMarkers() []string {
 }
 
 // CleanEnv returns a copy of parent for a child process without secret-shaped variables, the
-// listed credentials or a git credential helper (DR-35). Names compare without case, as Windows
-// does. git is told to skip the system config, never to prompt, and to use an empty
+// listed credentials, a git credential helper, or a variable that reaches a credential or a
+// program outside the run (DR-35). An entry with an empty name is dropped too. Names compare
+// without case, as Windows does. git is told to skip the system config, never to prompt, and to use an empty
 // credential.helper, which clears every helper set in a config file.
 func CleanEnv(parent, credentials []string) []string {
 	child := make([]string, 0, len(parent)+5)
@@ -21,7 +22,7 @@ func CleanEnv(parent, credentials []string) []string {
 		if !ok {
 			continue
 		}
-		if name != "" && dropFromChild(strings.ToUpper(name), credentials) {
+		if name == "" || dropFromChild(strings.ToUpper(name), credentials) {
 			continue
 		}
 		child = append(child, kv)
@@ -47,13 +48,22 @@ func dropFromChild(upper string, credentials []string) bool {
 			return true
 		}
 	}
-	switch {
-	case upper == "GIT_CONFIG_PARAMETERS", upper == "GIT_CONFIG_COUNT",
-		upper == "GIT_CONFIG_NOSYSTEM", upper == "GIT_TERMINAL_PROMPT",
-		strings.HasPrefix(upper, "GIT_CONFIG_KEY_"), strings.HasPrefix(upper, "GIT_CONFIG_VALUE_"):
-		return true
+	for _, r := range reachNames() {
+		if upper == r {
+			return true
+		}
 	}
-	return false
+	return strings.HasPrefix(upper, "GIT_CONFIG_KEY_") || strings.HasPrefix(upper, "GIT_CONFIG_VALUE_")
+}
+
+// reachNames are the upper-case variable names that let a child reach a credential or run a
+// program outside the run, or that CleanEnv sets itself (DR-35, SPEC §6.5).
+func reachNames() []string {
+	return []string{
+		"GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT", "GIT_CONFIG_NOSYSTEM", "GIT_TERMINAL_PROMPT",
+		"GIT_ASKPASS", "SSH_ASKPASS", "SSH_AUTH_SOCK", "VSCODE_GIT_IPC_HANDLE",
+		"GIT_SSH_COMMAND", "GIT_SSH", "GIT_EXEC_PATH", "GIT_PROXY_COMMAND",
+	}
 }
 
 // processGetenv reads one variable of the process environment; this file is the only reader

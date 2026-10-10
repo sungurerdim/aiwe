@@ -55,9 +55,48 @@ func ResolveRoots(goos string, getenv func(string) string, home string) (Roots, 
 func resolveRoot(getenv func(string) string, suffix string, convention func() (string, error)) (string, error) {
 	name := productEnv(suffix)
 	if v := getenv(name); v != "" {
-		return absDir(name, v)
+		return overrideDir(name, v)
 	}
 	return convention()
+}
+
+// overrideDir returns the override v of name when it is an absolute local directory below a
+// file system root. A .. element, a network or long-path form and a bare root are refused,
+// since cleaning or following them can differ from the OS walk (fail-closed, DR-37).
+func overrideDir(name, v string) (string, error) {
+	dir, err := absDir(name, v)
+	if err != nil {
+		return "", err
+	}
+	for _, c := range unsafeRootChecks() {
+		if c.unsafe(dir) {
+			return "", fmt.Errorf("%w: %s %s", ErrRootUnresolved, name, c.reason)
+		}
+	}
+	return dir, nil
+}
+
+// unsafeRootCheck is one form of override path that is refused as a root.
+type unsafeRootCheck struct {
+	reason string
+	unsafe func(string) bool
+}
+
+func unsafeRootChecks() []unsafeRootCheck {
+	return []unsafeRootCheck{
+		{"is a network or long-path form", func(p string) bool {
+			return strings.HasPrefix(strings.ReplaceAll(p, `\`, "/"), "//")
+		}},
+		{"has a .. element", func(p string) bool {
+			for _, e := range strings.FieldsFunc(p, func(r rune) bool { return r == '/' || r == '\\' }) {
+				if e == ".." {
+					return true
+				}
+			}
+			return false
+		}},
+		{"is a file system root", func(p string) bool { return filepath.Dir(p) == filepath.Clean(p) }},
+	}
 }
 
 func stateConvention(goos string, getenv func(string) string, home string) (string, error) {

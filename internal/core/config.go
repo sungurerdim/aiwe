@@ -109,5 +109,8 @@ func readStateFile(dir, file string) (map[string]json.RawMessage, error) {
 	if err := json.Unmarshal(body, &raw); err != nil {
 		return nil, fmt.Errorf("%w: parse state file %s: %v", ErrConfigInvalid, file, err)
 	}
+	if raw == nil {
+		return nil, fmt.Errorf("%w: state file %s holds null, not an object", ErrConfigInvalid, file)
+	}
 	return raw, nil
 }
