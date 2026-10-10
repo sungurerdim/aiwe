@@ -266,3 +266,97 @@ func TestCleanEnvGitAskpass(t *testing.T) {
 		}
 	})
 }
+
+func TestCleanEnvGitGlobalConfig(t *testing.T) {
+	t.Run("user git config still read by the child, since GIT_CONFIG_GLOBAL is not the null device", func(t *testing.T) {
+		parent := []string{"PATH=/usr/local/bin:/usr/bin:/bin", "GIT_CONFIG_GLOBAL=/home/zeynep/.config/git/work.gitconfig"}
+		child := core.CleanEnv(parent, nil)
+		var values []string
+		for _, kv := range child {
+			if k, v, _ := strings.Cut(kv, "="); strings.EqualFold(k, "GIT_CONFIG_GLOBAL") {
+				values = append(values, v)
+			}
+		}
+		if len(values) != 1 || !strings.EqualFold(values[0], os.DevNull) {
+			t.Errorf("child GIT_CONFIG_GLOBAL values = %q; want exactly one, %q (SPEC §6.5)", values, os.DevNull)
+		}
+	})
+	gitPath, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatalf("git is the only prerequisite (SPEC §6.2) and is not on PATH: %v", err)
+	}
+	const secret = "ghp_globalAskpass3Vn8Kd2Lq7Rx5Tz9Wm4Pc"
+	dir := t.TempDir()
+	script := filepath.Join(dir, "askpass.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\necho "+secret+"\n"), 0o700); err != nil {
+		t.Fatalf("write askpass script: %v", err)
+	}
+	// One user-level git config names the askpass program, the way core.askPass in a user's
+	// ~/.gitconfig does; git reads it from HOME, from XDG_CONFIG_HOME or from GIT_CONFIG_GLOBAL.
+	gitConfig := "[core]\n\taskPass = \"" + filepath.ToSlash(script) + "\"\n"
+	for _, tc := range []struct {
+		name string
+		// file is the config path below the case home; global says GIT_CONFIG_GLOBAL names it.
+		file   string
+		global bool
+	}{
+		{"core.askPass in ~/.gitconfig", ".gitconfig", false},
+		{"core.askPass in XDG_CONFIG_HOME/git/config", filepath.Join("xdg", "git", "config"), false},
+		{"core.askPass in the file GIT_CONFIG_GLOBAL names", "work.gitconfig", true},
+	} {
+		t.Run(tc.name+" answers git credential fill in the child", func(t *testing.T) {
+			home := t.TempDir()
+			config := filepath.Join(home, tc.file)
+			if err := os.MkdirAll(filepath.Dir(config), 0o700); err != nil {
+				t.Fatalf("make config dir: %v", err)
+			}
+			if err := os.WriteFile(config, []byte(gitConfig), 0o600); err != nil {
+				t.Fatalf("write git config: %v", err)
+			}
+			var parent []string
+			for _, kv := range os.Environ() {
+				name, _, _ := strings.Cut(kv, "=")
+				switch strings.ToUpper(name) {
+				case "HOME", "USERPROFILE", "XDG_CONFIG_HOME", "GIT_CONFIG_GLOBAL", "GIT_ASKPASS", "SSH_ASKPASS":
+					continue
+				}
+				parent = append(parent, kv)
+			}
+			parent = append(parent, "HOME="+home, "USERPROFILE="+home, "XDG_CONFIG_HOME="+filepath.Join(home, "xdg"))
+			if tc.global {
+				parent = append(parent, "GIT_CONFIG_GLOBAL="+config)
+			}
+			child := core.CleanEnv(parent, nil)
+			// live is the child with its GIT_CONFIG_GLOBAL pointed at the fixture config, so the
+			// fixture is proven to reach git before the child is checked.
+			live := []string{"GIT_CONFIG_GLOBAL=" + config}
+			for _, kv := range child {
+				if name, _, _ := strings.Cut(kv, "="); !strings.EqualFold(name, "GIT_CONFIG_GLOBAL") {
+					live = append(live, kv)
+				}
+			}
+			if out := envGitFill(t, gitPath, dir, live); !strings.Contains(out, secret) {
+				t.Fatalf("git credential fill with the fixture config = %q; want the askpass answer, so the check below is live", out)
+			}
+			if out := envGitFill(t, gitPath, dir, child); strings.Contains(out, secret) {
+				t.Errorf("git credential fill in the child = %q; want no credential from the user git config (SPEC §6.5)", out)
+			}
+		})
+	}
+}
+
+// envGitFill runs git credential fill for a fixed host in dir with env and returns its output.
+func envGitFill(t *testing.T, gitPath, dir string, env []string) string {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, gitPath, "credential", "fill")
+	cmd.Env = env
+	cmd.Dir = dir
+	cmd.Stdin = strings.NewReader("protocol=https\nhost=example.invalid\n\n")
+	out, _ := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		t.Fatalf("git credential fill did not finish in 30 s: %s", out)
+	}
+	return string(out)
+}

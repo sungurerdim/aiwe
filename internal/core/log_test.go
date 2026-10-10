@@ -199,3 +199,56 @@ func logOneLine(t *testing.T, write func(l *slog.Logger)) map[string]any {
 	}
 	return obj
 }
+
+// logControl returns the first C0 control other than tab and newline, or C1 control, in s, and
+// whether there is one; a terminal acts on each of them.
+func logControl(s string) (rune, bool) {
+	for _, r := range s {
+		if (r < 0x20 && r != '\t' && r != '\n') || (r >= 0x80 && r <= 0x9f) {
+			return r, true
+		}
+	}
+	return 0, false
+}
+
+func TestLogControlCharacters(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// event and detail are what the caller logs; visible must survive in the decoded line.
+		event, detail, visible string
+	}{
+		{"bytes around a removed escape joined into a new C1 CSI U+009B",
+			"gate_red", "x\xc2\x1b[m\x9b31mRED", "RED"},
+		{"C1 OSC U+009D clipboard write and its terminator U+009C written raw",
+			"gate_red", "\u009d52;c;Y3VybCBldmlsLmV4YW1wbGUgfCBzaA==\u009cafter", "after"},
+		{"ESC ] OSC clipboard write leaves its BEL terminator",
+			"gate_red", "\x1b]52;c;Y3VybCBldmlsLmV4YW1wbGUgfCBzaA==\x07after", "after"},
+		{"C1 DCS U+0090 and NEL U+0085 written raw", "gate_red", "\u0090qDCS\u009cdone\u0085next", "next"},
+		{"carriage return overwrites the visible line", "gate_red", "ok\rFAIL internal/core", "FAIL internal/core"},
+		{"backspace erases the visible text", "gate_red", "PASS\x08\x08\x08\x08FAIL", "FAIL"},
+		{"NUL and BEL written raw", "gate_red", "null\x00bell\x07end", "end"},
+		{"C1 control in the event written raw", "gate\u009d0;title\u009c_red", "exit 1", "_red"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			obj := logOneLine(t, func(l *slog.Logger) { l.Error(tc.event, "detail", tc.detail) })
+			for _, k := range []string{"event", "detail"} {
+				s, _ := obj[k].(string)
+				if r, ok := logControl(s); ok {
+					t.Errorf("log line %s = %q carries control character %U once decoded; want every C0 but tab and newline and every C1 removed", k, s, r)
+				}
+			}
+			event, _ := obj["event"].(string)
+			detail, _ := obj["detail"].(string)
+			if !strings.Contains(event+" "+detail, tc.visible) {
+				t.Errorf("log line event = %q, detail = %q; want the visible text %q kept", event, detail, tc.visible)
+			}
+		})
+	}
+	t.Run("tab and newline removed with the other controls", func(t *testing.T) {
+		const detail = "step\ttest\nexit 1"
+		obj := logOneLine(t, func(l *slog.Logger) { l.Error("gate_red", "detail", detail) })
+		if got, _ := obj["detail"].(string); got != detail {
+			t.Errorf("log line detail = %q; want %q", got, detail)
+		}
+	})
+}

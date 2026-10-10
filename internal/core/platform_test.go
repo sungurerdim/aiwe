@@ -138,6 +138,12 @@ func TestPlatform(t *testing.T) {
 		{"drive root override with a forward slash accepted as a root", "C:/"},
 		{"drive root override with a backslash accepted as a root", `C:\`},
 		{"file system root override accepted as a root", "/"},
+		// \??\ is the NT object-manager prefix; Windows reads it as absolute, so it is a device
+		// form like \\?\ and is refused like it.
+		{`NT device override \??\ with a drive accepted as a root`, `\??\C:\Users\zeynep\aiwe`},
+		{`NT device override \??\UNC with a network share accepted as a root`, `\??\UNC\fileserver\share\aiwe`},
+		// Declared fail-closed: a local long-path override is refused, not followed (SPEC §6.4).
+		{`local long-path override \\?\ with a drive accepted as a root`, `\\?\C:\Users\zeynep\aiwe`},
 	} {
 		for _, suffix := range []string{"HOME", "CACHE", "TMP"} {
 			t.Run(tc.name+" ("+platformOverride(suffix)+")", func(t *testing.T) {
@@ -153,6 +159,97 @@ func TestPlatform(t *testing.T) {
 	t.Run("user roots read on this OS from a fixed path instead of its env", func(t *testing.T) {
 		platformUserRoots(t)
 	})
+	platformTrailingSeparator(t)
+	platformConventionChecks(t)
+}
+
+// platformTrailingSeparator checks that an override that ends in a separator names a directory
+// below a root, not a root: it is accepted and returned without the separator.
+func platformTrailingSeparator(t *testing.T) {
+	ovState := filepath.Join(t.TempDir(), "override-state")
+	ovCache := filepath.Join(t.TempDir(), "override-cache")
+	ovTemp := filepath.Join(t.TempDir(), "override-tmp")
+	tmp := filepath.Join(t.TempDir(), "Temp")
+	home := filepath.Join(t.TempDir(), "home", "zeynep")
+	seps := []struct{ name, sep string }{{"separator", string(filepath.Separator)}}
+	if filepath.Separator != '/' {
+		seps = append(seps, struct{ name, sep string }{"forward slash", "/"})
+	}
+	for _, s := range seps {
+		t.Run("override with a trailing "+s.name+" refused as a file system root", func(t *testing.T) {
+			env := map[string]string{
+				"LOCALAPPDATA": filepath.Join(t.TempDir(), "Local"), "TEMP": tmp, "TMPDIR": tmp,
+				platformOverride("HOME"): ovState + s.sep, platformOverride("CACHE"): ovCache + s.sep,
+				platformOverride("TMP"): ovTemp + s.sep,
+			}
+			got, err := core.ResolveRoots(runtime.GOOS, func(k string) string { return env[k] }, home)
+			if err != nil {
+				t.Fatalf("ResolveRoots with overrides ending in %q: %v; want them accepted", s.sep, err)
+			}
+			if want := (core.Roots{State: ovState, Cache: ovCache, Temp: ovTemp}); got != want {
+				t.Errorf("ResolveRoots with overrides ending in %q\n got  %+v\n want %+v", s.sep, got, want)
+			}
+		})
+	}
+}
+
+// platformConventionChecks checks that a convention variable (LOCALAPPDATA, TEMP, TMPDIR,
+// XDG_STATE_HOME, XDG_CACHE_HOME) passes the same root checks as an override: a .. element, a
+// network share or an NT device form never becomes a root. A linux XDG or TMPDIR value that
+// fails them may be refused, or ignored for the home or /tmp convention as an unset one is.
+func platformConventionChecks(t *testing.T) {
+	sep := string(filepath.Separator)
+	base := filepath.Join(t.TempDir(), "base")
+	tmp := filepath.Join(t.TempDir(), "Temp")
+	local := filepath.Join(t.TempDir(), "Local")
+	home := filepath.Join(t.TempDir(), "home", "zeynep")
+	p := core.Product
+	state := filepath.Join(home, ".local", "state", p)
+	cache := filepath.Join(home, ".cache", p)
+	temp := filepath.Join("/tmp", p)
+	for _, bad := range []struct{ name, value string }{
+		{"a .. element", base + sep + "a" + sep + ".." + sep + ".." + sep + "elsewhere"},
+		{"a network share", "//fileserver/share/aiwe"},
+		{"a network share with backslashes", `\\fileserver\share`},
+		{`an NT device form \??\`, `\??\C:\Users\zeynep\AppData\Local`},
+	} {
+		for _, tc := range []struct {
+			goos, variable string
+			env            map[string]string
+			// root returns the root the variable resolves; fallback is that root when an
+			// unusable value is ignored, or "" when the value must be refused.
+			root     func(core.Roots) string
+			fallback string
+		}{
+			{"windows", "LOCALAPPDATA", map[string]string{"TEMP": tmp},
+				func(r core.Roots) string { return r.State }, ""},
+			{"windows", "TEMP", map[string]string{"LOCALAPPDATA": local},
+				func(r core.Roots) string { return r.Temp }, ""},
+			{"darwin", "TMPDIR", map[string]string{}, func(r core.Roots) string { return r.Temp }, ""},
+			{"linux", "XDG_STATE_HOME", map[string]string{}, func(r core.Roots) string { return r.State }, state},
+			{"linux", "XDG_CACHE_HOME", map[string]string{}, func(r core.Roots) string { return r.Cache }, cache},
+			{"linux", "TMPDIR", map[string]string{}, func(r core.Roots) string { return r.Temp }, temp},
+		} {
+			t.Run(tc.goos+" "+tc.variable+" with "+bad.name+" taken as a root without the root checks", func(t *testing.T) {
+				env := map[string]string{tc.variable: bad.value}
+				for k, v := range tc.env {
+					env[k] = v
+				}
+				got, err := core.ResolveRoots(tc.goos, func(k string) string { return env[k] }, home)
+				if errors.Is(err, core.ErrRootUnresolved) {
+					return
+				}
+				if err != nil {
+					t.Fatalf("ResolveRoots(%s) with %s=%q: %v; want %v or the fallback root",
+						tc.goos, tc.variable, bad.value, err, core.ErrRootUnresolved)
+				}
+				if tc.fallback == "" || tc.root(got) != tc.fallback {
+					t.Errorf("ResolveRoots(%s) with %s=%q = %+v, nil; want %v (or root %q when ignored)",
+						tc.goos, tc.variable, bad.value, got, core.ErrRootUnresolved, tc.fallback)
+				}
+			})
+		}
+	}
 }
 
 // platformUserRoots checks the run-time entry on the host OS: conventions first, then overrides.
