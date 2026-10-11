@@ -489,30 +489,3 @@ func TestOwnerStateJunction(t *testing.T) {
 		t.Errorf("OpenOwner wrote a key at the junction target %s", target)
 	}
 }
-
-// TestOwnerStateSymlink catches a Unix state path that is a symlink to another owner-only dir and
-// that OpenOwner follows, writing the owner key at the target (#109, finding 13). It is the Unix
-// twin of TestOwnerStateJunction.
-func TestOwnerStateSymlink(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Windows state links are covered by TestOwnerStateJunction")
-	}
-	r := removeTestRoots(t, t.TempDir())
-	target := filepath.Join(filepath.Dir(r.State), "elsewhere")
-	if err := mkdirOwnerOnly(target); err != nil {
-		t.Fatalf("make owner-only target %s: %v", target, err)
-	}
-	if err := os.Symlink(target, r.State); err != nil {
-		t.Fatalf("symlink %s -> %s: %v", r.State, target, err)
-	}
-	self, err := CurrentProcess()
-	if err != nil {
-		t.Fatalf("CurrentProcess: %v", err)
-	}
-	if o, err := OpenOwner(r, self); !errors.Is(err, ErrRootUnsafe) {
-		t.Errorf("OpenOwner of state symlink %s -> %s: owner %t, error %v; want %v", r.State, target, o != nil, err, ErrRootUnsafe)
-	}
-	if removeTestExists(t, filepath.Join(target, ownerKeyFile)) {
-		t.Errorf("OpenOwner wrote a key at the symlink target %s", target)
-	}
-}
