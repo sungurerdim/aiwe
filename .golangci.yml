@@ -66,6 +66,8 @@ linters:
         text: context\.Background
 
 issues:
-  # Every finding is reported; the default caps hide findings past the first few.
+  # Every finding is reported; the default caps hide findings past the first few, and the
+  # default one-issue-per-line rule hides a second linter's finding on the same line.
   max-issues-per-linter: 0
   max-same-issues: 0
+  uniq-by-line: false
