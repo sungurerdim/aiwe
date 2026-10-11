@@ -99,10 +99,16 @@ func reachNames() []string {
 	}
 }
 
-// processGetenv reads one variable of the process environment; this file is the only reader
-// (SPEC §5.4).
-func processGetenv(name string) string {
+// LookupEnv reads one variable of the process environment; it is the env lookup that callers
+// outside core pass to ResolveConfig and ResolveRoots, so this file stays the only reader
+// (SPEC §5.4). An unset variable reads as "".
+func LookupEnv(name string) string {
 	return os.Getenv(name)
+}
+
+// processGetenv is LookupEnv for the core files that read the environment through it.
+func processGetenv(name string) string {
+	return LookupEnv(name)
 }
 
 // processHome returns the user's home directory of this process, or "" when it is unknown.
