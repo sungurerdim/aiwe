@@ -31,7 +31,7 @@ linters:
         - pattern: ^panic$
           msg: panic only through internal/core/assert.go (SPEC §5.3)
         - pattern: ^context\.Background$
-          msg: context.Background only in cmd/aiwe and tests (SPEC §5.18)
+          msg: context.Background only in cmd main packages and tests (SPEC §5.18)
     custom:
       nilaway:
         type: module
@@ -41,14 +41,17 @@ linters:
   exclusions:
     rules:
       # Q12 cognitive complexity applies to non-test functions only (owner decision on #130).
+      # Test fixtures build paths and commands from variables by design (#18).
       - path: _test\.go$
         linters:
           - gocognit
+          - gosec
       - path: ^internal/core/remove\.go$
         linters:
           - forbidigo
         text: os\.RemoveAll
-      - path: ^internal/core/env\.go$
+      # Tests may read the environment, as in the source rule of #159.
+      - path: (^internal/core/env\.go$|_test\.go$)
         linters:
           - forbidigo
         text: os\.(Getenv|LookupEnv|Environ)
@@ -56,7 +59,8 @@ linters:
         linters:
           - forbidigo
         text: panic
-      - path: (^cmd/aiwe/|_test\.go$)
+      # Every main package under cmd/ and internal/cmd/ counts as cmd (#18).
+      - path: (^(internal/)?cmd/|_test\.go$)
         linters:
           - forbidigo
         text: context\.Background
