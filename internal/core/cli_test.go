@@ -7,8 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -34,7 +32,7 @@ func cliRegistry() []core.Command {
 func TestHelp(t *testing.T) {
 	cmds := cliRegistry()
 	var out bytes.Buffer
-	code := core.RunCLI(context.Background(), cmds, []string{"--help"}, &out)
+	code := core.RunCLI(context.Background(), cmds, []string{"--help"}, &out, io.Discard)
 	if code != 0 {
 		t.Errorf("aiwe --help exits %d, want 0; output:\n%s", code, out.String())
 	}
@@ -100,7 +98,7 @@ func TestParseFormat(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			var out bytes.Buffer
-			code := core.RunCLI(context.Background(), cliRegistry(), tc.args, &out)
+			code := core.RunCLI(context.Background(), cliRegistry(), tc.args, &out, io.Discard)
 			if code != tc.exitCode {
 				t.Errorf("aiwe %s exits %d, want %d; output: %q", strings.Join(tc.args, " "), code, tc.exitCode, out.String())
 			}
@@ -124,31 +122,9 @@ func TestParseFormat(t *testing.T) {
 	}
 }
 
-// cliTestStderr points os.Stderr at a file for the rest of the test and returns a function that
-// reads what was written to it.
-func cliTestStderr(t *testing.T) func() string {
-	t.Helper()
-	f, err := os.Create(filepath.Join(t.TempDir(), "stderr"))
-	if err != nil {
-		t.Fatalf("create the stderr file: %v", err)
-	}
-	saved := os.Stderr
-	os.Stderr = f
-	t.Cleanup(func() {
-		os.Stderr = saved
-		_ = f.Close()
-	})
-	return func() string {
-		data, err := os.ReadFile(f.Name())
-		if err != nil {
-			t.Fatalf("read the captured stderr: %v", err)
-		}
-		return string(data)
-	}
-}
-
 // TestRunCLIStream catches a command that gets no stream writer, and streamed output that reaches
-// stdout, where it breaks the --format json envelope, instead of stderr (SPEC §5).
+// stdout, where it breaks the --format json envelope, instead of the stream writer RunCLI is given
+// (stderr in the binary, SPEC §5).
 func TestRunCLIStream(t *testing.T) {
 	const line = "cli-stream-test-line"
 	cmds := []core.Command{{Module: "gates", Object: "gates", Verb: "gate", Params: []string{"format"},
@@ -162,9 +138,8 @@ func TestRunCLIStream(t *testing.T) {
 			}
 			return core.Result[any]{Status: core.StatusOK, Outcome: core.OutcomeOK, Detail: "streamed"}, nil
 		}}}
-	stderr := cliTestStderr(t)
-	var out bytes.Buffer
-	code := core.RunCLI(context.Background(), cmds, []string{"gates", "gate", "--format", "json"}, &out)
+	var out, stream bytes.Buffer
+	code := core.RunCLI(context.Background(), cmds, []string{"gates", "gate", "--format", "json"}, &out, &stream)
 	raw := out.String()
 	if code != 0 {
 		t.Fatalf("exit %d, want 0\n%s", code, raw)
@@ -180,7 +155,7 @@ func TestRunCLIStream(t *testing.T) {
 	if strings.Contains(raw, line) {
 		t.Errorf("streamed output reached stdout, mixed into the envelope: %q", raw)
 	}
-	if got := stderr(); !strings.Contains(got, line) {
-		t.Errorf("streamed output did not reach stderr: %q", got)
+	if got := stream.String(); !strings.Contains(got, line) {
+		t.Errorf("streamed output did not reach the stream writer: %q", got)
 	}
 }

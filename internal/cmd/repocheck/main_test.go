@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -84,7 +85,7 @@ func TestRepocheckCommands(t *testing.T) {
 				t.Fatalf("write go.mod: %v", err)
 			}
 			var out bytes.Buffer
-			code := core.RunCLI(context.Background(), commands(), []string{"doctor", "--repo", repo}, &out)
+			code := core.RunCLI(context.Background(), commands(), []string{"doctor", "--repo", repo}, &out, io.Discard)
 			if tc.wantZero && code != 0 {
 				t.Fatalf("repocheck doctor exit code = %d, want 0; output %q", code, out.String())
 			}
@@ -101,7 +102,7 @@ func TestRepocheckCommands(t *testing.T) {
 
 	t.Run("doctor refuses a repository without go.mod", func(t *testing.T) {
 		var out bytes.Buffer
-		code := core.RunCLI(context.Background(), commands(), []string{"doctor", "--repo", t.TempDir()}, &out)
+		code := core.RunCLI(context.Background(), commands(), []string{"doctor", "--repo", t.TempDir()}, &out, io.Discard)
 		if code == 0 {
 			t.Fatalf("repocheck doctor exit code = 0 without go.mod; output %q", out.String())
 		}
@@ -169,7 +170,7 @@ func TestRepocheckAll(t *testing.T) {
 	t.Setenv("GOFLAGS", "-mod=readonly")
 	repo := writeFixture(t)
 	var out bytes.Buffer
-	code := core.RunCLI(context.Background(), commands(), []string{"all", "--repo", repo, "--format", "json"}, &out)
+	code := core.RunCLI(context.Background(), commands(), []string{"all", "--repo", repo, "--format", "json"}, &out, io.Discard)
 	var rep allReport
 	if err := json.Unmarshal(out.Bytes(), &rep); err != nil {
 		t.Fatalf("repocheck all --format json is not one result envelope: %v; output %q", err, out.String())
@@ -225,7 +226,7 @@ func TestRepocheckAll(t *testing.T) {
 			t.Chdir(empty)
 			var buf bytes.Buffer
 			code := core.RunCLI(context.Background(), commands(),
-				[]string{name, "--repo", ".", "--format", "json"}, &buf)
+				[]string{name, "--repo", ".", "--format", "json"}, &buf, io.Discard)
 			if code == 0 {
 				t.Fatalf("repocheck %s exit code = 0 on a module without Go files; output %q", name, buf.String())
 			}

@@ -66,33 +66,19 @@ func commandsTestRun(t *testing.T, args ...string) (int, commandsTestEnvelope, s
 	return code, env, out
 }
 
-// commandsTestRunStreams is commandsTestRun that also returns what the command wrote to stderr.
-// Stdout must be exactly one JSON envelope.
+// commandsTestRunStreams is commandsTestRun that also returns what the command wrote to its
+// stream writer, stderr in the binary. Stdout must be exactly one JSON envelope.
 func commandsTestRunStreams(t *testing.T, args ...string) (int, commandsTestEnvelope, string, string) {
 	t.Helper()
-	f, err := os.Create(filepath.Join(t.TempDir(), "stderr"))
-	if err != nil {
-		t.Fatalf("create the stderr file: %v", err)
-	}
-	saved := os.Stderr
-	os.Stderr = f
-	var out bytes.Buffer
+	var out, stream bytes.Buffer
 	argv := append([]string{"gates", "gate"}, args...)
 	argv = append(argv, "--format", "json")
-	code := core.RunCLI(context.Background(), Commands(), argv, &out)
-	os.Stderr = saved
-	if err := f.Close(); err != nil {
-		t.Fatalf("close the stderr file: %v", err)
-	}
-	stderr, err := os.ReadFile(f.Name())
-	if err != nil {
-		t.Fatalf("read the captured stderr: %v", err)
-	}
+	code := core.RunCLI(context.Background(), Commands(), argv, &out, &stream)
 	var env commandsTestEnvelope
 	if err := json.Unmarshal(out.Bytes(), &env); err != nil {
 		t.Fatalf("aiwe %s printed no JSON envelope: %v\n%s", strings.Join(argv, " "), err, out.String())
 	}
-	return code, env, out.String(), string(stderr)
+	return code, env, out.String(), stream.String()
 }
 
 // commandsTestWithoutRepo returns detail with every form of the repo path removed: as given, with
