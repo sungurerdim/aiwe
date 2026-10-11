@@ -150,7 +150,7 @@ func cliTestStderr(t *testing.T) func() string {
 // TestRunCLIStream catches a command that gets no stream writer, and streamed output that reaches
 // stdout, where it breaks the --format json envelope, instead of stderr (SPEC §5).
 func TestRunCLIStream(t *testing.T) {
-	const line = "aiwe-cli-stream-line"
+	const line = "cli-stream-test-line"
 	cmds := []core.Command{{Module: "gates", Object: "gates", Verb: "gate", Params: []string{"format"},
 		Purpose: "stream one line, then report ok",
 		Run: func(_ context.Context, in core.Input) (core.Result[any], error) {

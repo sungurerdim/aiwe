@@ -376,3 +376,35 @@ func TestGateCommandNoOwner(t *testing.T) {
 		t.Errorf("catches a refused gate that reports steps: %+v", env.Data.Steps)
 	}
 }
+
+// TestGateCommandRepoInTemp catches an engine owner opened without the repository as a canonical
+// path: a temp root that holds the repository refuses as root_unsafe even when it is owner-only,
+// so no check's roots can land inside the repository (SPEC §6.4).
+func TestGateCommandRepoInTemp(t *testing.T) {
+	roots := commandsTestSetRoots(t)
+	t.Setenv(rootsHelperEnv, "1")
+	first, _ := rootsTestStep(t.TempDir(), "first", "")
+	// The first run makes the temp root owner-only, so only the repository rule can refuse later.
+	if code, env, out := commandsTestRun(t, "--repo", commandsTestRepo(t, []GateStep{first})); code != 0 {
+		t.Fatalf("the first run, with the repository outside the temp root: exit %d, outcome %q\n%s", code, env.Outcome, out)
+	}
+	repo := filepath.Join(roots.temp, "repo")
+	if err := os.Mkdir(repo, 0o700); err != nil {
+		t.Fatalf("make the repository in the temp root: %v", err)
+	}
+	step, record := rootsTestStep(t.TempDir(), "inside", "")
+	data, err := json.Marshal(Definition{FormatVersion: formatVersion, Steps: []GateStep{step}})
+	if err != nil {
+		t.Fatalf("encode gate.json: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "gate.json"), data, 0o600); err != nil {
+		t.Fatalf("write gate.json: %v", err)
+	}
+	code, env, out := commandsTestRun(t, "--repo", repo)
+	if env.Outcome != "root_unsafe" || code != core.StatusError.ExitCode() {
+		t.Errorf("catches an owner that does not keep the repository out of its temp root: outcome %q exit %d\n%s", env.Outcome, code, out)
+	}
+	if _, err := os.Stat(record); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("catches a step run with its repository inside the temp root: stat %q: %v", record, err)
+	}
+}
