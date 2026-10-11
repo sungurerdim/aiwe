@@ -38,9 +38,10 @@ func markerTestOwned(t *testing.T) (*Owner, OwnedDir, []byte) {
 // markerTestSwapper puts each source in turn under the marker's name: it hard-links the source to a
 // spare name beside the sources and renames that over the marker, so the marker name always exists.
 // A source that is a symlink is made afresh with its target instead: a hard link to a symlink
-// never showed the open following it in the race on Linux.
+// never showed the open following it in the race on Linux. After each swap the marker stays for
+// a random time up to hold, so a state can outlast a check that takes several steps.
 // The returned stop ends the loop and reports how many swaps took effect.
-func markerTestSwapper(t *testing.T, marker string, srcs []string) func() int64 {
+func markerTestSwapper(t *testing.T, marker string, srcs []string, hold time.Duration) func() int64 {
 	t.Helper()
 	spare := filepath.Join(filepath.Dir(srcs[0]), "next")
 	targets := make([]string, len(srcs))
@@ -76,6 +77,10 @@ func markerTestSwapper(t *testing.T, marker string, srcs []string) func() int64 
 			if os.Rename(spare, marker) == nil {
 				swaps.Add(1)
 			}
+			if hold > 0 {
+				for start, wait := time.Now(), rand.N(hold); time.Since(start) < wait; {
+				}
+			}
 		}
 	}()
 	var once sync.Once
@@ -102,7 +107,7 @@ func TestOwnerMarkerSwappedForLarger(t *testing.T) {
 	removeTestWrite(t, large, string(marker)+strings.Repeat(" ", 2*maxMarkerBytes))
 	p := filepath.Join(d.Path(), markerFile)
 	removeTestWrite(t, p, markerTestBad)
-	stop := markerTestSwapper(t, p, []string{small, large})
+	stop := markerTestSwapper(t, p, []string{small, large}, 0)
 
 	calls := 0
 	accepted := false
@@ -140,7 +145,7 @@ func TestOwnerMarkerSwappedForFIFO(t *testing.T) {
 	}
 	p := filepath.Join(d.Path(), markerFile)
 	removeTestWrite(t, p, markerTestBad)
-	stop := markerTestSwapper(t, p, []string{small, fifo})
+	stop := markerTestSwapper(t, p, []string{small, fifo}, 0)
 
 	calls := 0
 	for end := time.Now().Add(markerTestRaceFor); time.Now().Before(end); calls++ {
@@ -243,6 +248,11 @@ func TestOwnerMarkerShape(t *testing.T) {
 	}
 }
 
+// markerTestLinkHold is how long, at most, each marker state stays in TestOwnerMarkerSwappedForLink.
+// The open follows a link in several steps; swaps faster than that hit no window on Linux in 3 of
+// 10 runs, while this hold hit in each of 10 runs within 600 calls.
+const markerTestLinkHold = 200 * time.Microsecond
+
 // TestOwnerMarkerSwappedForLink catches a marker whose name is checked as a plain file while the
 // open follows a link put there after the check (#172, security review of 34b6c7a). The name
 // alternates between a plain marker that matches no record and a link to a valid copy of the
@@ -262,7 +272,7 @@ func TestOwnerMarkerSwappedForLink(t *testing.T) {
 	}
 	p := filepath.Join(d.Path(), markerFile)
 	removeTestWrite(t, p, markerTestBad)
-	stop := markerTestSwapper(t, p, []string{small, link})
+	stop := markerTestSwapper(t, p, []string{small, link}, markerTestLinkHold)
 
 	calls := 0
 	accepted := false
