@@ -198,7 +198,7 @@ A test whose source is not yet in the tree passes only while a §14 Files cell l
 | DR-40 | The product needs nothing installed except git on Windows, macOS and Linux: no language runtime, tool or framework; it ships as one binary per OS and architecture (§6.2). | S1 | CI step `clean-os-smoke` (§12.2) |
 | DR-41 | Shipped code links only the Go standard library, `golang.org/x/*` and the official MCP Go SDK, plus the modules these require; any other module needs a stated reason and an owner decision. | S1, M3 | check `repo/deps` (modules of `go list -deps ./cmd/...` against the allow-list); gate step `vuln` |
 | DR-42 | Every element — workflow, job, step, gate step, release step, document section, code path — exists only if it is necessary; each CI and release step states its reason in one clause, and a step without one is removed. | S2, M5 | check `repo/ci-shape` (a step without a `# why:` comment is red; prints workflow, job and step counts); CI job `required` reports duration and step count per run (§12.2); judgement: auditor checklist item "is every new element necessary?" |
-| DR-43 | aiwe holds no credential. It reaches a provider account only through the provider's own CLI login, made by the user (for example `gh auth login`, `opencode auth login`), or through an API key read from an environment variable. It never stores, caches, encrypts, prompts for or manages a credential, API key, token or secret. It may read an API key or another secret from an environment variable and pass it only to the child process that needs it (§6.5, §7.9); it never writes the value anywhere. A harness keeps its login only through its own flag or config-dir variable; aiwe never copies or links a login file. It never reads, proxies or rewrites subscription credentials or OAuth traffic, and never reuses a subscription login outside the provider's own CLI (§17). Masking and the payload scan (§11) stay; they hold nothing. `owner.key` (§5.15) is not a provider credential. The README states this rule to the user (§12.1). | S1 | contract suite `adapters/providertest` (no read of a harness credential store; HTTP only to the source's base URL); judgement: security-reviewer on every adapter change (§9.1) |
+| DR-43 | aiwe holds no credential. It reaches a provider account only through the provider's own CLI login, made by the user (for example `gh auth login`, `opencode auth login`), or through an API key read from an environment variable. It never stores, caches, encrypts, prompts for or manages a credential, API key, token or secret. It may read an API key or another secret from an environment variable and pass it only to the child process that needs it (§6.5, §7.9); it never writes the value anywhere. The engine may use an env key in-process for its own API channel and its balance read (§7.6, §10.2), and never writes it. A harness keeps its login only through its own flag or config-dir variable; aiwe never copies or links a login file. It never reads, proxies or rewrites subscription credentials or OAuth traffic, and never reuses a subscription login outside the provider's own CLI (§17). Masking and the payload scan (§11) stay; they hold nothing. `owner.key` (§5.15) is not a provider credential. The README states this rule to the user (§12.1). | S1 | contract suite `adapters/providertest` (no read of a harness credential store; HTTP only to the source's base URL); judgement: security-reviewer on every adapter change (§9.1) |
 | DR-44 | The engine never runs a general-purpose agent: every run carries one role card; the role is resolved mechanically from the unit's kind, type, labels and paths (§9.1); a unit whose role does not resolve does not start (`role_unresolved`). | S3, S7 | test `engine/role_test.go` (every resolution row, and an unresolvable unit) |
 | DR-45 | A behaviour unit (§8.4) has at least one Done item ending in `— test: <path>` that names the test and the failure it catches; a code unit without a source path carries a one-line `test-exempt` reason instead; the unit parser refuses a unit that breaks either half (`invalid`). | S5, M3 | test `engine/unit_test.go` (`TestUnitTestItem`: a behaviour unit without a test item, an exempt unit with a source path) |
 | DR-46 | aiwe is built with aiwe. Every standard aiwe applies to the projects it manages applies equally to its own development, with no exemptions. Until the self-hosting point, the lead session and its role-specific agents apply the standard by hand; no external agent runs outside aiwe. Once a capability merges, aiwe itself takes over that step. | S4, M3 | hand-over table and self-hosting point (§14); each hand-over unit has a Done item for it; after the self-hosting point a unit worked outside aiwe is a defect and is recorded as one: CI flags a unit commit on `main` without a `Run-Id` trailer (§12.2, Q17; test `repocheck/run_id_test.go`, unit 1.29); judgement: auditor |
@@ -852,8 +852,9 @@ the ref stays (DR-16).
 4. `[M]` Reactivation per class; a probe uses the adapter's cheapest health call.
 5. No active source can serve a role → the unit waits with `no_capacity`; other roles continue.
 6. `[M]` A source whose provider publishes a balance or usage endpoint has it read by the adapter
-   with the source's own env key (provider data, §10.2). A read balance of zero sets class
-   `balance`; `sources show` prints the read value. A source without such an endpoint reads
+   with the source's own env key (provider data, §10.2). It is read at route time and kept for
+   300 s (default); `sources show` prints the kept value and its age. A read balance of zero sets
+   class `balance`. A source without such an endpoint reads
    `unknown`; its quota is learned from the errors below.
 
 P = probe interval, 30 min (default).
@@ -861,7 +862,7 @@ P = probe interval, 30 min (default).
 | Class | Detected by (fact examples, §17) | Passive until | Probe |
 |---|---|---|---|
 | `rate_window` | HTTP 429 with `retry-after` or a reset header | the stated time | none |
-| `spend_cap` | a spend-limit error code | the stated reset; else `unknown` | every P when the reset is unknown |
+| `provider_spend_limit` | a spend-limit error code | the stated reset; else `unknown` | every P when the reset is unknown |
 | `balance` | HTTP 402 or a balance error with a limit source | a successful probe | every P |
 | `subscription_window` | the harness's usage-limit result | `unknown`: remaining quota is not readable | every P |
 | `account_restricted` | HTTP 401 or 403, or the provider's documented suspension or deactivation code (per provider: U25) | the owner enables it | never: a probe could deepen a ban (§17) |
@@ -979,7 +980,8 @@ Serves S1, S2.
   "roleModels": { "engineer": [ { "source": "api-b", "model": "<model-id>" },
                                 { "source": "sub-a", "model": "<model-id>" } ] } }
 ```
-- `kind` is `subscription` or `api`. No kind has priority; order comes only from shares.
+- `kind` is `subscription` or `api`. No kind has priority. Shares order the sources
+  of a role with no model table entry; the model table orders the sources of its role.
 - **External agents** are the agents of outside subscriptions (for example opencode go, Cursor) and
   of outside API accounts (for example Fireworks AI, DeepSeek, other OpenAI-compatible APIs). Each
   is one source row. Their quotas, credits and models are used in parallel by routing.
@@ -988,12 +990,20 @@ Serves S1, S2.
   model). A run of that role takes the first entry whose source is active and below its ceiling;
   an exhausted, restricted or capped source moves the run down the list. A role without an entry
   is routed by shares and takes the source's first model. No learned router chooses a model (§2).
-- **Spend cap** `spendCap {usd, since}`, optional per source. When it is set, the ledger's `CostUSD`
-  of that source since `since` is compared with `usd`; at the cap the source becomes `capped` and
-  receives no run. When it is unset, the source has no spend limit. A cap on a source whose cost is
-  `unknown` (`no_price` or `subscription`) is refused (DR-13).
+  An entry passes the same hard constraints as share routing (capability, DR-9 judge
+  independence, `opsTrusted`). A failing entry is skipped. A list with no entry left waits
+  `no_capacity`.
+- **Spend cap** `spendCap {usd, since}`, optional per source. When it is set, the ledger's
+  `CostUSD` of that source since `since` is compared with `usd`; at the cap the source becomes
+  `capped` and receives no run. When it is unset, the source has no spend limit. A cap on a source
+  whose cost kind is `unknown` (`no_price` or `subscription`) is refused (DR-13). Any `unknown`
+  `CostUSD` since `since` (for example a price aged out under DR-21, or `no_usage_data`) reads
+  spend `not_measured` and sets the source `capped`. The cap is checked at route time; runs
+  already in flight may pass it.
 - `credentialEnv` may not name `GH_TOKEN`, `GITHUB_TOKEN` or another tracker token variable
   (§10.1); such a row is refused, so a tracker token never reaches a run (DR-18).
+- An `api` source without a resolvable base URL (from `baseUrlEnv` or its provider data) is
+  refused.
 - `opsTrusted: true` marks a source the user trusts with operation units (§7.9); absent = false.
 - **Concurrent-run ceiling** (DR-7, Q13): it starts at 1, rises by one after 10 consecutive clean
   runs (default) up to `maxConcurrent` when the row sets it, and falls by one, minimum 1, on a
@@ -1011,10 +1021,11 @@ Serves S1, S2.
   independent level available (DR-9). Among E minus sources excluded for this unit by a hard
   constraint, the largest credit wins (tie → lowest `id`) and pays 1.
 - Effects: an idle source (passive, restricted, capped, or without the capability) gains nothing,
-  so its share passes to the others in proportion. A source skipped only by a hard constraint keeps its
-  gain and is repaid on later runs. Over any stretch with a fixed E, each source stays within 2 runs
-  of its target (default bound; a simulation in this revision measured at most 1.04 runs over 2 000
-  random share sets × 500 runs). Test `engine/routing_test.go` asserts the bound.
+  so its share passes to the others in proportion. A source skipped only by a hard constraint
+  keeps its gain and is repaid on later runs. For share routing only (roles with no model table
+  entry): over any stretch with a fixed E, each source stays within 2 runs of its target (default
+  bound; a simulation in this revision measured at most 1.04 runs over 2 000 random share sets ×
+  500 runs). Test `engine/routing_test.go` asserts the bound.
 - Runtime state (`sources.state.json`): `active | passive | restricted | capped`, quota class
   (§7.6), `resetAt` or `unknown`, `passiveSince`, `lastProbe`, `credit`, `ceiling`, `cleanRuns`,
   `balance` (read value or `unknown`, §7.6).
@@ -1496,7 +1507,8 @@ type Provider interface {
   OpenAI-compatible API or a known CLI harness is one data file and one source row (DR-6):
   `id`; `adapter`; `reasoning {request, carry}` (request parameters, and reply fields returned
   between turns); `errors [{status, code, class}]` (maps a structured error to a §7.6 class);
-  `balance {path, field, currency}` or absent (the endpoint of §7.6 item 6); for a CLI harness
+  `balance {path, field, currency}` or absent (the endpoint of §7.6 item 6; `balance.path` is a
+  relative path resolved on the source's own base URL, https only); for a CLI harness
   `cli {binary, flags, loginEnv, limitText}` (non-interactive flags, the login-keeping variable of
   U28, and the usage-limit result that sets `subscription_window`). Each value cites its §17 fact.
 - Phase 1 adapters: `claude-code`, `opencode`, `cursor` (CLI) and `openai-chat` (API; fact: all
@@ -1847,7 +1859,7 @@ creates each file the check reads (`rules`: `gate.json`; `ci-shape`: `.github/wo
 integration), 1.13 on 1.40 and 1.41 (measured CLI facts, provider data), 1.28, 1.38 and 1.39 on
 1.41 (provider data), 1.31 on 1.40 and 1.41 (limit messages, error classes), 1.42 on 1.38 (read
 balance), 4.4 on 4.3 (masked secrets). An edge implied by another path is left out. The graph
-has no cycle. Critical path, in units, computed by rules 1, 2, 4, 5 and 6 (rule 3 not counted):
+has no cycle. Critical path, in units, computed by rules 1, 2, 4, 5 and 6:
 Phase 0 7, Phase 1 11 (10 up to 1.25), Phase 2 2, Phase 3 7, Phase 4 3.
 
 **Reach**: every new source file is called. It is an entry point under `cmd/`, or its own unit or a
@@ -1940,9 +1952,9 @@ project with GitHub Actions CI. Phase 1 ships the Go stack row only (§8.2).
 | 1.10 | The ledger keeps one append-only schema of measured or unknown values. | `ledger/record.go`, `ledger/store.go`, `ledger/rotate.go` | `go test ./internal/ledger/` |
 | 1.11 | Adapters register in one list and pass the provider contract suite. | `adapters/provider.go`, `adapters/all.go`, `adapters/commands.go`, `adapters/providertest/contract.go`, `cmd/aiwe/main.go` | `go test ./internal/adapters/...` |
 | 1.12 | Harnesses run in a clean environment with liveness and exit evidence. | `adapters/cli.go`, `adapters/env.go`, `adapters/home.go`, `adapters/sessions.go`, `adapters/activity.go` | `go test ./internal/adapters/...` |
-| 1.40 | The Cursor and opencode CLIs are measured on each OS before their adapters use them. | `docs/SPEC.md` (§10.2, §17) | `go run ./internal/cmd/repocheck rules --repo .` |
+| 1.40 | The Cursor and opencode CLIs are measured on each OS before their adapters use them. | `docs/SPEC.md` (§10.2, §17), `adapters/providers/claude-code.json`, `adapters/providers/opencode.json`, `adapters/providers/cursor.json` | `go run ./internal/cmd/repocheck rules --repo .` |
 | 1.41 | A new source is added as data, through the provider data format of §10.2. | `adapters/providers.go` | `go test -run Providers ./internal/adapters/` |
-| 1.13 | The CLI adapters run their harness and record the observed model. | `adapters/claude_code.go`, `adapters/opencode.go`, `adapters/cursor.go`, `adapters/effort.go`, `adapters/all.go` | `go test ./internal/adapters/...` |
+| 1.13 | The CLI adapters run their harness and record the observed model. | `adapters/claude_code.go`, `adapters/opencode.go`, `adapters/cursor.go`, `adapters/effort.go`, `adapters/all.go`, `adapters/providers/claude-code.json`, `adapters/providers/opencode.json`, `adapters/providers/cursor.json` | `go test ./internal/adapters/...` |
 | 1.14 | The API adapter runs a confined agent loop over the chat wire format. | `adapters/api_loop.go`, `adapters/tools.go`, `adapters/api_errors.go`, `adapters/condense.go`, `adapters/openai_chat.go` | `go test ./internal/adapters/...` |
 | 1.39 | Fireworks AI and DeepSeek are provider data rows with measured error and limit behaviour. | `adapters/providers/fireworks.json`, `adapters/providers/deepseek.json`, `docs/SPEC.md` (§17) | `go test -run Providers ./internal/adapters/` |
 | 1.38 | A source's balance or usage is read where its provider publishes an endpoint. | `adapters/balance.go`, `adapters/provider.go` | `go test -run Balance ./internal/adapters/` |
