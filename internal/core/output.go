@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 )
 
 // Format is the output format of the result envelope.
@@ -35,7 +36,7 @@ func WriteResult(w io.Writer, f Format, r Result[any]) error {
 			return fmt.Errorf("encode result envelope: %w", err)
 		}
 	case FormatText:
-		fmt.Fprintf(&buf, "%s: %s\n", r.Status, r.Detail)
+		fmt.Fprintf(&buf, "%s\n", textLine(r))
 	default:
 		return fmt.Errorf("unknown output format %q: want %q or %q", f, FormatText, FormatJSON)
 	}
@@ -43,4 +44,14 @@ func WriteResult(w io.Writer, f Format, r Result[any]) error {
 		return fmt.Errorf("write result envelope: %w", err)
 	}
 	return nil
+}
+
+// textLine renders r as "<status>: <detail>". A refusal's detail already starts with
+// "<outcome>: " (SPEC §5.10); when that outcome is the status word, the line names it once.
+func textLine(r Result[any]) string {
+	prefix := string(r.Status) + ": "
+	if string(r.Outcome) == string(r.Status) && strings.HasPrefix(r.Detail, prefix) {
+		return r.Detail
+	}
+	return prefix + r.Detail
 }
