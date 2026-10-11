@@ -266,6 +266,23 @@ func TestConfig(t *testing.T) {
 		}
 	})
 
+	t.Run("settings file linked outside the state directory read as settings", func(t *testing.T) {
+		// SPEC §5.12: a settings read stays inside its state directory; a link out of it is a
+		// broken state file, never a setting.
+		outside := filepath.Join(t.TempDir(), "settings.json")
+		if err := os.WriteFile(outside, []byte(`{"logLevel": "error"}`), 0o600); err != nil {
+			t.Fatalf("write outside file: %v", err)
+		}
+		dir := configTestWriteState(t, nil)
+		if err := os.Symlink(outside, filepath.Join(dir, "settings.json")); err != nil {
+			t.Skipf("file symlink %s: %v; a junction links only a directory", outside, err)
+		}
+		got, err := core.ResolveConfig(configTestSettings(), nil, configTestGetenv(nil), dir)
+		if !errors.Is(err, core.ErrConfigInvalid) {
+			t.Fatalf("ResolveConfig = %+v, %v; want an error that is core.ErrConfigInvalid", got, err)
+		}
+	})
+
 	t.Run("relative state directory resolved against the working directory", func(t *testing.T) {
 		// SPEC §5.12: a relative path without --repo is a usage error; the working directory is
 		// never used.
