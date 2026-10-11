@@ -25,7 +25,7 @@ func footprintTestRoots(t *testing.T) core.OwnedRoots {
 		Home:      filepath.Join(base, "home"),
 		Canonical: []string{filepath.Join(base, "repo")},
 	}
-	for _, d := range []string{r.State, r.Temp, r.Cache, r.Home, r.Canonical[0]} {
+	for _, d := range []string{r.Temp, r.Cache, r.Home, r.Canonical[0]} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
 		}

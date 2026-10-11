@@ -3,7 +3,7 @@
 aiwe is pre-release. The design is [docs/SPEC.md](docs/SPEC.md); this page links to it.
 
 - **Prerequisites**: Go and git only. Every other tool runs as `go tool <name>` from `go.mod`;
-  `go run ./internal/cmd/repocheck doctor` names anything missing (SPEC §12.2).
+  `go run ./internal/cmd/repocheck doctor --repo .` names anything missing (SPEC §12.2).
 - **Branch model**: trunk-based. Work on a short-lived branch and open a pull request into `main`.
   CI runs on the pull request; it merges as one squash commit (SPEC §7.3, Q21).
 - **Pull request title**: a Conventional Commit subject in English (SPEC §12.3). Units that aiwe

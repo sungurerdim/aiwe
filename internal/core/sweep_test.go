@@ -15,6 +15,8 @@ import (
 	"time"
 )
 
+// sweepTestRoots names a state root under a fresh t.TempDir and makes the temp, cache, home and
+// repository roots; OpenOwner makes the state root itself, owner-only.
 func sweepTestRoots(t *testing.T) OwnedRoots {
 	t.Helper()
 	base := t.TempDir()
@@ -25,7 +27,7 @@ func sweepTestRoots(t *testing.T) OwnedRoots {
 		Home:      filepath.Join(base, "home"),
 		Canonical: []string{filepath.Join(base, "repo")},
 	}
-	for _, d := range []string{r.State, r.Temp, r.Cache, r.Home, r.Canonical[0]} {
+	for _, d := range []string{r.Temp, r.Cache, r.Home, r.Canonical[0]} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -382,5 +384,108 @@ func TestSweepUnownedOrphan(t *testing.T) {
 	}
 	if got := sweepTestField(t, rep, "Refused"); got != 2 {
 		t.Errorf("Sweep report Refused = %d, want 2 (dangling link, link out of the root)", got)
+	}
+}
+
+// TestSweepRecordEscape catches a record signed under the owner key whose Path leaves the temp
+// root, which makes the sweep remove an empty dir outside it (security review of #6, low).
+func TestSweepRecordEscape(t *testing.T) {
+	r := sweepTestRoots(t)
+	outside := filepath.Join(filepath.Dir(r.Temp), "outside", "empty")
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	o := sweepTestOpen(t, r, sweepTestDeadProcess(t))
+	dead := o.self
+	rec := ownedRecord{
+		FormatVersion: ownedFormatVersion,
+		Kind:          kindOwnedDir,
+		At:            time.Now().UTC(),
+		RepoID:        noneField,
+		Goal:          noneField,
+		Unit:          noneField,
+		RunID:         noneField,
+		Root:          "temp",
+		Path:          filepath.Join("..", "outside", "empty"),
+		Owner:         "run-20261011-0003",
+		PID:           dead.PID,
+		Start:         dead.Start.UTC(),
+		StartID:       noneField,
+	}
+	rec.HMAC = o.mac(kindOwnedDir, o.temp, rec)
+	if err := o.appendRecord(rec); err != nil {
+		t.Fatalf("append the signed record: %v", err)
+	}
+
+	rep, err := sweepTestOpen(t, r, sweepTestSelf(t)).Sweep(context.Background())
+	if err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+	if !sweepTestExists(t, outside) {
+		t.Errorf("empty dir %q outside the temp root was removed by a record with Path %q", outside, rec.Path)
+	}
+	if rep != (SweepReport{}) {
+		t.Errorf("Sweep report = %+v, want zero: a record whose Path is not a plain name is no record", rep)
+	}
+}
+
+// TestSweepRecordTrailingDot catches a signed record whose Path ends in a dot: Windows strips the
+// dot, so the sweep removes the unregistered dir "keep" (#109, low). Path must be a plain name
+// with no trailing dot on every OS; on Unix the literal dir is made too, so the case bites there.
+func TestSweepRecordTrailingDot(t *testing.T) {
+	for _, name := range []string{"keep.", "keep.."} {
+		t.Run(name, func(t *testing.T) {
+			r := sweepTestRoots(t)
+			keep := filepath.Join(r.Temp, "keep")
+			for _, d := range []string{keep, filepath.Join(r.Temp, name)} {
+				if err := os.MkdirAll(d, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			o := sweepTestOpen(t, r, sweepTestDeadProcess(t))
+			rec := ownedRecord{FormatVersion: ownedFormatVersion, Kind: kindOwnedDir, At: time.Now().UTC(),
+				RepoID: noneField, Goal: noneField, Unit: noneField, RunID: noneField, Root: "temp", Path: name,
+				Owner: "run-20261011-0004", PID: o.self.PID, Start: o.self.Start.UTC(), StartID: noneField}
+			rec.HMAC = o.mac(kindOwnedDir, o.temp, rec)
+			if err := o.appendRecord(rec); err != nil {
+				t.Fatalf("append the signed record: %v", err)
+			}
+			rep, err := sweepTestOpen(t, r, sweepTestSelf(t)).Sweep(context.Background())
+			if err != nil {
+				t.Fatalf("Sweep: %v", err)
+			}
+			if !sweepTestExists(t, keep) || !sweepTestExists(t, filepath.Join(r.Temp, name)) {
+				t.Errorf("unregistered dir under %s removed by a record with Path %q", r.Temp, name)
+			}
+			if rep != (SweepReport{}) {
+				t.Errorf("Sweep report = %+v, want zero: a Path with a trailing dot is no record", rep)
+			}
+		})
+	}
+}
+
+// TestOwnerStateJunction catches a state path that is a junction to another owner-only dir and
+// that OpenOwner follows, writing the owner key at the target (#109, low).
+func TestOwnerStateJunction(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("junctions are Windows-only")
+	}
+	r := removeTestRoots(t, t.TempDir())
+	target := filepath.Join(filepath.Dir(r.State), "elsewhere")
+	if err := mkdirOwnerOnly(target); err != nil {
+		t.Fatalf("make owner-only target %s: %v", target, err)
+	}
+	if out, err := exec.Command("cmd", "/c", "mklink", "/J", r.State, target).CombinedOutput(); err != nil {
+		t.Fatalf("junction %s -> %s: %v: %s", r.State, target, err, out)
+	}
+	self, err := CurrentProcess()
+	if err != nil {
+		t.Fatalf("CurrentProcess: %v", err)
+	}
+	if o, err := OpenOwner(r, self); !errors.Is(err, ErrRootUnsafe) {
+		t.Errorf("OpenOwner of state junction %s -> %s: owner %t, error %v; want %v", r.State, target, o != nil, err, ErrRootUnsafe)
+	}
+	if removeTestExists(t, filepath.Join(target, ownerKeyFile)) {
+		t.Errorf("OpenOwner wrote a key at the junction target %s", target)
 	}
 }

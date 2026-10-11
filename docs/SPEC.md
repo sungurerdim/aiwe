@@ -306,7 +306,7 @@ Benefit: a new stack is one row, not a new `if`. Enforced: review; a test that e
 
 ### 5.6 Pure core, imperative shell
 Decision functions take and return data. Process, git, HTTP and file IO live in `*_io.go` files or
-adapters. Outside `*_io.go`, only `cmd/aiwe/main.go`, `repocheck/source_rules.go` and the `core` files of
+adapters. Outside `*_io.go`, only `cmd/aiwe/main.go`, `internal/cmd/repocheck/main.go`, `repocheck/source_rules.go` and the `core` files of
 units 0.3, 0.20, 0.5, 0.6, 0.18 and 0.21 (§14), with their `_<os>` variants, may import `os` and `os/exec`. Enforced: check
 `repo/source-rules` (other files may not import `os`, `os/exec`, `net` or `net/http`).
 
@@ -518,7 +518,7 @@ table in the lint config (SSOT).
 | `internal/mcp` | MCP server generated from the command registry, with self-description. | core, ledger | S7 |
 | `internal/repocheck` | This repository's own checks (`repo/*`, commit message, CI changes and report). Never shipped. | core | S4 |
 | `cmd/aiwe` (front) | CLI and the `mcp` subcommand; wires the registry. | root packages above, except `repocheck` | S7 |
-| `internal/cmd/repocheck` | Entry point of `repocheck`. | repocheck | S4 |
+| `internal/cmd/repocheck` | Entry point of `repocheck`. | core, repocheck | S4 |
 | `internal/e2e` | End-to-end smoke tests (build tag `smoke`) that drive the built binary as a child process. Never shipped. | core | M2 |
 
 ### 6.2 Runtime and distribution — decided
@@ -1542,7 +1542,7 @@ read, quoted or copied: harness behaviour comes from its documentation or the ru
 | `vuln` | `go tool govulncheck ./...` | known vulnerabilities in the module's code paths | supply chain (DR-41); exits non-zero on a finding (§17) |
 | `tidy` | `go mod tidy -diff` | `go.mod` or `go.sum` drift | exits non-zero on drift (§17) |
 | `deadcode` | `go tool deadcode ./cmd/...` (empty output) | functions unreachable from `main` | `unused` does not see exported functions (DR-26) |
-| `repo` | `go run ./internal/cmd/repocheck all` | checks `rules`, `size`, `boundaries`, `source-rules`, `deps`, `ci-shape` | this repository's own rules (§3) |
+| `repo` | `go run ./internal/cmd/repocheck all --repo .` | checks `rules`, `size`, `boundaries`, `source-rules`, `deps`, `ci-shape` | this repository's own rules (§3) |
 | `test` | `go test -json -p <workers> ./...` | behaviour | DR-38 limits apply; data races: CI step `race` on Linux, since `-race` needs cgo and a C compiler (§17) that contributors need not install |
 
 Tools: the Go toolchain version is pinned in `go.mod`, which `actions/setup-go` reads (§17).
@@ -1852,8 +1852,8 @@ Serves S1, S7.
 | 0.19 | `aiwe config show` prints each setting with its origin. | `core/config_cmd.go`, `cmd/aiwe/main.go` | `go test -run ConfigShow ./internal/core/` |
 | 0.9 | Repository checks enforce boundaries, dependencies, size and rules. | `repocheck/boundaries.go`, `repocheck/deps.go`, `repocheck/size.go`, `repocheck/rules.go`, `internal/cmd/repocheck/main.go` | `go test ./internal/repocheck/` |
 | 0.10 | Commit messages and CI steps are checked against their rules. | `repocheck/commit_message.go`, `repocheck/ci_shape.go`, `.githooks/commit-msg`, `internal/cmd/repocheck/main.go` | `go test -run 'CommitMessage|CIShape' ./internal/repocheck/` |
-| 0.13 | The open-source files exist and pass the repository checks. | `LICENSE`, `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, `.github/dependabot.yml` | `go run ./internal/cmd/repocheck rules` |
-| 0.14 | README, AGENTS and the spec pass the rules check. | `README.md`, `AGENTS.md`, `docs/SPEC.md` | `go run ./internal/cmd/repocheck rules` |
+| 0.13 | The open-source files exist and pass the repository checks. | `LICENSE`, `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, `.github/dependabot.yml` | `go run ./internal/cmd/repocheck rules --repo .` |
+| 0.14 | README, AGENTS and the spec pass the rules check. | `README.md`, `AGENTS.md`, `docs/SPEC.md` | `go run ./internal/cmd/repocheck rules --repo .` |
 | 0.11 | Lint and tool settings make the full gate pass on the tree. | `.golangci.yml`, `.custom-gcl.yml`, `go.mod` (`tool` lines) | `go run ./cmd/aiwe gates gate --repo .` |
 | 0.12 | CI gates every push, picks its OS set and reports each run. | `.github/workflows/ci.yml`, `repocheck/changes.go`, `repocheck/ci_report.go`, `internal/cmd/repocheck/main.go` | `go test -run 'CIReport|Changes' ./internal/repocheck/` |
 
@@ -1950,7 +1950,7 @@ Serves M3, M6, M7.
 | 3.5 | D18 flags a changed function whose cognitive complexity exceeds 12. | `gates/complexity.go`, `stacks/profiles.go` | `go test -run Complexity ./internal/gates/` |
 | 3.7 | The security-reviewer's findings are reproduced by the engine. | `roles/cards/security-reviewer.md`, `engine/review.go`, `engine/repro.go`, `stacks/profiles.go`, `engine/lifecycle.go` | `go test -run 'Review|Repro|Detect|Profile|Derive' ./internal/engine/ ./internal/stacks/` |
 | 3.8 | The ux-reviewer judges screens captured by the project's UI runner. | `roles/cards/ux-reviewer.md`, `engine/screens.go`, `stacks/profiles.go`, `adapters/provider.go`, `engine/lifecycle.go` | `go test ./internal/engine/ ./internal/stacks/ ./internal/adapters/` |
-| 3.9 | The release job publishes the MCP Registry entry for every target. | `server.json`, `.github/workflows/ci.yml` | `go run ./internal/cmd/repocheck ci-shape` |
+| 3.9 | The release job publishes the MCP Registry entry for every target. | `server.json`, `.github/workflows/ci.yml` | `go run ./internal/cmd/repocheck ci-shape --repo .` |
 | 3.10 | The owner approves the 1.0.0 release once Gate 3, Q7 and U19 hold. | `docs/SPEC.md` | `aiwe metrics --repo .` |
 | 3.6 | The release job publishes `v1.0.0` and verifies its attestation. | `.goreleaser.yaml`, `.github/workflows/ci.yml` | `go tool goreleaser release --snapshot --clean` |
 

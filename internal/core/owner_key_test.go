@@ -7,8 +7,11 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -128,7 +131,6 @@ func TestOwnedHMAC(t *testing.T) {
 			// A key of the same shape, made by another state root.
 			other := r
 			other.State = filepath.Join(filepath.Dir(r.State), "other-state")
-			removeTestMkdir(t, other.State)
 			removeTestOpen(t, other)
 			nb, err := os.ReadFile(filepath.Join(other.State, "owner.key"))
 			if err != nil {
@@ -285,5 +287,202 @@ func TestOwnedRecordFields(t *testing.T) {
 	}
 	if json.Unmarshal(rec["pid"], &pid) != nil || pid != os.Getpid() {
 		t.Errorf("owned_dir record pid = %s, want %d", rec["pid"], os.Getpid())
+	}
+}
+
+// ownerKeyTestGrant gives Authenticated Users (SID S-1-5-11) the access perm on p with icacls.
+func ownerKeyTestGrant(t *testing.T, p, perm string) {
+	t.Helper()
+	out, err := exec.Command("icacls", p, "/grant", "*S-1-5-11:"+perm).CombinedOutput()
+	if err != nil {
+		t.Fatalf("icacls %s /grant *S-1-5-11:%s: %v: %s", p, perm, err, out)
+	}
+}
+
+// ownerKeyTestPermissiveParent gives Authenticated Users modify on base, inherited by every entry
+// made below it, so the test does not depend on how open the machine's temp dir is.
+func ownerKeyTestPermissiveParent(t *testing.T) string {
+	t.Helper()
+	base := t.TempDir()
+	ownerKeyTestGrant(t, base, "(OI)(CI)(M)")
+	return base
+}
+
+// ownerKeyTestSDDL returns the current user's SID and the security descriptor of p in SDDL, read
+// by PowerShell, apart from the code under test.
+func ownerKeyTestSDDL(t *testing.T, p string) (string, string) {
+	t.Helper()
+	script := "[Security.Principal.WindowsIdentity]::GetCurrent().User.Value; (Get-Acl -LiteralPath '" +
+		strings.ReplaceAll(p, "'", "''") + "').Sddl"
+	out, err := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", script).CombinedOutput()
+	if err != nil {
+		t.Fatalf("read the ACL of %s: %v: %s", p, err, out)
+	}
+	f := strings.Fields(string(out))
+	if len(f) != 2 {
+		t.Fatalf("read the ACL of %s: want a SID and an SDDL line, got %q", p, out)
+	}
+	return f[0], f[1]
+}
+
+var (
+	ownerKeyTestOwner = regexp.MustCompile(`^O:(.+?)G:`)
+	ownerKeyTestDACL  = regexp.MustCompile(`D:([A-Z]*)((?:\([^)]*\))*)`)
+	ownerKeyTestACE   = regexp.MustCompile(`\(([^)]*)\)`)
+)
+
+// ownerKeyTestAllowed returns the SIDs that the DACL of sddl allows, its DACL flags and its owner.
+func ownerKeyTestAllowed(t *testing.T, p, sddl string) (allowed []string, flags, owner string) {
+	t.Helper()
+	o := ownerKeyTestOwner.FindStringSubmatch(sddl)
+	d := ownerKeyTestDACL.FindStringSubmatch(sddl)
+	if o == nil || d == nil {
+		t.Fatalf("%s: SDDL %q has no owner or no DACL", p, sddl)
+	}
+	for _, m := range ownerKeyTestACE.FindAllStringSubmatch(d[2], -1) {
+		f := strings.Split(m[1], ";")
+		if len(f) != 6 || (f[0] != "A" && f[0] != "D") {
+			t.Fatalf("%s: ACE %q is neither a plain allow nor a plain deny ACE", p, m[1])
+		}
+		if f[0] == "A" {
+			allowed = append(allowed, f[5])
+		}
+	}
+	return allowed, d[1], o[1]
+}
+
+// ownerKeyTestOwnerOnly fails the test when p is owned by, or allows, a principal other than the
+// current user, SYSTEM or Administrators, or, when protected is set, still inherits its parent's
+// ACEs.
+func ownerKeyTestOwnerOnly(t *testing.T, p string, protected bool) {
+	t.Helper()
+	user, sddl := ownerKeyTestSDDL(t, p)
+	trusted := map[string]bool{user: true, "SY": true, "S-1-5-18": true, "BA": true,
+		"S-1-5-32-544": true, "CO": true, "S-1-3-0": true}
+	allowed, flags, owner := ownerKeyTestAllowed(t, p, sddl)
+	if !trusted[owner] {
+		t.Errorf("%s is owned by %s; want the current user (%s), SYSTEM or Administrators", p, owner, user)
+	}
+	if protected && !strings.Contains(flags, "P") {
+		t.Errorf("%s inherits its parent's ACEs (DACL flags %q, SDDL %s); want inheritance cut", p, flags, sddl)
+	}
+	for _, sid := range allowed {
+		if !trusted[sid] {
+			t.Errorf("%s allows %s (SDDL %s); want only the current user, SYSTEM and Administrators", p, sid, sddl)
+		}
+	}
+}
+
+// TestOwnerKeyACL catches an owner key, or a state dir, that a principal other than the owner,
+// SYSTEM or Administrators can read or write and that OpenOwner still loads on Windows, where the
+// 0o600/0o700 modes do nothing (security review of #6, medium). It also catches a state dir and key
+// that OpenOwner makes under an open parent and leaves open by inheritance, so aiwe refuses its own
+// state on a machine whose temp dir lets other users in (#109).
+func TestOwnerKeyACL(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("the key ACL check is Windows-only; Unix key modes are not measured (#109)")
+	}
+	self, err := CurrentProcess()
+	if err != nil {
+		t.Fatalf("CurrentProcess: %v", err)
+	}
+
+	t.Run("state dir and key made under an open parent are owner-only", func(t *testing.T) {
+		base := ownerKeyTestPermissiveParent(t)
+		_, parent := ownerKeyTestSDDL(t, base)
+		if allowed, _, _ := ownerKeyTestAllowed(t, base, parent); !slices.Contains(allowed, "AU") &&
+			!slices.Contains(allowed, "S-1-5-11") {
+			t.Fatalf("parent %s does not allow Authenticated Users (SDDL %s); the case proves nothing", base, parent)
+		}
+		r := removeTestRoots(t, base)
+		if _, err := OpenOwner(r, self); err != nil {
+			t.Fatalf("OpenOwner with a missing state root under an open parent: %v; want it made owner-only and loaded", err)
+		}
+		ownerKeyTestOwnerOnly(t, r.State, true)
+		ownerKeyTestOwnerOnly(t, filepath.Join(r.State, ownerKeyFile), false)
+	})
+
+	t.Run("state dir made beforehand under an open parent", func(t *testing.T) {
+		r := removeTestRoots(t, ownerKeyTestPermissiveParent(t))
+		removeTestMkdir(t, r.State)
+		if o, err := OpenOwner(r, self); !errors.Is(err, ErrRootUnsafe) {
+			t.Fatalf("OpenOwner of a state dir that inherits Authenticated Users modify: owner %t, error %v; want %v",
+				o != nil, err, ErrRootUnsafe)
+		}
+		if removeTestExists(t, filepath.Join(r.State, ownerKeyFile)) {
+			t.Errorf("OpenOwner refused %s yet wrote a key into it", r.State)
+		}
+	})
+
+	for _, c := range []struct{ name, target, perm string }{
+		{"key readable by Authenticated Users", ownerKeyFile, "(R)"},
+		{"key writable by Authenticated Users", ownerKeyFile, "(M)"},
+		{"state dir writable by Authenticated Users", ".", "(OI)(CI)(M)"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			r := removeTestRoots(t, t.TempDir())
+			// The first open makes the state dir and key and loads them: the grant alone makes the
+			// refusal.
+			removeTestOpen(t, r)
+			target := filepath.Join(r.State, c.target)
+			ownerKeyTestGrant(t, target, c.perm)
+			if o, err := OpenOwner(r, self); !errors.Is(err, ErrRootUnsafe) {
+				t.Errorf("OpenOwner with Authenticated Users granted %s on %s: owner %t, error %v; want %v",
+					c.perm, target, o != nil, err, ErrRootUnsafe)
+			}
+		})
+	}
+}
+
+// TestOwnerKeyMode catches a state dir or owner key that group or others can write and that
+// OpenOwner still loads on Unix, so another user swaps the key and forges ownership (#109, medium).
+// Root ignores modes on access, so the check reads the mode, not an access attempt.
+func TestOwnerKeyMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix modes; TestOwnerKeyACL covers Windows")
+	}
+	self, err := CurrentProcess()
+	if err != nil {
+		t.Fatalf("CurrentProcess: %v", err)
+	}
+	t.Run("made by OpenOwner", func(t *testing.T) {
+		r := removeTestRoots(t, t.TempDir())
+		removeTestOpen(t, r)
+		for p, want := range map[string]os.FileMode{r.State: 0o700, filepath.Join(r.State, ownerKeyFile): 0o600} {
+			if fi, err := os.Stat(p); err != nil {
+				t.Errorf("stat %s: %v", p, err)
+			} else if fi.Mode().Perm() != want {
+				t.Errorf("%s has mode %#o; want %#o", p, fi.Mode().Perm(), want)
+			}
+		}
+	})
+	for _, c := range []struct {
+		name, target string
+		mode         os.FileMode
+		preset       bool
+	}{
+		{"state dir 0777 made beforehand", ".", 0o777, true},
+		{"state dir group-writable", ".", 0o770, false},
+		{"key 0666", ownerKeyFile, 0o666, false},
+		{"key group-writable", ownerKeyFile, 0o620, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			r := removeTestRoots(t, t.TempDir())
+			if c.preset {
+				removeTestMkdir(t, r.State)
+			} else {
+				removeTestOpen(t, r)
+			}
+			target := filepath.Join(r.State, c.target)
+			if err := os.Chmod(target, c.mode); err != nil {
+				t.Fatal(err)
+			}
+			if o, err := OpenOwner(r, self); !errors.Is(err, ErrRootUnsafe) {
+				t.Errorf("OpenOwner with %s at mode %#o: owner %t, error %v; want %v", target, c.mode, o != nil, err, ErrRootUnsafe)
+			}
+			if c.preset && removeTestExists(t, filepath.Join(r.State, ownerKeyFile)) {
+				t.Errorf("OpenOwner refused %s yet wrote a key into it", r.State)
+			}
+		})
 	}
 }
