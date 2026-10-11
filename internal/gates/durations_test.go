@@ -52,6 +52,13 @@ func testDurationsParse(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name: "a line that is not a JSON event beside a valid package end is refused, not skipped",
+			input: `{"Time":"2026-10-11T09:14:14.5Z","Action":"pass","Package":"github.com/sungurerdim/aiwe/internal/core","Elapsed":12.42}
+FAIL	github.com/sungurerdim/aiwe/internal/gates [build failed]
+`,
+			wantErr: true,
+		},
+		{
 			name:    "empty output measured no package and is refused, not read as an empty green list (DR-13)",
 			input:   "",
 			wantErr: true,
