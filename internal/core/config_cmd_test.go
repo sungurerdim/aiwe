@@ -18,12 +18,12 @@ import (
 // secret-shaped setting.
 func configShowSettings() []core.ConfigSetting {
 	return []core.ConfigSetting{
-		{Name: "model", Env: "AIWE_MODEL", Default: "claude-opus-5-5"},
-		{Name: "max_turns", Env: "AIWE_MAX_TURNS", Default: "40"},
-		{Name: "tracker", Env: "AIWE_TRACKER", Default: "github"},
-		{Name: "log_level", Env: "AIWE_LOG_LEVEL", Default: "info"},
-		{Name: "api_token", Env: "AIWE_API_TOKEN", Default: ""},
-		{Name: "proxy", Env: "AIWE_PROXY_URL", Default: ""},
+		{Name: "model", Env: envName("MODEL"), Default: "claude-opus-5-5"},
+		{Name: "max_turns", Env: envName("MAX_TURNS"), Default: "40"},
+		{Name: "tracker", Env: envName("TRACKER"), Default: "github"},
+		{Name: "log_level", Env: envName("LOG_LEVEL"), Default: "info"},
+		{Name: "api_token", Env: envName("API_TOKEN"), Default: ""},
+		{Name: "proxy", Env: envName("PROXY_URL"), Default: ""},
 	}
 }
 
@@ -60,17 +60,17 @@ func writeConfigState(t *testing.T, dir string, settings map[string]string) {
 
 func TestConfigShow(t *testing.T) {
 	base := t.TempDir()
-	stateDir := filepath.Join(base, "aiwe-state")
-	cacheDir := filepath.Join(base, "aiwe-cache")
+	stateDir := filepath.Join(base, "state-root")
+	cacheDir := filepath.Join(base, "cache-root")
 	writeConfigState(t, stateDir, map[string]string{"model": "state-model", "max_turns": "25",
 		"tracker": "gitlab"})
 	getenv := configShowEnv(base, map[string]string{
-		"AIWE_HOME":      stateDir,
-		"AIWE_CACHE":     cacheDir,
-		"AIWE_MODEL":     "env-model",
-		"AIWE_MAX_TURNS": "30",
-		"AIWE_API_TOKEN": "ghp_Zq81LmN0pQrStUvWx",
-		"AIWE_PROXY_URL": "https://ada:hunter2-proxy@proxy.example.com:8080",
+		envName("HOME"):      stateDir,
+		envName("CACHE"):     cacheDir,
+		envName("MODEL"):     "env-model",
+		envName("MAX_TURNS"): "30",
+		envName("API_TOKEN"): "ghp_Zq81LmN0pQrStUvWx",
+		envName("PROXY_URL"): "https://ada:hunter2-proxy@proxy.example.com:8080",
 	})
 	res, err := core.ConfigShow(core.ConfigShowInput{Settings: configShowSettings(),
 		Flags: map[string]string{"model": "flag-model"}, Getenv: getenv, GOOS: runtime.GOOS, Home: base})
@@ -128,7 +128,7 @@ func TestConfigShow(t *testing.T) {
 
 func TestConfigShowRefuses(t *testing.T) {
 	base := t.TempDir()
-	stateDir := filepath.Join(base, "aiwe-state")
+	stateDir := filepath.Join(base, "state-root")
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -140,9 +140,9 @@ func TestConfigShowRefuses(t *testing.T) {
 		getenv func(string) string
 	}{
 		{"a broken state file is not shown as defaults",
-			configShowEnv(base, map[string]string{"AIWE_HOME": stateDir})},
+			configShowEnv(base, map[string]string{envName("HOME"): stateDir})},
 		{"a relative root override is not shown as a guessed root",
-			configShowEnv(base, map[string]string{"AIWE_HOME": "relative-state"})},
+			configShowEnv(base, map[string]string{envName("HOME"): "relative-state"})},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -197,4 +197,9 @@ func hasConfigRow(rows []core.ConfigRow, name string) bool {
 		}
 	}
 	return false
+}
+
+// envName returns the env variable name of suffix, derived from the product constant.
+func envName(suffix string) string {
+	return strings.ToUpper(core.Product) + "_" + suffix
 }
