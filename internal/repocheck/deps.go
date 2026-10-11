@@ -184,7 +184,7 @@ func goPresent(env DoctorEnv, want []int) bool {
 	if err != nil {
 		return false
 	}
-	have, ok := goVersionKey(v)
+	have, ok := toolchainKey(v)
 	return ok && slices.Compare(have, want) >= 0
 }
 
@@ -216,12 +216,26 @@ func parseGoMod(body string) ([]int, []string, error) {
 	return want, tools, nil
 }
 
-// releaseRank orders a release after its betas (rank 1) and release candidates (rank 2).
+// releaseRank orders a release after its language version (rank 0), betas (rank 1) and release
+// candidates (rank 2), as Go orders 1.28 below 1.28beta1 below 1.28rc1 below 1.28.0.
 const releaseRank = 3
 
-// goVersionKey turns a Go version such as 1.27.9, go1.28rc1 or `go1.27.9 X:jsonv2` (an experiment
-// suffix after a space is ignored) into a key that slices.Compare orders: major, minor, patch,
-// release rank, pre-release number. So go1.28rc2 sorts below 1.28.0 and above 1.27.9.
+// toolchainKey is goVersionKey for the version a toolchain reports. A devel toolchain, such as
+// `devel go1.28-abc Mon Oct 5 …`, counts as its language version 1.28, as cmd/go reads it: it meets
+// `go 1.28` but not `go 1.28rc1` or `go 1.28.0`.
+func toolchainKey(v string) ([]int, bool) {
+	fields := strings.Fields(v)
+	if len(fields) >= 2 && fields[0] == "devel" {
+		lang, _, _ := strings.Cut(fields[1], "-")
+		return goVersionKey(lang)
+	}
+	return goVersionKey(v)
+}
+
+// goVersionKey turns a Go version such as 1.28, 1.27.9, go1.28rc1 or `go1.27.9 X:jsonv2` (an
+// experiment suffix after a space is ignored) into a key that slices.Compare orders: major, minor,
+// patch, release rank, pre-release number. So 1.28 sorts below go1.28rc2, which sorts below 1.28.0
+// and above 1.27.9.
 func goVersionKey(v string) ([]int, bool) {
 	fields := strings.Fields(v)
 	if len(fields) == 0 {
@@ -248,13 +262,17 @@ func goVersionKey(v string) ([]int, bool) {
 	for len(key) < 3 {
 		key = append(key, 0)
 	}
-	rank, num, ok := preRelease(last[end:])
+	rank, num, ok := preRelease(last[end:], len(parts) == 3)
 	return append(key, rank, num), ok
 }
 
-// preRelease reads the suffix after a version's last number: "" is a release, betaN and rcN are
-// pre-releases. Any other suffix is not a Go version.
-func preRelease(suffix string) (rank, num int, ok bool) {
+// preRelease reads the suffix after a version's last number: "" is a release when the version has
+// a patch number and a language version when it has none, betaN and rcN are pre-releases. Any other
+// suffix is not a Go version.
+func preRelease(suffix string, patch bool) (rank, num int, ok bool) {
+	if suffix == "" && !patch {
+		return 0, 0, true
+	}
 	if suffix == "" {
 		return releaseRank, 0, true
 	}
