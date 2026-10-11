@@ -317,7 +317,7 @@ func emptyOwned(sub *os.Root, name string, fi fs.FileInfo) error {
 	var errs []error
 	for _, n := range names {
 		if n != markerFile {
-			errs = append(errs, sub.RemoveAll(n))
+			errs = append(errs, removeEntryTree(sub, n))
 		}
 	}
 	if err := errors.Join(errs...); err != nil {

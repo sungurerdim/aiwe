@@ -42,7 +42,11 @@ func rmdirTestIdentity(t *testing.T, path string) fs.FileInfo {
 	if err != nil {
 		t.Fatalf("open the owned dir %s: %v", path, err)
 	}
-	defer f.Close()
+	defer func() {
+		if err := f.Close(); err != nil {
+			t.Errorf("close the owned dir %s: %v", path, err)
+		}
+	}()
 	fi, err := f.Stat()
 	if err != nil {
 		t.Fatalf("stat the owned dir %s: %v", path, err)
@@ -114,7 +118,9 @@ func TestRemoveOwnedDeletePendingBeforeRmdir(t *testing.T) {
 				if cerr := rmdirTestDisposition(pending, false); cerr != nil {
 					t.Errorf("clear the delete-pending mark: %v", cerr)
 				}
-				windows.CloseHandle(pending)
+				if cerr := windows.CloseHandle(pending); cerr != nil {
+					t.Errorf("close the delete-pending handle: %v", cerr)
+				}
 			}
 			if !ran {
 				t.Fatalf("rmdirCheckedHook never ran for %s", d.Path())

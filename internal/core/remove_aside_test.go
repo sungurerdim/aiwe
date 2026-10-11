@@ -11,9 +11,9 @@ import (
 	"testing"
 )
 
-// rmdirTestKinds are the entries a test puts under an owned name in the moment between the last
+// rmdirTestKinds returns the entries a test puts under an owned name in the moment between the last
 // handle check and the directory-only removal: an unowned file, an unowned empty dir, or nothing.
-var rmdirTestKinds = []string{"file", "empty dir", "nothing"}
+func rmdirTestKinds() []string { return []string{"file", "empty dir", "nothing"} }
 
 // rmdirSharingViolation is ERROR_SHARING_VIOLATION: on Windows the removal holds the owned dir
 // open without delete sharing, so the system refuses to move it.
@@ -92,7 +92,7 @@ func rmdirTestCheckKept(t *testing.T, temp, name, moved, kind string) {
 // the owned dir stays elsewhere (#144). The swap runs in rmdirCheckedHook, after the check of the
 // held handle and before the directory-only removal. Each kind must fail with ErrNotOwned.
 func TestRemoveOwnedSwapBeforeRmdir(t *testing.T) {
-	for _, kind := range rmdirTestKinds {
+	for _, kind := range rmdirTestKinds() {
 		t.Run(kind, func(t *testing.T) {
 			r := removeTestRoots(t, t.TempDir())
 			o := removeTestOpen(t, r)
@@ -119,7 +119,7 @@ func TestRemoveOwnedSwapBeforeRmdir(t *testing.T) {
 // TestSweepSwapBeforeRmdir is TestRemoveOwnedSwapBeforeRmdir through Sweep: the swapped name of a
 // dead owner must count as Refused with not_owned, never as Removed.
 func TestSweepSwapBeforeRmdir(t *testing.T) {
-	for _, kind := range rmdirTestKinds {
+	for _, kind := range rmdirTestKinds() {
 		t.Run(kind, func(t *testing.T) {
 			r := sweepTestRoots(t)
 			dead := sweepTestOpen(t, r, sweepTestDeadProcess(t))
@@ -153,7 +153,7 @@ func TestSweepSwapBeforeRmdir(t *testing.T) {
 // ownership check: it goes through the same directory-only removal, so a file put under its name
 // is never deleted and a swapped name counts as Refused with not_owned (#144).
 func TestSweepEmptyDirSwapBeforeRmdir(t *testing.T) {
-	for _, kind := range rmdirTestKinds {
+	for _, kind := range rmdirTestKinds() {
 		t.Run(kind, func(t *testing.T) {
 			r := sweepTestRoots(t)
 			dead := sweepTestOpen(t, r, sweepTestDeadProcess(t))
@@ -225,4 +225,25 @@ func TestSweepEmptyDirSwapReturnsNotOwned(t *testing.T) {
 	if !removeTestExists(t, d.Path()) {
 		t.Errorf("unowned file %q put under the empty dir name was deleted by the sweep", d.Path())
 	}
+}
+
+// swapTestLstat returns the file info of name under root, read without following it through an
+// os.Root, as the ownership check reads the identity it approves. A path-based os.Lstat is no
+// stand-in: on Windows it reads the file identity later, from whatever the path names by then.
+func swapTestLstat(t *testing.T, root, name string) os.FileInfo {
+	t.Helper()
+	rt, err := os.OpenRoot(root)
+	if err != nil {
+		t.Fatalf("open root %s: %v", root, err)
+	}
+	defer func() {
+		if err := rt.Close(); err != nil {
+			t.Errorf("close root %s: %v", root, err)
+		}
+	}()
+	fi, err := rt.Lstat(name)
+	if err != nil {
+		t.Fatalf("lstat %s under %s: %v", name, root, err)
+	}
+	return fi
 }

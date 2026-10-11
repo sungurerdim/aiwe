@@ -138,23 +138,6 @@ func swapTestReplace(t *testing.T, owned, moved, foreign string) {
 	}
 }
 
-// swapTestLstat returns the file info of name under root, read without following it through an
-// os.Root, as the ownership check reads the identity it approves. A path-based os.Lstat is no
-// stand-in: on Windows it reads the file identity later, from whatever the path names by then.
-func swapTestLstat(t *testing.T, root, name string) os.FileInfo {
-	t.Helper()
-	rt, err := os.OpenRoot(root)
-	if err != nil {
-		t.Fatalf("open root %s: %v", root, err)
-	}
-	defer rt.Close()
-	fi, err := rt.Lstat(name)
-	if err != nil {
-		t.Fatalf("lstat %s under %s: %v", name, root, err)
-	}
-	return fi
-}
-
 // TestRemoveOwnedSwapAfterOwnerCheck catches a RemoveOwned that checks ownership by name, then
 // removes by name: a plain dir moved under the owned name after the check is emptied though the
 // owner never made it (#109). The swap runs in ownedCheckedHook, right after the ownership check
@@ -303,7 +286,11 @@ func TestOwnerCheckMarkerOfSwappedName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open root %s: %v", o.temp, err)
 	}
-	defer rt.Close()
+	defer func() {
+		if err := rt.Close(); err != nil {
+			t.Errorf("close root %s: %v", o.temp, err)
+		}
+	}()
 
 	before := swapTestLstat(t, o.temp, name)
 	swapTestReplace(t, d.Path(), filepath.Join(o.temp, "moved-away"), foreign)
