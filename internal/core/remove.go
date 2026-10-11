@@ -373,9 +373,10 @@ func removeOnce(rt *os.Root, name string) error {
 }
 
 // plainName reports whether s is 1 to max letters, digits, '.', '_' or '-', starting with a letter
-// or a digit; such a name can be neither a path nor "." or "..".
+// or a digit and not ending in '.'; such a name can be neither a path nor "." or "..", and Windows
+// cannot strip a trailing dot to make it name another entry.
 func plainName(s string, max int) bool {
-	if s == "" || len(s) > max {
+	if s == "" || len(s) > max || s[len(s)-1] == '.' {
 		return false
 	}
 	for i := 0; i < len(s); i++ {

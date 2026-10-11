@@ -77,7 +77,8 @@ func checkOwnerOnlyACE(p string, ace *windows.ACCESS_ALLOWED_ACE, trusted []*win
 // mkdirOwnerOnly makes the state root p, and any missing parent, when p is missing. p itself is made
 // in one step with a protected DACL that allows only the current user, SYSTEM and Administrators,
 // and that each entry below it inherits, such as the owner key; no ACE of an open parent reaches it.
-// A p that exists is left as it is: checkOwnerOnly refuses it when it is open.
+// A p that exists is left as it is: checkOwnerOnly refuses it when it is open. A p that is not a
+// plain directory, such as a junction, fails with ErrRootUnsafe before anything follows it.
 func mkdirOwnerOnly(p string) error {
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		return err
@@ -99,6 +100,13 @@ func mkdirOwnerOnly(p string) error {
 	sa.Length = uint32(unsafe.Sizeof(sa))
 	if err := windows.CreateDirectory(name, &sa); err != nil && !errors.Is(err, fs.ErrExist) {
 		return &fs.PathError{Op: "mkdir", Path: p, Err: err}
+	}
+	fi, err := os.Lstat(p)
+	if err != nil {
+		return err
+	}
+	if fi.Mode().Type() != fs.ModeDir {
+		return fmt.Errorf("%w: %q is not a plain directory (a junction or link is never followed)", ErrRootUnsafe, p)
 	}
 	return nil
 }
