@@ -47,8 +47,11 @@ func processStart(pid int) (time.Time, bool, error) {
 // serves instead.
 const exactStartID = false
 
+// errNoStartID is the error of startID on an OS that keeps no exact start identity.
+var errNoStartID = errors.New("start identity of a process: not kept on this OS")
+
 // startID fails: this OS keeps no exact start identity. A record that carries one, written on
 // another OS, therefore counts as a live owner (fail-closed).
-func startID(pid int) (string, bool, error) {
-	return "", false, fmt.Errorf("start identity of process %d: not kept on this OS", pid)
+func startID(int) (string, bool, error) {
+	return "", false, errNoStartID
 }

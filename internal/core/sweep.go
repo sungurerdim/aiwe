@@ -86,12 +86,12 @@ func (o *Owner) sweepDead(ctx context.Context, name string, recs []ownedRecord) 
 // reports whether name was removed. It works through an os.Root, which never leaves rootPath, and
 // removes only the directory its check saw (removeDirEntry); a file never goes. A name swapped after
 // the check fails with ErrNotOwned; any other failure, such as an entry in the directory, keeps it.
-func removeEmptyDir(rootPath, name string) (bool, error) {
+func removeEmptyDir(rootPath, name string) (_ bool, err error) {
 	rt, err := os.OpenRoot(rootPath)
 	if err != nil {
 		return false, nil
 	}
-	defer rt.Close()
+	defer func() { err = errors.Join(err, closeChecked("sweep root", rt.Close)) }()
 	fi, err := rt.Lstat(name)
 	if err != nil || fi.Mode().Type() != fs.ModeDir {
 		return false, nil
@@ -122,7 +122,7 @@ var removeLastCheckedHook func(name string)
 // possible: a file under name is kept, an empty directory under name may go (the accepted worst
 // case), and the held handle shows whether the approved directory went. When it did not, the call
 // fails with ErrNotOwned. A directory that still holds an entry is kept.
-func removeDirEntry(rt *os.Root, name string, fi fs.FileInfo) error {
+func removeDirEntry(rt *os.Root, name string, fi fs.FileInfo) (err error) {
 	if filepath.Base(name) != name || !filepath.IsLocal(name) {
 		return fmt.Errorf("%w: remove %q: not a single name under the root", ErrNotOwned, name)
 	}
@@ -130,7 +130,7 @@ func removeDirEntry(rt *os.Root, name string, fi fs.FileInfo) error {
 	if err != nil {
 		return errors.Join(sameEntry(rt, name, fi), err)
 	}
-	defer h.close()
+	defer func() { err = errors.Join(err, closeChecked("held directory", h.close)) }()
 	hi, err := h.f.Stat()
 	if err != nil {
 		return err
@@ -154,6 +154,17 @@ func removeDirEntry(rt *os.Root, name string, fi fs.FileInfo) error {
 	return errors.Join(sameEntry(rt, name, fi), rmErr)
 }
 
+// closeFailHook, when set, returns an error to add at the close named what; a test uses it.
+var closeFailHook func(what string) error
+
+// closeChecked runs c, the close named what on the removal path, and returns its error.
+func closeChecked(what string, c func() error) error {
+	if closeFailHook != nil {
+		return errors.Join(c(), closeFailHook(what))
+	}
+	return c()
+}
+
 // rmdirCheckedHook, when set, runs right after removeDirEntry has checked the held handle and
 // before the directory-only removal; a test uses it to swap name at that point.
 var rmdirCheckedHook func(name string)
@@ -169,7 +180,7 @@ var removeCheckedHook func(name string)
 // that directory: a name that names another one fails with ErrNotOwned at once. A
 // failed attempt, such as a file another process holds open, is retried 5 times, 200 ms apart,
 // then fails with ErrResidueLocked (SPEC §6.4); the next sweep retries.
-func removeTree(ctx context.Context, rootPath, name string, approved fs.FileInfo) error {
+func removeTree(ctx context.Context, rootPath, name string, approved fs.FileInfo) (err error) {
 	if !plainName(name, maxOwnedName) {
 		return fmt.Errorf("%w: remove %q: not an owned directory name", ErrNotOwned, name)
 	}
@@ -180,7 +191,7 @@ func removeTree(ctx context.Context, rootPath, name string, approved fs.FileInfo
 	if err != nil {
 		return fmt.Errorf("remove %q: %w", name, err)
 	}
-	defer rt.Close()
+	defer func() { err = errors.Join(err, closeChecked("removal root", rt.Close)) }()
 	for attempt := 1; ; attempt++ {
 		err = removeOnce(rt, name, approved)
 		if err == nil || errors.Is(err, ErrNotOwned) {
