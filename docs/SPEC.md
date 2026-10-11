@@ -322,7 +322,8 @@ terminal (`not_a_terminal`). Benefit and enforcement: DR-23.
 
 ### 5.8 Naming
 Package names short and lower case; files `snake_case.go`; exported identifiers `PascalCase`, others
-`camelCase`; outcomes `snake_case` strings from one table; commands `<module> <object>-<verb>`.
+`camelCase`; outcomes `snake_case` strings from one table; commands `<object> <verb>`, such as
+`aiwe unit check`; a command with one action has no verb, such as `aiwe version`.
 Enforced: gate step `format`; check `repo/source-rules` (file names).
 
 ### 5.9 Size limits
@@ -397,9 +398,11 @@ under the cache root (§6.5).
 ```go
 type OwnedDir struct{ path string }   // unexported field: only core.CreateOwned makes one
 type OwnedRoot int                    // TempRoot or CacheRoot; no other value exists
-func CreateOwned(ctx context.Context, root OwnedRoot, owner string) (OwnedDir, error) // ledger record, then dir + marker
-func RemoveOwned(ctx context.Context, d OwnedDir) error                              // checks root, marker, record; retries locks
+func (o *Owner) CreateOwned(ctx context.Context, root OwnedRoot, owner string) (OwnedDir, error) // ledger record, then dir + marker
+func (o *Owner) RemoveOwned(ctx context.Context, d OwnedDir) error                              // checks root, marker, record; retries locks
 ```
+`CreateOwned` and `RemoveOwned` are methods of `core.Owner`. `core.Owner` holds the roots and the
+owner key, injected as §5.4 describes.
 Removal refuses unless all four hold: the real path is under the temp root or the cache root, the
 ledger holds an `owned_dir` record for it, the marker file `.owner` matches that record, and no
 symlink leaves that root. The state root and every user directory stay outside (Q14). At start, a
@@ -576,7 +579,8 @@ Reason: protocol conformance is the SDK's job. Dependency policy: DR-41.
   global; no project needs a step (DR-8).
 - Terminal-only commands (§5.7) are absent from the MCP tool list.
 - `aiwe version` prints the version GoReleaser injected at build time (§12.3); a build without one
-  prints `unknown`.
+  prints `unknown`. The printed version has no `v` prefix: tag `v1.0.0` prints `1.0.0`, because
+  `.goreleaser.yaml` injects GoReleaser's `.Version` (§17).
 - Any command that targets a repository without a stored gate runs onboarding first (§7.1).
 - Self-description (DR-34):
 
@@ -2171,7 +2175,22 @@ Facts checked on 2026-10-10:
   report no failure, so a required job needs `needs` with `always()`. Source: docs.github.com,
   Troubleshooting required status checks; Using conditions to control job execution.
 - `actions/setup-go` v7: caching on by default (key from `go.mod`, or `cache-dependency-path`);
-  `go-version-file` reads the `toolchain` line. Source: github.com/actions/setup-go.
+  `go-version-file` reads the `toolchain` line; with no `toolchain` line it reads the `go` line, and
+  a `go` line with a patch version selects that exact version. Source: github.com/actions/setup-go,
+  `docs/advanced-usage.md`, checked 2026-10-11.
+- Go toolchain pin: `go.mod` has the line `go 1.27.2` and no `toolchain` line, so the `go` line is
+  the pin. GoReleaser v2.18.3 (a `tool` line in `go.mod`) declares `go 1.27.1` in its own `go.mod`,
+  so the pin cannot be lower than 1.27.1: a module's `go` line must be at least the `go` line of
+  each dependency. With `GOTOOLCHAIN=auto`, the default, `go` downloads and runs the pinned
+  toolchain when the local one is older. Source: `go.mod`; the GoReleaser v2.18.3 module `go.mod`,
+  local module cache; go.dev/doc/toolchain, checked 2026-10-11.
+- GoReleaser `.Version` is the tag with the `v` prefix stripped. Source: goreleaser.com, Templates
+  (`www/content/customization/general/templates.md`), checked 2026-10-11.
+- GoReleaser v2.18.3 names the binary and the archives after the project name. `.goreleaser.yaml`
+  sets no `project_name`, so GoReleaser takes the GitHub release repository name, which it reads
+  from the git remote. A clone whose remote names another repository builds another name. Source:
+  GoReleaser v2.18.3 source, `internal/pipe/release/scm.go`, `internal/pipe/project/project.go`,
+  `internal/pipe/build/build.go`, `internal/pipe/archive/archive.go`, local module cache.
 - golangci-lint v2.14.0 (stack survey). Linters present: `staticcheck`, `errcheck`, `unused`,
   `govet` ("roughly the same as 'go vet' and uses its passes"), `exhaustive`, `errorlint`,
   `contextcheck`, `containedctx`, `noctx`, `bodyclose`, `forbidigo`, `gosec`, `gomodguard_v2`;
@@ -2184,7 +2203,7 @@ Facts checked on 2026-10-10:
   pkg.go.dev, golang.org/x/tools/cmd/deadcode.
 - `go mod tidy -diff` changes nothing and exits non-zero when the diff is not empty; `go test`
   caches successful package results and reruns only on changed inputs. Source: `go help mod tidy`,
-  `go help test` (Go 1.25.7, local).
+  `go help test` (Go 1.27.2, local, 2026-10-11).
 - The `tool` directive in `go.mod` exists since Go 1.24 and runs through `go tool`. Source:
   go.dev/ref/mod.
 - `go version -m` prints a binary's embedded module versions. Source: pkg.go.dev/cmd/go.
@@ -2198,7 +2217,7 @@ Facts checked on 2026-10-10:
   open; on Windows `Command` quotes for `CommandLineToArgvW`, and `cmd.exe` batch files need
   `SysProcAttr.CmdLine`; since Go 1.19 lookup never resolves through the current directory
   (`ErrDot`). Source: pkg.go.dev, os/exec. `syscall.SysProcAttr` has `CmdLine` and
-  `CreationFlags` on Windows and `Setpgid` on Linux. Source: `go doc` (Go 1.25.7, local).
+  `CreationFlags` on Windows and `Setpgid` on Linux. Source: `go doc` (Go 1.27.2, local, 2026-10-11).
 - `golang.org/x/sys/windows` exports `CreateJobObject`, `AssignProcessToJobObject`,
   `TerminateJobObject`, `SetInformationJobObject`, `JOBOBJECT_EXTENDED_LIMIT_INFORMATION`. Source:
   pkg.go.dev (v0.49.0 page).
@@ -2248,7 +2267,7 @@ Facts checked on 2026-10-10:
 - MCP Registry entry: the server entry is `server.json`; an MCPB package uses `"registryType":
   "mcpb"`. Source: github.com/modelcontextprotocol/registry, `package-types.mdx`, checked 2026-10-10.
 - `go test -run <pattern>` that matches no test prints `ok <package> <time> [no tests to run]` and
-  exits 0. Source: Go 1.25.7, local run on the standard library package `strings`.
+  exits 0. Source: Go 1.27.2, local run (2026-10-11) on the standard library package `strings`.
 - git: an empty `credential.helper` resets the helper list; `GIT_CONFIG_NOSYSTEM` skips the system
   config; `GIT_CONFIG_COUNT` with key and value pairs sets config from the environment;
   `GIT_TERMINAL_PROMPT=0` stops terminal prompts; `core.hooksPath` moves the hook directory;
@@ -2260,8 +2279,9 @@ Facts checked on 2026-10-10:
   `PUT /repos/{owner}/{repo}/pulls/{pull_number}/merge` with `merge_method` `merge`, `squash` or
   `rebase`, `commit_title`, `commit_message`, and `sha`, the SHA the head must match to allow the
   merge. Source: docs.github.com, REST pulls, checked 2026-10-10.
-- Lead machine (Windows 11 x64, measured 2026-10-10): Go 1.25.7 with `CGO_ENABLED=0`; gcc,
-  GoReleaser, golangci-lint and svu are not on `PATH`.
+- Lead machine (Windows 11 x64, measured 2026-10-11): Go 1.25.7 installed; inside the module
+  `GOTOOLCHAIN=auto` runs Go 1.27.2; `CGO_ENABLED=0`; gcc, GoReleaser, golangci-lint and svu are
+  not on `PATH`.
 
 Unknown. Each open item names the unit whose Done item measures it before the engine relies on it,
 or why no measurement is needed. The measured value is that unit's evidence (§8.4) and then moves to
