@@ -1,10 +1,8 @@
 package core
 
 import (
-	"net/url"
 	"os"
 	"strings"
-	"unicode"
 )
 
 // secretMarkers are the name parts that make a variable secret-shaped (DR-35).
@@ -75,28 +73,19 @@ func secretName(upper string) bool {
 	return upper == "NPM_CONFIG__AUTH" || upper == "GOOGLE_APPLICATION_CREDENTIALS"
 }
 
-// urlWithPassword reports whether the upper-case name ends in _URL and a part of its value may
-// carry a password (DR-35, SPEC §6.5). The value splits on white space and commas; each part
-// that holds "://" must parse as a URL without a password, else the variable is dropped
-// (fail-closed). A part without "://", such as an scp-style git address, is not checked.
+// urlWithPassword reports whether the upper-case name ends in _URL and its value may carry a
+// password: after a "://" comes a ":" and, later, an "@" (DR-35, SPEC §6.5). The check is
+// fail-closed, so a passwordless URL with a ":" and a later "@" is dropped too.
 func urlWithPassword(upper, value string) bool {
 	if !strings.HasSuffix(upper, "_URL") {
 		return false
 	}
-	parts := strings.FieldsFunc(value, func(r rune) bool { return r == ',' || unicode.IsSpace(r) })
-	for _, part := range parts {
-		if !strings.Contains(part, "://") {
-			continue
-		}
-		u, err := url.Parse(part)
-		if err != nil {
-			return true
-		}
-		if _, set := u.User.Password(); set {
-			return true
-		}
+	_, rest, ok := strings.Cut(value, "://")
+	if !ok {
+		return false
 	}
-	return false
+	_, afterColon, ok := strings.Cut(rest, ":")
+	return ok && strings.Contains(afterColon, "@")
 }
 
 // reachNames are the upper-case variable names that let a child reach a credential or run a

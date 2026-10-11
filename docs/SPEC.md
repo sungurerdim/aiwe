@@ -630,9 +630,10 @@ Serves DR-35, DR-16.
 - **Environment**: the parent environment minus every secret-shaped variable (every source's
   `credentialEnv`, tracker tokens, names that contain `TOKEN`, `SECRET`, `KEY` or `PASSWORD`, names
   that end in `_PAT` or `_PASS`, `NPM_CONFIG__AUTH`, `GOOGLE_APPLICATION_CREDENTIALS`, and a `_URL`
-  variable whose value may carry a password; names compare without case). A `_URL` value splits on
-  white space and commas; each part that holds `://` must parse as a URL without a password, else
-  the variable is dropped. A part without `://`, such as an scp-style git address, is not checked. The
+  variable whose value may carry a password; names compare without case). A `_URL` variable is
+  dropped when its value has a `:` after a `://` and an `@` after that `:`; the check is
+  fail-closed and drops such a value even without a password. A value without `://`, such as an
+  scp-style git address, is not checked. The
   adapter adds back only its own source's credential. It also drops the parent shell's identity
   variables (listed in the adapter) and starts the harness with user-level rules, memory, hooks and
   plugins off, through the harness's documented flag or an isolated config home that keeps the
