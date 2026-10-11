@@ -15,7 +15,7 @@ const stillActive = 259
 // processStart returns the OS start time of pid and whether the process runs (U13). A pid that
 // names no process is not running; any other failure is an error, which the caller treats as a
 // live owner (fail-closed).
-func processStart(pid int) (time.Time, bool, error) {
+func processStart(pid int) (_ time.Time, _ bool, err error) {
 	if pid <= 0 || pid > int(^uint32(0)) {
 		return time.Time{}, false, nil
 	}
@@ -26,7 +26,7 @@ func processStart(pid int) (time.Time, bool, error) {
 	if err != nil {
 		return time.Time{}, false, fmt.Errorf("open process %d: %w", pid, err)
 	}
-	defer windows.CloseHandle(h)
+	defer func() { err = errors.Join(err, windows.CloseHandle(h)) }()
 	var code uint32
 	if err := windows.GetExitCodeProcess(h, &code); err != nil {
 		return time.Time{}, false, fmt.Errorf("exit code of process %d: %w", pid, err)
@@ -43,7 +43,7 @@ func processStart(pid int) (time.Time, bool, error) {
 
 // realPath returns the final path of an existing p: symlinks and junctions resolved, letter case
 // and short names normalised, as the file system reports it for an open handle.
-func realPath(p string) (string, error) {
+func realPath(p string) (_ string, err error) {
 	if p == "" {
 		return "", errors.New("real path: empty path")
 	}
@@ -57,19 +57,21 @@ func realPath(p string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("real path of %q: %w", p, err)
 	}
-	defer windows.CloseHandle(h)
-	buf := make([]uint16, windows.MAX_PATH)
+	defer func() { err = errors.Join(err, windows.CloseHandle(h)) }()
+	size := uint32(windows.MAX_PATH)
+	buf := make([]uint16, size)
 	for {
 		// Flags 0: FILE_NAME_NORMALIZED with VOLUME_NAME_DOS, a drive-letter or UNC path.
-		n, err := windows.GetFinalPathNameByHandle(h, &buf[0], uint32(len(buf)), 0)
+		n, err := windows.GetFinalPathNameByHandle(h, &buf[0], size, 0)
 		if err != nil {
 			return "", fmt.Errorf("real path of %q: %w", p, err)
 		}
-		if int(n) < len(buf) {
+		if n < size {
 			buf = buf[:n]
 			break
 		}
-		buf = make([]uint16, n+1)
+		size = n + 1
+		buf = make([]uint16, size)
 	}
 	s := windows.UTF16ToString(buf)
 	if rest, ok := strings.CutPrefix(s, `\\?\UNC\`); ok {
@@ -82,8 +84,11 @@ func realPath(p string) (string, error) {
 // serves instead.
 const exactStartID = false
 
+// errNoStartID is the error of startID on an OS that keeps no exact start identity.
+var errNoStartID = errors.New("start identity of a process: not kept on this OS")
+
 // startID fails: this OS keeps no exact start identity. A record that carries one, written on
 // another OS, therefore counts as a live owner (fail-closed).
-func startID(pid int) (string, bool, error) {
-	return "", false, fmt.Errorf("start identity of process %d: not kept on this OS", pid)
+func startID(int) (string, bool, error) {
+	return "", false, errNoStartID
 }

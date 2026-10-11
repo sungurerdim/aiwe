@@ -46,7 +46,7 @@ func sweepTestOpen(t *testing.T, r OwnedRoots, self ProcessID) *Owner {
 
 func sweepTestCreate(t *testing.T, o *Owner, root OwnedRoot) OwnedDir {
 	t.Helper()
-	d, err := o.CreateOwned(context.Background(), root, "run-20261010-0002")
+	d, err := o.CreateOwned(t.Context(), root, "run-20261010-0002")
 	if err != nil {
 		t.Fatalf("CreateOwned: %v", err)
 	}
@@ -79,7 +79,7 @@ func sweepTestSelf(t *testing.T) ProcessID {
 // gone: a pid whose owner is dead.
 func sweepTestDeadProcess(t *testing.T) ProcessID {
 	t.Helper()
-	cmd := exec.Command(os.Args[0], "-test.run=^$")
+	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^$")
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start child: %v", err)
 	}
@@ -108,7 +108,8 @@ func TestSweepLiveChild(t *testing.T) {
 // sweepTestLiveChild starts a child that runs until the test ends and returns its pid.
 func sweepTestLiveChild(t *testing.T) int {
 	t.Helper()
-	cmd := exec.Command(os.Args[0], "-test.run=^TestSweepLiveChild$")
+	// The test context is done before the cleanup runs, which kills the child; Wait reaps it.
+	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestSweepLiveChild$")
 	cmd.Env = append(os.Environ(), sweepTestChildEnv+"=1")
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -118,9 +119,10 @@ func sweepTestLiveChild(t *testing.T) int {
 		t.Fatalf("start live child: %v", err)
 	}
 	t.Cleanup(func() {
-		stdin.Close()
-		cmd.Process.Kill()
-		cmd.Wait()
+		var exit *exec.ExitError
+		if err := errors.Join(stdin.Close(), cmd.Wait()); err != nil && !errors.As(err, &exit) {
+			t.Errorf("live child: %v", err)
+		}
 	})
 	return cmd.Process.Pid
 }
@@ -240,13 +242,12 @@ func sweepTestUnreadablePID() (int, bool) {
 // TestSweepStartUnreadable catches the temp dir of an owner whose start cannot be read removed by
 // the sweep: such an owner counts as alive and its dir stays (U13, fail-closed).
 func TestSweepStartUnreadable(t *testing.T) {
-	ctx := context.Background()
 	self := sweepTestSelf(t)
 	check := func(t *testing.T, owner ProcessID, why string) {
 		t.Helper()
 		r := sweepTestRoots(t)
 		d := sweepTestCreate(t, sweepTestOpen(t, r, owner), TempRoot)
-		rep, err := sweepTestOpen(t, r, self).Sweep(ctx)
+		rep, err := sweepTestOpen(t, r, self).Sweep(t.Context())
 		if err != nil {
 			t.Fatalf("Sweep: %v", err)
 		}

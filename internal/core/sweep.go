@@ -5,10 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"math"
 	"os"
 	"path/filepath"
-	"runtime"
 	"time"
 )
 
@@ -17,6 +15,7 @@ type SweepReport struct {
 	Removed int // temp directories of a dead owner, removed
 	Live    int // temp directories of a running owner, kept
 	Refused int // temp directories of a dead owner that fail the ownership checks and are not empty, kept
+	Failed  int // temp directories of a dead owner not removed cleanly: a close failed and its error is returned
 }
 
 // ownedTemp is an existing registered directory under the temp root and whether its owner runs.
@@ -52,6 +51,8 @@ func (o *Owner) Sweep(ctx context.Context) (SweepReport, error) {
 		}
 		removed, err := o.sweepDead(ctx, d.name, recs)
 		switch {
+		case errors.Is(err, errCloseFailed):
+			rep.Failed++
 		case removed:
 			rep.Removed++
 		case err == nil, errors.Is(err, ErrNotOwned):
@@ -67,9 +68,13 @@ func (o *Owner) Sweep(ctx context.Context) (SweepReport, error) {
 // sweepDead checks the temp directory name of a dead owner, then removes it, and reports whether
 // it was removed. A directory that fails the check is removed only when it is empty, with no
 // error. An approved directory is removed only while name is still the directory approved, else
-// it fails with ErrNotOwned and nothing is removed.
+// it fails with ErrNotOwned and nothing is removed. A close that fails during the check is returned
+// and the directory is kept.
 func (o *Owner) sweepDead(ctx context.Context, name string, recs []ownedRecord) (bool, error) {
 	e, err := o.checkOwned(filepath.Join(o.temp, name), recs)
+	if errors.Is(err, errCloseFailed) {
+		return false, err
+	}
 	if err != nil {
 		return removeEmptyDir(o.temp, name)
 	}
@@ -85,13 +90,18 @@ func (o *Owner) sweepDead(ctx context.Context, name string, recs []ownedRecord) 
 // removeEmptyDir removes name under rootPath when it is a directory, not a link, with no entries; it
 // reports whether name was removed. It works through an os.Root, which never leaves rootPath, and
 // removes only the directory its check saw (removeDirEntry); a file never goes. A name swapped after
-// the check fails with ErrNotOwned; any other failure, such as an entry in the directory, keeps it.
-func removeEmptyDir(rootPath, name string) (bool, error) {
+// the check fails with ErrNotOwned, and a failed close is returned (closeChecked) with false; any
+// other failure, such as an entry in the directory, keeps it.
+func removeEmptyDir(rootPath, name string) (removed bool, err error) {
 	rt, err := os.OpenRoot(rootPath)
 	if err != nil {
 		return false, nil
 	}
-	defer rt.Close()
+	defer func() {
+		if cerr := closeChecked("sweep root", rt.Close); cerr != nil {
+			removed, err = false, errors.Join(err, cerr)
+		}
+	}()
 	fi, err := rt.Lstat(name)
 	if err != nil || fi.Mode().Type() != fs.ModeDir {
 		return false, nil
@@ -100,7 +110,7 @@ func removeEmptyDir(rootPath, name string) (bool, error) {
 		removeEmptyCheckedHook(name)
 	}
 	err = removeDirEntry(rt, name, fi)
-	if errors.Is(err, ErrNotOwned) {
+	if errors.Is(err, ErrNotOwned) || errors.Is(err, errCloseFailed) {
 		return false, err
 	}
 	return err == nil, nil
@@ -122,7 +132,7 @@ var removeLastCheckedHook func(name string)
 // possible: a file under name is kept, an empty directory under name may go (the accepted worst
 // case), and the held handle shows whether the approved directory went. When it did not, the call
 // fails with ErrNotOwned. A directory that still holds an entry is kept.
-func removeDirEntry(rt *os.Root, name string, fi fs.FileInfo) error {
+func removeDirEntry(rt *os.Root, name string, fi fs.FileInfo) (err error) {
 	if filepath.Base(name) != name || !filepath.IsLocal(name) {
 		return fmt.Errorf("%w: remove %q: not a single name under the root", ErrNotOwned, name)
 	}
@@ -130,7 +140,7 @@ func removeDirEntry(rt *os.Root, name string, fi fs.FileInfo) error {
 	if err != nil {
 		return errors.Join(sameEntry(rt, name, fi), err)
 	}
-	defer h.close()
+	defer func() { err = errors.Join(err, closeChecked("held directory", h.close)) }()
 	hi, err := h.f.Stat()
 	if err != nil {
 		return err
@@ -154,6 +164,25 @@ func removeDirEntry(rt *os.Root, name string, fi fs.FileInfo) error {
 	return errors.Join(sameEntry(rt, name, fi), rmErr)
 }
 
+// errCloseFailed marks a failed close on the removal path; such a failure is returned, never retried.
+var errCloseFailed = errors.New("close failed")
+
+// closeFailHook, when set, returns an error to add at the close named what; a test uses it.
+var closeFailHook func(what string) error
+
+// closeChecked runs c, the close named what on the removal path, and returns its error marked with
+// errCloseFailed.
+func closeChecked(what string, c func() error) error {
+	err := c()
+	if closeFailHook != nil {
+		err = errors.Join(err, closeFailHook(what))
+	}
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%w: %s: %w", errCloseFailed, what, err)
+}
+
 // rmdirCheckedHook, when set, runs right after removeDirEntry has checked the held handle and
 // before the directory-only removal; a test uses it to swap name at that point.
 var rmdirCheckedHook func(name string)
@@ -168,8 +197,9 @@ var removeCheckedHook func(name string)
 // handle; a nil approved fails with ErrNotOwned and removes nothing. Every attempt removes only
 // that directory: a name that names another one fails with ErrNotOwned at once. A
 // failed attempt, such as a file another process holds open, is retried 5 times, 200 ms apart,
-// then fails with ErrResidueLocked (SPEC §6.4); the next sweep retries.
-func removeTree(ctx context.Context, rootPath, name string, approved fs.FileInfo) error {
+// then fails with ErrResidueLocked (SPEC §6.4); the next sweep retries. A failed close is returned at
+// once, not retried.
+func removeTree(ctx context.Context, rootPath, name string, approved fs.FileInfo) (err error) {
 	if !plainName(name, maxOwnedName) {
 		return fmt.Errorf("%w: remove %q: not an owned directory name", ErrNotOwned, name)
 	}
@@ -180,10 +210,10 @@ func removeTree(ctx context.Context, rootPath, name string, approved fs.FileInfo
 	if err != nil {
 		return fmt.Errorf("remove %q: %w", name, err)
 	}
-	defer rt.Close()
+	defer func() { err = errors.Join(err, closeChecked("removal root", rt.Close)) }()
 	for attempt := 1; ; attempt++ {
 		err = removeOnce(rt, name, approved)
-		if err == nil || errors.Is(err, ErrNotOwned) {
+		if err == nil || errors.Is(err, ErrNotOwned) || errors.Is(err, errCloseFailed) {
 			return err
 		}
 		if attempt == removeAttempts {
@@ -348,41 +378,4 @@ func (o *Owner) ownedTempsOf(ctx context.Context, recs []ownedRecord) ([]ownedTe
 		out = append(out, ownedTemp{name: r.Path, live: ownerAlive(owner)})
 	}
 	return out, nil
-}
-
-// ownerAlive reports whether p still runs: the pid runs and its start matches. A p with an exact
-// start identity is compared by startID; any other by the OS start time within startTolerance, which
-// on Linux has no limit: a p built by hand counts as alive while its pid runs. When the start cannot
-// be read, the owner counts as alive, so nothing is removed (fail-closed).
-func ownerAlive(p ProcessID) bool {
-	if p.id != "" {
-		id, running, err := startID(p.PID)
-		return err != nil || running && id == p.id
-	}
-	start, running, err := processStart(p.PID)
-	if err != nil {
-		return true
-	}
-	if !running {
-		return false
-	}
-	d := start.Sub(p.Start)
-	if d < 0 {
-		d = -d
-	}
-	return d <= startTolerance()
-}
-
-// startTolerance is how far the OS start time of a p without an exact start identity may lie from
-// p.Start. On Windows and macOS the start is a stored value, read the same way at every call, so the
-// tolerance absorbs rounding only. Elsewhere it is read from /proc and moves with the wall clock, so
-// it is the widest Duration: a p built by hand whose pid runs always counts as a live owner and
-// nothing is removed (fail-closed, DR-25). On Linux CurrentProcess sets the exact identity, so the
-// tolerance applies only to a p built by hand.
-func startTolerance() time.Duration {
-	switch runtime.GOOS {
-	case "windows", "darwin":
-		return time.Second
-	}
-	return time.Duration(math.MaxInt64)
 }

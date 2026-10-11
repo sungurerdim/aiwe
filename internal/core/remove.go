@@ -142,11 +142,11 @@ func canonicalPaths(c []string) []namedPath {
 func realDir(n namedPath) (string, error) {
 	p, err := realPath(n.path)
 	if err != nil {
-		return "", fmt.Errorf("%w: %s: %v", ErrRootUnsafe, n.name, err)
+		return "", fmt.Errorf("%w: %s: %w", ErrRootUnsafe, n.name, err)
 	}
 	fi, err := os.Stat(p)
 	if err != nil {
-		return "", fmt.Errorf("%w: %s: %v", ErrRootUnsafe, n.name, err)
+		return "", fmt.Errorf("%w: %s: %w", ErrRootUnsafe, n.name, err)
 	}
 	if !fi.IsDir() {
 		return "", fmt.Errorf("%w: %s %q is not a directory", ErrRootUnsafe, n.name, p)
@@ -163,7 +163,7 @@ func checkRootSafe(root namedPath, protected []namedPath) error {
 	}
 	ri, err := os.Stat(root.path)
 	if err != nil {
-		return fmt.Errorf("%w: %s: %v", ErrRootUnsafe, root.name, err)
+		return fmt.Errorf("%w: %s: %w", ErrRootUnsafe, root.name, err)
 	}
 	for _, p := range protected {
 		if err := checkAncestors(ri, root, p); err != nil {
@@ -179,7 +179,7 @@ func checkAncestors(ri os.FileInfo, root, p namedPath) error {
 	for a := p.path; ; a = filepath.Dir(a) {
 		ai, err := os.Stat(a)
 		if err != nil {
-			return fmt.Errorf("%w: %s %q: %v", ErrRootUnsafe, p.name, a, err)
+			return fmt.Errorf("%w: %s %q: %w", ErrRootUnsafe, p.name, a, err)
 		}
 		if os.SameFile(ri, ai) {
 			return fmt.Errorf("%w: %s %q is or contains the %s %q", ErrRootUnsafe, root.name, root.path, p.name, p.path)
@@ -316,15 +316,15 @@ func (o *Owner) checkOwned(p string, recs []ownedRecord) (ownedEntry, error) {
 // info of name, read through a handle, so it names one directory whatever the path names later.
 // The marker is read through the directory opened on that identity. The links are walked by path,
 // so name must still be that directory after the walk, else it fails with ErrNotOwned.
-func (o *Owner) checkOwnedContent(rootPath, name string, rec ownedRecord) (fs.FileInfo, error) {
+func (o *Owner) checkOwnedContent(rootPath, name string, rec ownedRecord) (fi fs.FileInfo, err error) {
 	rt, err := os.OpenRoot(rootPath)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrNotOwned, err)
+		return nil, fmt.Errorf("%w: %w", ErrNotOwned, err)
 	}
-	defer rt.Close()
-	fi, err := rt.Lstat(name)
+	defer func() { err = errors.Join(err, closeChecked("owned root", rt.Close)) }()
+	fi, err = rt.Lstat(name)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrNotOwned, err)
+		return nil, fmt.Errorf("%w: %w", ErrNotOwned, err)
 	}
 	if fi.Mode().Type() != fs.ModeDir {
 		return nil, fmt.Errorf("%w: %q is not a directory (a link is never followed)", ErrNotOwned, name)
@@ -350,22 +350,22 @@ var ownedMarkerHook func(name string)
 
 // checkMarkerOf opens name under rt once, proves it is the directory fi describes, and checks its
 // marker through that handle; a name swapped in between fails with ErrNotOwned.
-func (o *Owner) checkMarkerOf(rt *os.Root, rootPath, name string, fi fs.FileInfo, rec ownedRecord) error {
+func (o *Owner) checkMarkerOf(rt *os.Root, rootPath, name string, fi fs.FileInfo, rec ownedRecord) (err error) {
 	sub, err := openChecked(rt, name, fi)
 	if err != nil && !errors.Is(err, ErrNotOwned) {
-		err = fmt.Errorf("%w: %v", ErrNotOwned, err)
+		err = fmt.Errorf("%w: %w", ErrNotOwned, err)
 	}
 	if err != nil {
 		return err
 	}
-	defer sub.Close()
+	defer func() { err = errors.Join(err, closeChecked("owned directory", sub.Close)) }()
 	d, err := sub.Open(".")
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrNotOwned, err)
+		return fmt.Errorf("%w: %w", ErrNotOwned, err)
 	}
 	di, err := d.Stat()
 	if err := errors.Join(err, d.Close()); err != nil {
-		return fmt.Errorf("%w: %v", ErrNotOwned, err)
+		return fmt.Errorf("%w: %w", ErrNotOwned, err)
 	}
 	if !os.SameFile(fi, di) {
 		return fmt.Errorf("%w: %q was swapped during the ownership check (a link is never followed)", ErrNotOwned, name)
