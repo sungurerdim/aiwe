@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/sungurerdim/aiwe/internal/core"
+	"github.com/sungurerdim/aiwe/internal/gates"
 )
 
 // version is the one exception to the package-variable ban (SPEC §5.4): the release build sets it
@@ -18,10 +19,11 @@ func main() {
 
 // registry returns the commands this binary serves.
 func registry() []core.Command {
-	return []core.Command{
+	cmds := []core.Command{
 		{Module: "front", Object: "version", Params: []string{"format"},
 			Purpose: "print the version of this binary", Run: runVersion},
 	}
+	return append(cmds, gates.Commands()...)
 }
 
 // runVersion reports the version injected at build time, or unknown when none was injected.
