@@ -359,3 +359,142 @@ func TestRemoveTreeEscape(t *testing.T) {
 		}
 	}
 }
+
+// swapTestForeign puts an entry the owner never made at path: a file, or an empty dir when dir is true.
+func swapTestForeign(t *testing.T, path string, dir bool) {
+	t.Helper()
+	if dir {
+		if err := os.Mkdir(path, 0o755); err != nil {
+			t.Errorf("make the unowned empty dir %s: %v", path, err)
+		}
+		return
+	}
+	if err := os.WriteFile(path, []byte("not owned"), 0o644); err != nil {
+		t.Errorf("write the unowned file %s: %v", path, err)
+	}
+}
+
+// TestSweepEmptyDirSwappedForFile catches the sweep of an empty unowned dir that removes by name
+// after its type check: a file put under the name after the check is deleted and counted as
+// Removed (#144). Root.Remove also deletes files, so only a check right before the removal keeps
+// it. The swap runs in removeEmptyCheckedHook, after the check and before the removal.
+func TestSweepEmptyDirSwappedForFile(t *testing.T) {
+	r := sweepTestRoots(t)
+	dead := sweepTestOpen(t, r, sweepTestDeadProcess(t))
+	d := sweepTestCreate(t, dead, TempRoot)
+	// A crash between Mkdir and the marker leaves an empty dir that fails the ownership check.
+	if err := os.Remove(filepath.Join(d.Path(), markerFile)); err != nil {
+		t.Fatalf("remove the marker of %s: %v", d.Path(), err)
+	}
+	moved := filepath.Join(dead.temp, "moved-away")
+	swapped := false
+	removeEmptyCheckedHook = func(name string) {
+		if swapped || name != filepath.Base(d.Path()) {
+			return
+		}
+		swapped = true
+		if err := os.Rename(d.Path(), moved); err != nil {
+			t.Errorf("move the empty dir %s away: %v", d.Path(), err)
+			return
+		}
+		swapTestForeign(t, d.Path(), false)
+	}
+	t.Cleanup(func() { removeEmptyCheckedHook = nil })
+
+	rep, err := sweepTestOpen(t, r, sweepTestSelf(t)).Sweep(context.Background())
+	if !swapped {
+		t.Fatalf("removeEmptyCheckedHook never ran for %q", filepath.Base(d.Path()))
+	}
+	if err != nil && !errors.Is(err, ErrNotOwned) {
+		t.Errorf("Sweep after the swap: %v, want nil or %v", err, ErrNotOwned)
+	}
+	if !removeTestExists(t, d.Path()) {
+		t.Errorf("unowned file %q put under the empty dir name was deleted by the sweep", d.Path())
+	}
+	if rep.Removed != 0 || rep.Refused != 1 {
+		t.Errorf("Sweep report = %+v, want Removed 0, Refused 1: the file under %q is not an empty dir", rep, filepath.Base(d.Path()))
+	}
+}
+
+// TestRemoveOwnedSwapBeforeLastRemove catches a removal that empties the owned dir, checks its
+// name once more, then removes by name: an unowned file or empty dir put under the name after
+// that check is deleted, and the call reports success while the owned dir stays elsewhere
+// (#144). The swap runs in removeLastCheckedHook, after the last check and before the removal.
+func TestRemoveOwnedSwapBeforeLastRemove(t *testing.T) {
+	for _, tc := range []struct {
+		kind string
+		dir  bool
+	}{{"file", false}, {"empty dir", true}} {
+		t.Run(tc.kind, func(t *testing.T) {
+			r := removeTestRoots(t, t.TempDir())
+			o := removeTestOpen(t, r)
+			d := removeTestCreate(t, o, TempRoot)
+			removeTestWrite(t, filepath.Join(d.Path(), "work.txt"), "owned work")
+			moved := filepath.Join(o.temp, "moved-away")
+			swapped := false
+			removeLastCheckedHook = func(name string) {
+				if swapped || name != filepath.Base(d.Path()) {
+					return
+				}
+				swapped = true
+				if err := os.Rename(d.Path(), moved); err != nil {
+					t.Errorf("move the owned dir %s away: %v", d.Path(), err)
+					return
+				}
+				swapTestForeign(t, d.Path(), tc.dir)
+			}
+			t.Cleanup(func() { removeLastCheckedHook = nil })
+
+			err := o.RemoveOwned(context.Background(), d)
+			if !swapped {
+				t.Fatalf("removeLastCheckedHook never ran for %q", filepath.Base(d.Path()))
+			}
+			if !errors.Is(err, ErrNotOwned) {
+				t.Errorf("RemoveOwned after the swap = %v, want %v: the owned dir stays at %s", err, ErrNotOwned, moved)
+			}
+			if !removeTestExists(t, d.Path()) {
+				t.Errorf("unowned %s %q put under the owned name was deleted", tc.kind, d.Path())
+			}
+			if !removeTestExists(t, moved) {
+				t.Errorf("owned dir moved to %q is gone; the swap did not leave it elsewhere", moved)
+			}
+		})
+	}
+}
+
+// TestSweepSwapBeforeLastRemove catches a Sweep that counts a swapped name as Removed: the owned
+// dir of a dead owner is moved aside after the last check, an unowned empty dir takes its name,
+// and that dir is deleted in its place (#144). The name must count as Refused with not_owned.
+func TestSweepSwapBeforeLastRemove(t *testing.T) {
+	r := sweepTestRoots(t)
+	dead := sweepTestOpen(t, r, sweepTestDeadProcess(t))
+	d := sweepTestCreate(t, dead, TempRoot)
+	removeTestWrite(t, filepath.Join(d.Path(), "work.txt"), "owned work")
+	swapped := false
+	removeLastCheckedHook = func(name string) {
+		if swapped || name != filepath.Base(d.Path()) {
+			return
+		}
+		swapped = true
+		if err := os.Rename(d.Path(), filepath.Join(dead.temp, "moved-away")); err != nil {
+			t.Errorf("move the owned dir %s away: %v", d.Path(), err)
+			return
+		}
+		swapTestForeign(t, d.Path(), true)
+	}
+	t.Cleanup(func() { removeLastCheckedHook = nil })
+
+	rep, err := sweepTestOpen(t, r, sweepTestSelf(t)).Sweep(context.Background())
+	if !swapped {
+		t.Fatalf("removeLastCheckedHook never ran for %q", filepath.Base(d.Path()))
+	}
+	if !errors.Is(err, ErrNotOwned) {
+		t.Errorf("Sweep after the swap: %v, want %v for the swapped name", err, ErrNotOwned)
+	}
+	if !removeTestExists(t, d.Path()) {
+		t.Errorf("unowned empty dir %q put under the owned name was swept", d.Path())
+	}
+	if rep.Removed != 0 || rep.Refused != 1 {
+		t.Errorf("Sweep report = %+v, want Removed 0, Refused 1 for the swapped name %q", rep, filepath.Base(d.Path()))
+	}
+}
