@@ -241,17 +241,18 @@ func TestProcessTreeBatchLauncher(t *testing.T) {
 	})
 
 	// #105, security review of #7: Start resolved the program a second time after the batch
-	// decision, joining a relative Dir once more, so `sub\sub\agent.exe.exe` ran where the decision
-	// was made on `sub\agent.exe`. The decoy is a copy of the test binary, so a failure starts no
-	// batch file and opens no window.
+	// decision, joining a relative Dir once more, so `sub\sub\agent.exe` ran where the decision was
+	// made on `sub\agent.exe`. The decoy is a copy of the test binary, so a failure starts no batch
+	// file and opens no window.
 	t.Run("a relative Dir starts only the file the batch decision was made on", func(t *testing.T) {
 		root := t.TempDir()
 		t.Chdir(root)
 		if err := os.MkdirAll(filepath.Join(root, "sub", "sub"), 0o700); err != nil {
 			t.Fatalf("make the work tree: %v", err)
 		}
-		copyLauncherProgram(t, filepath.Join(root, "sub", "agent.exe"))
-		copyLauncherProgram(t, filepath.Join(root, "sub", "sub", "agent.exe.exe"))
+		decided := filepath.Join(root, "sub", "agent.exe")
+		copyLauncherProgram(t, decided)
+		copyLauncherProgram(t, filepath.Join(root, "sub", "sub", "agent.exe"))
 		record := t.TempDir()
 		ctx, cancel := context.WithTimeout(t.Context(), processOuterBound)
 		defer cancel()
@@ -261,10 +262,12 @@ func TestProcessTreeBatchLauncher(t *testing.T) {
 			if waitErr := waitProcessChild(t, child, processBound); waitErr != nil {
 				t.Errorf("Start(%q, Dir %q): Wait = %v", argv0, "sub", waitErr)
 			}
+		} else if !strings.Contains(err.Error(), "relative") {
+			t.Errorf("Start(%q, Dir %q) = %v, want the refusal of a relative Dir", argv0, "sub", err)
 		}
-		if ran, ok := readLauncherRan(t, record); ok && !strings.EqualFold(ran, "agent.exe") {
-			t.Errorf("Start(%q, Dir %q) ran %q, want only %q (the file the decision was made on) or a refusal",
-				argv0, "sub", ran, "agent.exe")
+		if ran, ok := readLauncherRan(t, record); ok && !sameLauncherFile(t, ran, decided) {
+			t.Errorf("Start(%q, Dir %q) ran %s, want only %s (the file the decision was made on) or a refusal",
+				argv0, "sub", ran, decided)
 		}
 	})
 
@@ -296,19 +299,28 @@ func TestProcessTreeBatchLauncher(t *testing.T) {
 	})
 
 	// #105, security review of #7: Windows maps these characters to " % ! when an ANSI program reads
-	// its command line (best fit, measured with code pages 1252 and 1254), so they act as the
-	// characters checkBatchWord refuses.
+	// its command line (best fit of the ANSI code pages 874, 932, 936, 949, 950 and 1250-1258), so
+	// they act as the characters checkBatchWord refuses.
 	t.Run("a best-fit form of a refused character is refused", func(t *testing.T) {
 		launcher := writeProcessLauncher(t, t.TempDir())
 		tests := []struct {
 			name, arg string
 		}{
-			{"fullwidth quotation mark U+FF02", "prompt＂ --evil-flag ＂"},
 			{"modifier letter double prime U+02BA", "promptʺ --evil-flag ʺ"},
 			{"combining double vertical line above U+030E", "prompt̎ --evil-flag ̎"},
+			{"double low-9 quotation mark U+201E", "prompt„ --evil-flag „"},
+			{"double high-reversed-9 quotation mark U+201F", "prompt‟ --evil-flag ‟"},
+			{"double prime U+2033", "prompt″ --evil-flag ″"},
+			{"reversed double prime U+2036", "prompt‶ --evil-flag ‶"},
+			{"reversed double prime quotation mark U+301D", "prompt〝 --evil-flag 〝"},
+			{"double prime quotation mark U+301E", "prompt〞 --evil-flag 〞"},
+			{"fullwidth quotation mark U+FF02", "prompt＂ --evil-flag ＂"},
+			{"arabic percent sign U+066A", "٪PATH٪"},
 			{"fullwidth percent sign U+FF05", "％PATH％"},
-			{"fullwidth exclamation mark U+FF01", "！AIWE_PROBE_SECRET！"},
+			{"inverted exclamation mark U+00A1", "¡AIWE_PROBE_SECRET¡"},
 			{"latin letter retroflex click U+01C3", "ǃAIWE_PROBE_SECRETǃ"},
+			{"double exclamation mark U+203C", "‼AIWE_PROBE_SECRET‼"},
+			{"fullwidth exclamation mark U+FF01", "！AIWE_PROBE_SECRET！"},
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
@@ -367,7 +379,7 @@ func writeProcessLauncher(t *testing.T, dir string) string {
 }
 
 // launcherRecordEnv is set to a directory when the test binary runs as a copy whose start a
-// launcher case checks; the copy writes the base name of its own file there and exits.
+// launcher case checks; the copy writes the full path of its own file there and exits.
 const launcherRecordEnv = "AIWE_LAUNCHER_TEST_RECORD"
 
 func init() {
@@ -379,7 +391,7 @@ func init() {
 	if err != nil {
 		os.Exit(21)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "ran"), []byte(filepath.Base(self)), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "ran"), []byte(self), 0o600); err != nil {
 		os.Exit(22)
 	}
 	os.Exit(0)
@@ -407,7 +419,7 @@ func copyLauncherProgram(t *testing.T, path string) {
 	}
 }
 
-// readLauncherRan returns the base name of the file a started copy recorded in dir, and whether
+// readLauncherRan returns the path of the file a started copy recorded in dir, and whether
 // one ran.
 func readLauncherRan(t *testing.T, dir string) (string, bool) {
 	t.Helper()
@@ -419,4 +431,19 @@ func readLauncherRan(t *testing.T, dir string) (string, bool) {
 		t.Fatalf("read the start record: %v", err)
 	}
 	return string(data), true
+}
+
+// sameLauncherFile reports whether ran and want name one file; os.SameFile compares the files, so
+// a short (8.3) or differently cased form of the same path still matches.
+func sameLauncherFile(t *testing.T, ran, want string) bool {
+	t.Helper()
+	ranInfo, err := os.Stat(ran)
+	if err != nil {
+		t.Fatalf("stat the started file %s: %v", ran, err)
+	}
+	wantInfo, err := os.Stat(want)
+	if err != nil {
+		t.Fatalf("stat the decided file %s: %v", want, err)
+	}
+	return os.SameFile(ranInfo, wantInfo)
 }
