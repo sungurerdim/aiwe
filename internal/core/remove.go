@@ -329,6 +329,9 @@ func (o *Owner) checkOwnedContent(rootPath, name string, rec ownedRecord) (fs.Fi
 	if fi.Mode().Type() != fs.ModeDir {
 		return nil, fmt.Errorf("%w: %q is not a directory (a link is never followed)", ErrNotOwned, name)
 	}
+	if ownedMarkerHook != nil {
+		ownedMarkerHook(name)
+	}
 	if err := o.checkMarkerOf(rt, rootPath, name, fi, rec); err != nil {
 		return nil, err
 	}
@@ -340,6 +343,10 @@ func (o *Owner) checkOwnedContent(rootPath, name string, rec ownedRecord) (fs.Fi
 	}
 	return fi, nil
 }
+
+// ownedMarkerHook, when set, runs right after the ownership check has read name without following
+// it and before it opens name to read the marker; a test uses it to swap name at that point.
+var ownedMarkerHook func(name string)
 
 // checkMarkerOf opens name under rt once, proves it is the directory fi describes, and checks its
 // marker through that handle; a name swapped in between fails with ErrNotOwned.

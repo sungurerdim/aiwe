@@ -103,18 +103,17 @@ var removeCheckedHook func(name string)
 
 // removeTree removes name under rootPath through an os.Root, which never leaves rootPath. A name
 // that is not a plain name, or that is not a directory, such as one swapped for a link, fails with
-// ErrNotOwned at once. approved, when given, is the file info the ownership check approved, read
-// through a handle; without it, the directory the first attempt finds is approved. Every attempt
-// removes only that directory: a name that names another one fails with ErrNotOwned at once. A
+// ErrNotOwned at once. approved is the file info the ownership check approved, read through a
+// handle; a nil approved fails with ErrNotOwned and removes nothing. Every attempt removes only
+// that directory: a name that names another one fails with ErrNotOwned at once. A
 // failed attempt, such as a file another process holds open, is retried 5 times, 200 ms apart,
 // then fails with ErrResidueLocked (SPEC §6.4); the next sweep retries.
-func removeTree(ctx context.Context, rootPath, name string, approved ...fs.FileInfo) error {
+func removeTree(ctx context.Context, rootPath, name string, approved fs.FileInfo) error {
 	if !plainName(name, maxOwnedName) {
 		return fmt.Errorf("%w: remove %q: not an owned directory name", ErrNotOwned, name)
 	}
-	want, err := oneApproved(name, approved)
-	if err != nil {
-		return err
+	if approved == nil {
+		return fmt.Errorf("%w: remove %q: no directory approved by the ownership check", ErrNotOwned, name)
 	}
 	rt, err := os.OpenRoot(rootPath)
 	if err != nil {
@@ -122,7 +121,7 @@ func removeTree(ctx context.Context, rootPath, name string, approved ...fs.FileI
 	}
 	defer rt.Close()
 	for attempt := 1; ; attempt++ {
-		want, err = removeOnce(rt, name, want)
+		err = removeOnce(rt, name, approved)
 		if err == nil || errors.Is(err, ErrNotOwned) {
 			return err
 		}
@@ -140,51 +139,39 @@ func removeTree(ctx context.Context, rootPath, name string, approved ...fs.FileI
 	return fmt.Errorf("%w: remove %q: %d attempts %v apart: %w", ErrResidueLocked, name, removeAttempts, removeWait, err)
 }
 
-// oneApproved returns the one approved file info of name, or nil when none is given.
-func oneApproved(name string, approved []fs.FileInfo) (fs.FileInfo, error) {
-	switch len(approved) {
-	case 0:
-		return nil, nil
-	case 1:
-		return approved[0], nil
-	}
-	return nil, fmt.Errorf("remove %q: %d approved directories, want at most 1", name, len(approved))
-}
-
 // removeOnce removes the entries of name, then its marker, then name itself, so a removal that
 // stops part way leaves the marker and the next removal still finds the directory owned. name is
 // checked once without following it and must be the directory want describes, then opened once as
 // a sub-root that must be the same directory; the entries are removed through that sub-root, so a
 // name swapped after the check, such as for a link, is never followed and fails with ErrNotOwned.
-// A nil want approves the directory found. It returns the approved file info.
-func removeOnce(rt *os.Root, name string, want fs.FileInfo) (fs.FileInfo, error) {
+func removeOnce(rt *os.Root, name string, want fs.FileInfo) error {
 	fi, err := approvedEntry(rt, name, want)
 	if fi == nil || err != nil {
-		return want, err
+		return err
 	}
 	if removeCheckedHook != nil {
 		removeCheckedHook(name)
 	}
 	sub, err := openChecked(rt, name, fi)
 	if errors.Is(err, fs.ErrNotExist) {
-		return fi, nil
+		return nil
 	}
 	if err != nil {
-		return fi, err
+		return err
 	}
 	if err := errors.Join(emptyOwned(sub, name, fi), sub.Close()); err != nil {
-		return fi, err
+		return err
 	}
 	// Root.Remove never follows a link and never removes a directory that holds an entry.
 	if err := sameEntry(rt, name, fi); err != nil {
-		return fi, err
+		return err
 	}
-	return fi, rt.Remove(name)
+	return rt.Remove(name)
 }
 
 // approvedEntry returns the file info of name under rt, read without following it. It returns nil
 // and no error when name no longer exists. It fails with ErrNotOwned when name is not a directory,
-// or is not the directory want describes when want is set.
+// or is not the directory want describes.
 func approvedEntry(rt *os.Root, name string, want fs.FileInfo) (fs.FileInfo, error) {
 	fi, err := rt.Lstat(name)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -196,7 +183,7 @@ func approvedEntry(rt *os.Root, name string, want fs.FileInfo) (fs.FileInfo, err
 	if fi.Mode().Type() != fs.ModeDir {
 		return nil, fmt.Errorf("%w: %q is not a directory (a link is never followed)", ErrNotOwned, name)
 	}
-	if want != nil && !os.SameFile(want, fi) {
+	if !os.SameFile(want, fi) {
 		return nil, fmt.Errorf("%w: %q is not the directory the ownership check approved", ErrNotOwned, name)
 	}
 	return fi, nil
