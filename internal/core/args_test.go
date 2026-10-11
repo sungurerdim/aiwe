@@ -3,6 +3,7 @@ package core_test
 import (
 	"bytes"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -105,7 +106,7 @@ func TestRepoFlag(t *testing.T) {
 				return core.Result[any]{Status: core.StatusOK, Outcome: core.OutcomeOK}, nil
 			}}}
 		var out bytes.Buffer
-		code := core.RunCLI(context.Background(), cmds, append([]string{"gates", "gate", "--format", "json"}, args...), &out)
+		code := core.RunCLI(context.Background(), cmds, append([]string{"gates", "gate", "--format", "json"}, args...), &out, io.Discard)
 		return code, got, ran, out.String()
 	}
 
