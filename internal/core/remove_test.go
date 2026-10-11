@@ -12,8 +12,10 @@ import (
 	"time"
 )
 
-// removeTestRoots builds a safe set of roots under one t.TempDir: state, temp, cache, a user home
-// and a canonical repository, each a real directory, none inside another.
+// removeTestRoots builds a safe set of roots under one t.TempDir: temp, cache, a user home and a
+// canonical repository, each a real directory, none inside another. The state root is named but
+// left missing: OpenOwner makes it owner-only, and a state dir made beforehand inherits the
+// parent's ACL, which may let other users in.
 func removeTestRoots(t *testing.T, base string) OwnedRoots {
 	t.Helper()
 	r := OwnedRoots{
@@ -23,7 +25,7 @@ func removeTestRoots(t *testing.T, base string) OwnedRoots {
 		Home:      filepath.Join(base, "home"),
 		Canonical: []string{filepath.Join(base, "repo")},
 	}
-	for _, d := range []string{r.State, r.Temp, r.Cache, r.Home, r.Canonical[0]} {
+	for _, d := range []string{r.Temp, r.Cache, r.Home, r.Canonical[0]} {
 		removeTestMkdir(t, d)
 	}
 	return r
@@ -280,7 +282,6 @@ func TestOwnedRemove(t *testing.T) {
 		d := removeTestCreate(t, removeTestOpen(t, r), TempRoot)
 		other := r
 		other.State = filepath.Join(base, "other-state")
-		removeTestMkdir(t, other.State)
 		keep := filepath.Join(d.Path(), "work.txt")
 		removeTestWrite(t, keep, "work\n")
 		err := removeTestOpen(t, other).RemoveOwned(ctx, d)
@@ -365,7 +366,7 @@ func TestOwnedRoot(t *testing.T) {
 			base := t.TempDir()
 			r := removeTestRoots(t, base)
 			tc.adjust(t, base, &r)
-			for _, d := range append([]string{r.State, r.Temp, r.Cache, r.Home}, r.Canonical...) {
+			for _, d := range append([]string{r.Temp, r.Cache, r.Home}, r.Canonical...) {
 				removeTestMkdir(t, d)
 			}
 			_, err := OpenOwner(r, self)
@@ -448,5 +449,23 @@ func TestOwnedRemoveLocked(t *testing.T) {
 	}
 	if removeTestExists(t, d.Path()) {
 		t.Errorf("dir %q left after the handle closed", d.Path())
+	}
+}
+
+// TestRemoveTreeNilApproved catches a removeTree that, given no approved identity, approves the dir
+// it finds and empties it (#109, finding 2a). Only the ownership check may approve a dir, so a nil
+// approval fails with ErrNotOwned and removes nothing.
+func TestRemoveTreeNilApproved(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "temp")
+	name := "run-20261011-0006-0123456789abcdef"
+	keep := filepath.Join(root, name, "keep.txt")
+	removeTestWrite(t, keep, "inside the temp root, never approved")
+
+	err := removeTree(context.Background(), root, name, nil)
+	if !errors.Is(err, ErrNotOwned) {
+		t.Errorf("removeTree(%q, nil approved) = %v, want %v", name, err, ErrNotOwned)
+	}
+	if !removeTestExists(t, keep) {
+		t.Errorf("file %q was removed though no ownership check approved %q", keep, name)
 	}
 }

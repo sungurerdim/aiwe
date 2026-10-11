@@ -32,6 +32,7 @@ const (
 const (
 	maxOwnerName   = 64
 	dirSuffixBytes = 8
+	maxOwnedName   = maxOwnerName + 1 + 2*dirSuffixBytes
 	removeAttempts = 5
 	removeWait     = 200 * time.Millisecond
 )
@@ -88,14 +89,18 @@ func OpenOwner(r OwnedRoots, self ProcessID) (*Owner, error) {
 }
 
 // resolveOwnedRoots makes the state, temp and cache roots of r when they are missing and returns
-// their real paths by name.
+// their real paths by name. A missing state root is made owner-only (mkdirOwnerOnly).
 func resolveOwnedRoots(r OwnedRoots) (map[string]string, error) {
 	paths := make(map[string]string, 3)
 	for _, n := range []namedPath{{"state", r.State}, {"temp", r.Temp}, {"cache", r.Cache}} {
 		if n.path == "" || !filepath.IsAbs(n.path) {
 			return nil, fmt.Errorf("%w: %s root %q is not an absolute path", ErrRootUnsafe, n.name, n.path)
 		}
-		if err := os.MkdirAll(n.path, 0o700); err != nil {
+		mkdir := func(p string) error { return os.MkdirAll(p, 0o700) }
+		if n.name == "state" {
+			mkdir = mkdirOwnerOnly
+		}
+		if err := mkdir(n.path); err != nil {
 			return nil, fmt.Errorf("%s root: %w", n.name, err)
 		}
 		p, err := realDir(n)
@@ -197,7 +202,7 @@ func (o *Owner) CreateOwned(ctx context.Context, root OwnedRoot, owner string) (
 		return OwnedDir{}, err
 	}
 	if !plainName(owner, maxOwnerName) {
-		return OwnedDir{}, fmt.Errorf("owner %q: want 1 to %d letters, digits, '.', '_' or '-', starting with a letter or digit", owner, maxOwnerName)
+		return OwnedDir{}, fmt.Errorf("owner %q: want 1 to %d letters, digits, '.', '_' or '-', starting with a letter or digit and not ending in '.'", owner, maxOwnerName)
 	}
 	suffix := make([]byte, dirSuffixBytes)
 	if _, err := rand.Read(suffix); err != nil {
@@ -262,18 +267,33 @@ func (o *Owner) RemoveOwned(ctx context.Context, d OwnedDir) error {
 	if err != nil {
 		return err
 	}
-	rootPath, name, err := o.checkOwned(d.path, recs)
+	e, err := o.checkOwned(d.path, recs)
 	if err != nil {
 		return err
 	}
-	return removeTree(ctx, rootPath, name)
+	if ownedCheckedHook != nil {
+		ownedCheckedHook(e.name)
+	}
+	return removeTree(ctx, e.root, e.name, e.fi)
 }
 
-// checkOwned returns the root path and name of p when p is owned under the rules of RemoveOwned.
-func (o *Owner) checkOwned(p string, recs []ownedRecord) (string, string, error) {
+// ownedCheckedHook, when set, runs right after the ownership check of a directory and before its
+// removal starts; a test uses it to swap the name at that point.
+var ownedCheckedHook func(name string)
+
+// ownedEntry is a directory the ownership check approved: its root path, its name, and the file
+// info that names its identity, read through a handle. Removal compares each entry it removes with
+// fi, so the directory removed is the one approved.
+type ownedEntry struct {
+	root, name string
+	fi         fs.FileInfo
+}
+
+// checkOwned returns the entry of p when p is owned under the rules of RemoveOwned.
+func (o *Owner) checkOwned(p string, recs []ownedRecord) (ownedEntry, error) {
 	parent, name, err := checkOwnedDir(p)
 	if err != nil {
-		return "", "", err
+		return ownedEntry{}, err
 	}
 	for _, root := range []struct{ name, path string }{{"temp", o.temp}, {"cache", o.cache}} {
 		if parent != root.path {
@@ -283,78 +303,81 @@ func (o *Owner) checkOwned(p string, recs []ownedRecord) (string, string, error)
 		if !ok {
 			continue
 		}
-		if err := o.checkMarker(root.path, p, rec); err != nil {
-			return "", "", err
+		fi, err := o.checkOwnedContent(root.path, name, rec)
+		if err != nil {
+			return ownedEntry{}, err
 		}
-		if err := checkLinks(root.path, p); err != nil {
-			return "", "", err
-		}
-		return root.path, name, nil
+		return ownedEntry{root: root.path, name: name, fi: fi}, nil
 	}
-	return "", "", fmt.Errorf("%w: no valid owned_dir record for %q under the temp or cache root", ErrNotOwned, p)
+	return ownedEntry{}, fmt.Errorf("%w: no valid owned_dir record for %q under the temp or cache root", ErrNotOwned, p)
 }
 
-// removeTree removes name under rootPath through an os.Root, which never leaves rootPath and never
-// follows a link. A failed attempt, such as a file another process holds open, is retried 5 times,
-// 200 ms apart, then fails with ErrResidueLocked (SPEC §6.4); the next sweep retries.
-func removeTree(ctx context.Context, rootPath, name string) error {
+// checkOwnedContent checks the marker and the links of name under rootPath and returns the file
+// info of name, read through a handle, so it names one directory whatever the path names later.
+// The marker is read through the directory opened on that identity. The links are walked by path,
+// so name must still be that directory after the walk, else it fails with ErrNotOwned.
+func (o *Owner) checkOwnedContent(rootPath, name string, rec ownedRecord) (fs.FileInfo, error) {
 	rt, err := os.OpenRoot(rootPath)
 	if err != nil {
-		return fmt.Errorf("remove %q: %w", name, err)
+		return nil, fmt.Errorf("%w: %v", ErrNotOwned, err)
 	}
 	defer rt.Close()
-	for attempt := 1; ; attempt++ {
-		err = removeOnce(rt, name)
-		if err == nil {
-			return nil
-		}
-		if attempt == removeAttempts {
-			break
-		}
-		t := time.NewTimer(removeWait)
-		select {
-		case <-ctx.Done():
-			t.Stop()
-			return errors.Join(fmt.Errorf("remove %q: %w", name, err), ctx.Err())
-		case <-t.C:
-		}
+	fi, err := rt.Lstat(name)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrNotOwned, err)
 	}
-	return fmt.Errorf("%w: remove %q: %d attempts %v apart: %w", ErrResidueLocked, name, removeAttempts, removeWait, err)
+	if fi.Mode().Type() != fs.ModeDir {
+		return nil, fmt.Errorf("%w: %q is not a directory (a link is never followed)", ErrNotOwned, name)
+	}
+	if ownedMarkerHook != nil {
+		ownedMarkerHook(name)
+	}
+	if err := o.checkMarkerOf(rt, rootPath, name, fi, rec); err != nil {
+		return nil, err
+	}
+	if err := checkLinks(rootPath, filepath.Join(rootPath, name)); err != nil {
+		return nil, err
+	}
+	if err := sameEntry(rt, name, fi); err != nil {
+		return nil, err
+	}
+	return fi, nil
 }
 
-// removeOnce removes the entries of name, then its marker, then name itself, so a removal that
-// stops part way leaves the marker and the next removal still finds the directory owned.
-func removeOnce(rt *os.Root, name string) error {
-	d, err := rt.Open(name)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil
+// ownedMarkerHook, when set, runs right after the ownership check has read name without following
+// it and before it opens name to read the marker; a test uses it to swap name at that point.
+var ownedMarkerHook func(name string)
+
+// checkMarkerOf opens name under rt once, proves it is the directory fi describes, and checks its
+// marker through that handle; a name swapped in between fails with ErrNotOwned.
+func (o *Owner) checkMarkerOf(rt *os.Root, rootPath, name string, fi fs.FileInfo, rec ownedRecord) error {
+	sub, err := openChecked(rt, name, fi)
+	if err != nil && !errors.Is(err, ErrNotOwned) {
+		err = fmt.Errorf("%w: %v", ErrNotOwned, err)
 	}
 	if err != nil {
 		return err
 	}
-	names, rerr := d.Readdirnames(-1)
-	if err := errors.Join(rerr, d.Close()); err != nil {
-		return err
+	defer sub.Close()
+	d, err := sub.Open(".")
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrNotOwned, err)
 	}
-	var errs []error
-	for _, n := range names {
-		if n != markerFile {
-			errs = append(errs, rt.RemoveAll(filepath.Join(name, n)))
-		}
+	di, err := d.Stat()
+	if err := errors.Join(err, d.Close()); err != nil {
+		return fmt.Errorf("%w: %v", ErrNotOwned, err)
 	}
-	if err := errors.Join(errs...); err != nil {
-		return err
+	if !os.SameFile(fi, di) {
+		return fmt.Errorf("%w: %q was swapped during the ownership check (a link is never followed)", ErrNotOwned, name)
 	}
-	if err := rt.Remove(filepath.Join(name, markerFile)); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return err
-	}
-	return rt.Remove(name)
+	return o.checkMarker(rootPath, sub, filepath.Join(rootPath, name), rec)
 }
 
 // plainName reports whether s is 1 to max letters, digits, '.', '_' or '-', starting with a letter
-// or a digit; such a name can be neither a path nor "." or "..".
+// or a digit and not ending in '.'; such a name can be neither a path nor "." or "..", and Windows
+// cannot strip a trailing dot to make it name another entry.
 func plainName(s string, max int) bool {
-	if s == "" || len(s) > max {
+	if s == "" || len(s) > max || s[len(s)-1] == '.' {
 		return false
 	}
 	for i := 0; i < len(s); i++ {
