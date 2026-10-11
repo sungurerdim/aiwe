@@ -275,8 +275,9 @@ func parseYAML(body string) []*yamlNode {
 			continue
 		}
 		block = -1
-		if trimmed == "" || trimmed == "---" || strings.HasPrefix(trimmed, "#") {
-			pending = appendComment(pending, trimmed)
+		// bare drops a tab before `#` too; such a line has no node, only a comment.
+		if bare := strings.TrimSpace(trimmed); bare == "" || bare == "---" || strings.HasPrefix(bare, "#") {
+			pending = appendComment(pending, bare)
 			continue
 		}
 		nodes := lineNodes(i+1, indent, trimmed)
@@ -315,7 +316,7 @@ func appendComment(pending []string, line string) []string {
 // key that follows its dash. The inline comment goes to the last node.
 func lineNodes(line, indent int, text string) []*yamlNode {
 	content, comment := splitComment(text)
-	var nodes []*yamlNode
+	nodes := make([]*yamlNode, 0, 2)
 	var item *yamlNode
 	if rest, ok := strings.CutPrefix(content, "- "); ok || content == "-" {
 		item = &yamlNode{line: line, indent: indent, item: true}
@@ -331,7 +332,7 @@ func lineNodes(line, indent int, text string) []*yamlNode {
 	case content != "":
 		nodes = append(nodes, &yamlNode{line: line, indent: indent, key: key, value: value})
 	}
-	if comment != "" {
+	if comment != "" && len(nodes) > 0 {
 		last := nodes[len(nodes)-1]
 		last.comments = append(last.comments, comment)
 	}

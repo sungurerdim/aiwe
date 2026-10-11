@@ -201,7 +201,7 @@ func testMissing(repo, test string, planned map[string]bool) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return inTree || !(planned[source] || planned["internal/"+source]), nil
+	return inTree || (!planned[source] && !planned["internal/"+source]), nil
 }
 
 // namedTests returns each backticked _test.go path in the table rows of the §3 section.
