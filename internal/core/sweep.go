@@ -115,12 +115,13 @@ var removeEmptyCheckedHook func(name string)
 var removeLastCheckedHook func(name string)
 
 // removeDirEntry removes name under rt only when it is the empty directory fi describes. It holds
-// name open by a handle that never follows a link, checks that handle against fi, then removes name
-// through a directory-only call (rmdir_unix.go, rmdir_windows.go), so a file is never deleted. Go
-// has no portable call that removes a directory through its own handle, so a name swapped between
-// that check and the call stays possible: a file under name is kept, an empty directory under name
-// may go (the accepted worst case), and the held handle shows whether the approved directory went.
-// When it did not, the call fails with ErrNotOwned. A directory that still holds an entry is kept.
+// name open by a handle that never follows a link, checks that handle against fi, then removes the
+// directory through a directory-only call, so a file is never deleted. On Windows the call goes
+// through the held handle, which no one can rename or delete while it is held (rmdir_windows.go).
+// On Unix it goes by name (rmdir_unix.go), so a name swapped between the check and the call stays
+// possible: a file under name is kept, an empty directory under name may go (the accepted worst
+// case), and the held handle shows whether the approved directory went. When it did not, the call
+// fails with ErrNotOwned. A directory that still holds an entry is kept.
 func removeDirEntry(rt *os.Root, name string, fi fs.FileInfo) error {
 	if filepath.Base(name) != name || !filepath.IsLocal(name) {
 		return fmt.Errorf("%w: remove %q: not a single name under the root", ErrNotOwned, name)
