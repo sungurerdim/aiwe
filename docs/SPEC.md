@@ -306,7 +306,7 @@ Benefit: a new stack is one row, not a new `if`. Enforced: review; a test that e
 
 ### 5.6 Pure core, imperative shell
 Decision functions take and return data. Process, git, HTTP and file IO live in `*_io.go` files or
-adapters. Outside `*_io.go`, only `cmd/aiwe/main.go`, `repocheck/source_rules.go` and the `core` files of
+adapters. Outside `*_io.go`, only `cmd/aiwe/main.go`, `internal/cmd/repocheck/main.go`, `repocheck/source_rules.go` and the `core` files of
 units 0.3, 0.20, 0.5, 0.6, 0.18 and 0.21 (§14), with their `_<os>` variants, may import `os` and `os/exec`. Enforced: check
 `repo/source-rules` (other files may not import `os`, `os/exec`, `net` or `net/http`).
 
@@ -518,7 +518,7 @@ table in the lint config (SSOT).
 | `internal/mcp` | MCP server generated from the command registry, with self-description. | core, ledger | S7 |
 | `internal/repocheck` | This repository's own checks (`repo/*`, commit message, CI changes and report). Never shipped. | core | S4 |
 | `cmd/aiwe` (front) | CLI and the `mcp` subcommand; wires the registry. | root packages above, except `repocheck` | S7 |
-| `internal/cmd/repocheck` | Entry point of `repocheck`. | repocheck | S4 |
+| `internal/cmd/repocheck` | Entry point of `repocheck`. | core, repocheck | S4 |
 | `internal/e2e` | End-to-end smoke tests (build tag `smoke`) that drive the built binary as a child process. Never shipped. | core | M2 |
 
 ### 6.2 Runtime and distribution — decided
@@ -1542,7 +1542,7 @@ read, quoted or copied: harness behaviour comes from its documentation or the ru
 | `vuln` | `go tool govulncheck ./...` | known vulnerabilities in the module's code paths | supply chain (DR-41); exits non-zero on a finding (§17) |
 | `tidy` | `go mod tidy -diff` | `go.mod` or `go.sum` drift | exits non-zero on drift (§17) |
 | `deadcode` | `go tool deadcode ./cmd/...` (empty output) | functions unreachable from `main` | `unused` does not see exported functions (DR-26) |
-| `repo` | `go run ./internal/cmd/repocheck all` | checks `rules`, `size`, `boundaries`, `source-rules`, `deps`, `ci-shape` | this repository's own rules (§3) |
+| `repo` | `go run ./internal/cmd/repocheck all --repo .` | checks `rules`, `size`, `boundaries`, `source-rules`, `deps`, `ci-shape` | this repository's own rules (§3) |
 | `test` | `go test -json -p <workers> ./...` | behaviour | DR-38 limits apply; data races: CI step `race` on Linux, since `-race` needs cgo and a C compiler (§17) that contributors need not install |
 
 Tools: the Go toolchain version is pinned in `go.mod`, which `actions/setup-go` reads (§17).
