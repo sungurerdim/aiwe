@@ -8,6 +8,7 @@ import (
 	"strings"
 	"syscall"
 	"unicode"
+	"unicode/utf8"
 	"unsafe"
 )
 
@@ -52,13 +53,25 @@ func checkPathExt(path string) error {
 	return fmt.Errorf("program %q: extension %q is not in PATHEXT %q: refused", path, ext, exts)
 }
 
-// launcherCandidate joins a relative program path to dir, as Start does, so it names the file
-// Start would run. A path with a volume or a leading separator is used as given.
+// launcherCandidate resolves program path against dir as Start does (syscall joinExeDirAndFName),
+// so it names the file Start would run. A relative path joins dir. A path with a root and no
+// drive (`\x`) takes dir's drive. A path with dir's drive and no root (`X:x`) joins dir. A path
+// with a drive and a root, a UNC path and a path on another drive are used as given.
 func launcherCandidate(path, dir string) string {
-	if dir == "" || filepath.VolumeName(path) != "" || (path != "" && os.IsPathSeparator(path[0])) {
+	if dir == "" || path == "" {
 		return path
 	}
-	return filepath.Join(dir, path)
+	vol := filepath.VolumeName(path)
+	rooted := len(path) > len(vol) && os.IsPathSeparator(path[len(vol)])
+	switch {
+	case vol == "" && rooted:
+		return filepath.VolumeName(dir) + path
+	case vol == "":
+		return filepath.Join(dir, path)
+	case !rooted && len(vol) == 2 && strings.EqualFold(vol, filepath.VolumeName(dir)):
+		return filepath.Join(dir, path[len(vol):])
+	}
+	return path
 }
 
 // commandShell returns the path of cmd.exe in the system directory, never one found on PATH.
@@ -129,15 +142,25 @@ const batchBestFit = "\u02ba\u030e\u201e\u201f\u2033\u2036\u301d\u301e\uff02" + 
 	"\u066a\uff05" + // to %
 	"\u00a1\u01c3\u203c\uff01" // to !
 
+// batchBestFitBackslash holds the characters that a Windows ANSI code page maps to \ by best fit.
+// quoteBatchWord doubles only real trailing backslashes, so one of these at the end of a word, or
+// just before its trailing backslashes, escapes the closing quote for a program that reads ANSI.
+const batchBestFitBackslash = "\uff3c\u2216\u00a5\u20a9"
+
 // checkBatchWord refuses what cmd.exe changes even inside quotes: a double quote ends the quotes,
 // % expands a variable, ! expands one in a script that turns on delayed expansion, and a line
 // break or another control character ends or breaks the line. A best-fit form of " % or ! is
-// refused too.
+// refused too, and so is a best-fit form of \ that quoteBatchWord cannot keep off the closing quote.
 func checkBatchWord(word string) error {
 	for _, r := range word {
 		if strings.ContainsRune(`"%!`+batchBestFit, r) || (unicode.IsControl(r) && r != '\t') {
 			return fmt.Errorf("batch launcher argument %q: %q cannot be passed through cmd.exe safely", word, r)
 		}
+	}
+	last, _ := utf8.DecodeLastRuneInString(strings.TrimRight(word, `\`))
+	if strings.ContainsRune(batchBestFitBackslash, last) {
+		return fmt.Errorf("batch launcher argument %q: %q before the closing quote reads as \\ in an ANSI program: refused",
+			word, last)
 	}
 	return nil
 }
