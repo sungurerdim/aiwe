@@ -284,17 +284,19 @@ func findRecord(recs []ownedRecord, root, name string) (ownedRecord, bool) {
 	return ownedRecord{}, false
 }
 
-// checkMarker checks that the .owner marker of dir is a plain file that matches rec under the key.
-func (o *Owner) checkMarker(rootPath, dir string, rec ownedRecord) error {
-	p := filepath.Join(dir, markerFile)
-	fi, err := os.Lstat(p)
+// checkMarker checks that the .owner marker of the directory dir, opened at path, is a plain file
+// that matches rec under the key. The marker is read through dir, so it belongs to the directory
+// dir was opened on, whatever path names later.
+func (o *Owner) checkMarker(rootPath string, dir *os.Root, path string, rec ownedRecord) error {
+	p := filepath.Join(path, markerFile)
+	fi, err := dir.Lstat(markerFile)
 	if err != nil {
 		return fmt.Errorf("%w: marker: %v", ErrNotOwned, err)
 	}
 	if !fi.Mode().IsRegular() || fi.Size() > maxMarkerBytes {
 		return fmt.Errorf("%w: marker %q is not a plain file of at most %d bytes", ErrNotOwned, p, maxMarkerBytes)
 	}
-	b, err := os.ReadFile(p)
+	b, err := dir.ReadFile(markerFile)
 	if err != nil {
 		return fmt.Errorf("%w: marker: %v", ErrNotOwned, err)
 	}

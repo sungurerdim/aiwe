@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"time"
@@ -266,18 +267,33 @@ func (o *Owner) RemoveOwned(ctx context.Context, d OwnedDir) error {
 	if err != nil {
 		return err
 	}
-	rootPath, name, err := o.checkOwned(d.path, recs)
+	e, err := o.checkOwned(d.path, recs)
 	if err != nil {
 		return err
 	}
-	return removeTree(ctx, rootPath, name)
+	if ownedCheckedHook != nil {
+		ownedCheckedHook(e.name)
+	}
+	return removeTree(ctx, e.root, e.name, e.fi)
 }
 
-// checkOwned returns the root path and name of p when p is owned under the rules of RemoveOwned.
-func (o *Owner) checkOwned(p string, recs []ownedRecord) (string, string, error) {
+// ownedCheckedHook, when set, runs right after the ownership check of a directory and before its
+// removal starts; a test uses it to swap the name at that point.
+var ownedCheckedHook func(name string)
+
+// ownedEntry is a directory the ownership check approved: its root path, its name, and the file
+// info that names its identity, read through a handle. Removal compares each entry it removes with
+// fi, so the directory removed is the one approved.
+type ownedEntry struct {
+	root, name string
+	fi         fs.FileInfo
+}
+
+// checkOwned returns the entry of p when p is owned under the rules of RemoveOwned.
+func (o *Owner) checkOwned(p string, recs []ownedRecord) (ownedEntry, error) {
 	parent, name, err := checkOwnedDir(p)
 	if err != nil {
-		return "", "", err
+		return ownedEntry{}, err
 	}
 	for _, root := range []struct{ name, path string }{{"temp", o.temp}, {"cache", o.cache}} {
 		if parent != root.path {
@@ -287,15 +303,67 @@ func (o *Owner) checkOwned(p string, recs []ownedRecord) (string, string, error)
 		if !ok {
 			continue
 		}
-		if err := o.checkMarker(root.path, p, rec); err != nil {
-			return "", "", err
+		fi, err := o.checkOwnedContent(root.path, name, rec)
+		if err != nil {
+			return ownedEntry{}, err
 		}
-		if err := checkLinks(root.path, p); err != nil {
-			return "", "", err
-		}
-		return root.path, name, nil
+		return ownedEntry{root: root.path, name: name, fi: fi}, nil
 	}
-	return "", "", fmt.Errorf("%w: no valid owned_dir record for %q under the temp or cache root", ErrNotOwned, p)
+	return ownedEntry{}, fmt.Errorf("%w: no valid owned_dir record for %q under the temp or cache root", ErrNotOwned, p)
+}
+
+// checkOwnedContent checks the marker and the links of name under rootPath and returns the file
+// info of name, read through a handle, so it names one directory whatever the path names later.
+// The marker is read through the directory opened on that identity. The links are walked by path,
+// so name must still be that directory after the walk, else it fails with ErrNotOwned.
+func (o *Owner) checkOwnedContent(rootPath, name string, rec ownedRecord) (fs.FileInfo, error) {
+	rt, err := os.OpenRoot(rootPath)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrNotOwned, err)
+	}
+	defer rt.Close()
+	fi, err := rt.Lstat(name)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrNotOwned, err)
+	}
+	if fi.Mode().Type() != fs.ModeDir {
+		return nil, fmt.Errorf("%w: %q is not a directory (a link is never followed)", ErrNotOwned, name)
+	}
+	if err := o.checkMarkerOf(rt, rootPath, name, fi, rec); err != nil {
+		return nil, err
+	}
+	if err := checkLinks(rootPath, filepath.Join(rootPath, name)); err != nil {
+		return nil, err
+	}
+	if err := sameEntry(rt, name, fi); err != nil {
+		return nil, err
+	}
+	return fi, nil
+}
+
+// checkMarkerOf opens name under rt once, proves it is the directory fi describes, and checks its
+// marker through that handle; a name swapped in between fails with ErrNotOwned.
+func (o *Owner) checkMarkerOf(rt *os.Root, rootPath, name string, fi fs.FileInfo, rec ownedRecord) error {
+	sub, err := openChecked(rt, name, fi)
+	if err != nil && !errors.Is(err, ErrNotOwned) {
+		err = fmt.Errorf("%w: %v", ErrNotOwned, err)
+	}
+	if err != nil {
+		return err
+	}
+	defer sub.Close()
+	d, err := sub.Open(".")
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrNotOwned, err)
+	}
+	di, err := d.Stat()
+	if err := errors.Join(err, d.Close()); err != nil {
+		return fmt.Errorf("%w: %v", ErrNotOwned, err)
+	}
+	if !os.SameFile(fi, di) {
+		return fmt.Errorf("%w: %q was swapped during the ownership check (a link is never followed)", ErrNotOwned, name)
+	}
+	return o.checkMarker(rootPath, sub, filepath.Join(rootPath, name), rec)
 }
 
 // plainName reports whether s is 1 to max letters, digits, '.', '_' or '-', starting with a letter

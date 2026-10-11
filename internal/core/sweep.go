@@ -19,11 +19,10 @@ type SweepReport struct {
 	Refused int // temp directories of a dead owner that fail the ownership checks and are not empty, kept
 }
 
-// ownedTemp is an existing registered directory under the temp root: whether its owner runs and
-// whether it passes the ownership checks of RemoveOwned.
+// ownedTemp is an existing registered directory under the temp root and whether its owner runs.
 type ownedTemp struct {
-	name        string
-	live, owned bool
+	name string
+	live bool
 }
 
 // Sweep removes every owned temp directory whose owner process is dead (DR-36); a pid that runs
@@ -31,31 +30,55 @@ type ownedTemp struct {
 // built by hand on Linux: it has no exact start identity, so its owner counts as alive while its
 // pid runs (DR-25). A registered directory of a dead owner that fails the ownership checks is
 // removed only when it is an empty directory, such as one left by a crash before its marker; any
-// other is kept and counted as Refused. Cache directories are never touched.
+// other is kept and counted as Refused. Each directory is checked right before its removal, and
+// only the directory the check approved is removed: a name swapped after the check is kept,
+// counted as Refused, and its not_owned error is returned. Cache directories are never touched.
 func (o *Owner) Sweep(ctx context.Context) (SweepReport, error) {
 	var rep SweepReport
-	dirs, err := o.ownedTemps(ctx)
+	recs, err := o.records()
+	if err != nil {
+		return rep, err
+	}
+	dirs, err := o.ownedTempsOf(ctx, recs)
 	if err != nil {
 		return rep, err
 	}
 	var errs []error
 	for _, d := range dirs {
-		switch {
-		case d.live:
+		if d.live {
 			rep.Live++
-		case d.owned:
-			if err := removeTree(ctx, o.temp, d.name); err != nil {
-				errs = append(errs, err)
-				continue
-			}
+			continue
+		}
+		removed, err := o.sweepDead(ctx, d.name, recs)
+		switch {
+		case removed:
 			rep.Removed++
-		case removeEmptyDir(o.temp, d.name):
-			rep.Removed++
-		default:
+		case err == nil, errors.Is(err, ErrNotOwned):
 			rep.Refused++
+		}
+		if err != nil {
+			errs = append(errs, err)
 		}
 	}
 	return rep, errors.Join(errs...)
+}
+
+// sweepDead checks the temp directory name of a dead owner, then removes it, and reports whether
+// it was removed. A directory that fails the check is removed only when it is empty, with no
+// error. An approved directory is removed only while name is still the directory approved, else
+// it fails with ErrNotOwned and nothing is removed.
+func (o *Owner) sweepDead(ctx context.Context, name string, recs []ownedRecord) (bool, error) {
+	e, err := o.checkOwned(filepath.Join(o.temp, name), recs)
+	if err != nil {
+		return removeEmptyDir(o.temp, name), nil
+	}
+	if ownedCheckedHook != nil {
+		ownedCheckedHook(name)
+	}
+	if err := removeTree(ctx, e.root, e.name, e.fi); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // removeEmptyDir removes name under rootPath when it is a directory, not a link, with no entries; it
@@ -80,11 +103,18 @@ var removeCheckedHook func(name string)
 
 // removeTree removes name under rootPath through an os.Root, which never leaves rootPath. A name
 // that is not a plain name, or that is not a directory, such as one swapped for a link, fails with
-// ErrNotOwned at once. A failed attempt, such as a file another process holds open, is retried 5
-// times, 200 ms apart, then fails with ErrResidueLocked (SPEC §6.4); the next sweep retries.
-func removeTree(ctx context.Context, rootPath, name string) error {
+// ErrNotOwned at once. approved, when given, is the file info the ownership check approved, read
+// through a handle; without it, the directory the first attempt finds is approved. Every attempt
+// removes only that directory: a name that names another one fails with ErrNotOwned at once. A
+// failed attempt, such as a file another process holds open, is retried 5 times, 200 ms apart,
+// then fails with ErrResidueLocked (SPEC §6.4); the next sweep retries.
+func removeTree(ctx context.Context, rootPath, name string, approved ...fs.FileInfo) error {
 	if !plainName(name, maxOwnedName) {
 		return fmt.Errorf("%w: remove %q: not an owned directory name", ErrNotOwned, name)
+	}
+	want, err := oneApproved(name, approved)
+	if err != nil {
+		return err
 	}
 	rt, err := os.OpenRoot(rootPath)
 	if err != nil {
@@ -92,7 +122,7 @@ func removeTree(ctx context.Context, rootPath, name string) error {
 	}
 	defer rt.Close()
 	for attempt := 1; ; attempt++ {
-		err = removeOnce(rt, name)
+		want, err = removeOnce(rt, name, want)
 		if err == nil || errors.Is(err, ErrNotOwned) {
 			return err
 		}
@@ -110,40 +140,66 @@ func removeTree(ctx context.Context, rootPath, name string) error {
 	return fmt.Errorf("%w: remove %q: %d attempts %v apart: %w", ErrResidueLocked, name, removeAttempts, removeWait, err)
 }
 
+// oneApproved returns the one approved file info of name, or nil when none is given.
+func oneApproved(name string, approved []fs.FileInfo) (fs.FileInfo, error) {
+	switch len(approved) {
+	case 0:
+		return nil, nil
+	case 1:
+		return approved[0], nil
+	}
+	return nil, fmt.Errorf("remove %q: %d approved directories, want at most 1", name, len(approved))
+}
+
 // removeOnce removes the entries of name, then its marker, then name itself, so a removal that
 // stops part way leaves the marker and the next removal still finds the directory owned. name is
-// checked once without following it, then opened once as a sub-root that must be the same
-// directory; the entries are removed through that sub-root, so a name swapped after the check,
-// such as for a link, is never followed and fails with ErrNotOwned.
-func removeOnce(rt *os.Root, name string) error {
-	fi, err := rt.Lstat(name)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if fi.Mode().Type() != fs.ModeDir {
-		return fmt.Errorf("%w: %q is not a directory (a link is never followed)", ErrNotOwned, name)
+// checked once without following it and must be the directory want describes, then opened once as
+// a sub-root that must be the same directory; the entries are removed through that sub-root, so a
+// name swapped after the check, such as for a link, is never followed and fails with ErrNotOwned.
+// A nil want approves the directory found. It returns the approved file info.
+func removeOnce(rt *os.Root, name string, want fs.FileInfo) (fs.FileInfo, error) {
+	fi, err := approvedEntry(rt, name, want)
+	if fi == nil || err != nil {
+		return want, err
 	}
 	if removeCheckedHook != nil {
 		removeCheckedHook(name)
 	}
 	sub, err := openChecked(rt, name, fi)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil
+		return fi, nil
 	}
 	if err != nil {
-		return err
+		return fi, err
 	}
 	if err := errors.Join(emptyOwned(sub, name, fi), sub.Close()); err != nil {
-		return err
+		return fi, err
 	}
 	// Root.Remove never follows a link and never removes a directory that holds an entry.
 	if err := sameEntry(rt, name, fi); err != nil {
-		return err
+		return fi, err
 	}
-	return rt.Remove(name)
+	return fi, rt.Remove(name)
+}
+
+// approvedEntry returns the file info of name under rt, read without following it. It returns nil
+// and no error when name no longer exists. It fails with ErrNotOwned when name is not a directory,
+// or is not the directory want describes when want is set.
+func approvedEntry(rt *os.Root, name string, want fs.FileInfo) (fs.FileInfo, error) {
+	fi, err := rt.Lstat(name)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if fi.Mode().Type() != fs.ModeDir {
+		return nil, fmt.Errorf("%w: %q is not a directory (a link is never followed)", ErrNotOwned, name)
+	}
+	if want != nil && !os.SameFile(want, fi) {
+		return nil, fmt.Errorf("%w: %q is not the directory the ownership check approved", ErrNotOwned, name)
+	}
+	return fi, nil
 }
 
 // openChecked opens name under rt once as a sub-root. A failed open fails with ErrNotOwned when
@@ -209,13 +265,17 @@ func sameEntry(rt *os.Root, name string, fi fs.FileInfo) error {
 }
 
 // ownedTemps returns each existing directory under the temp root that a valid owned_dir record
-// names, with the liveness of the owner the record names and whether it passes the ownership
-// checks of RemoveOwned.
+// names, with the liveness of the owner the record names.
 func (o *Owner) ownedTemps(ctx context.Context) ([]ownedTemp, error) {
 	recs, err := o.records()
 	if err != nil {
 		return nil, err
 	}
+	return o.ownedTempsOf(ctx, recs)
+}
+
+// ownedTempsOf is ownedTemps over the records recs.
+func (o *Owner) ownedTempsOf(ctx context.Context, recs []ownedRecord) ([]ownedTemp, error) {
 	var out []ownedTemp
 	seen := make(map[string]bool)
 	for _, r := range recs {
@@ -230,12 +290,11 @@ func (o *Owner) ownedTemps(ctx context.Context) ([]ownedTemp, error) {
 		if _, err := os.Lstat(p); errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
-		_, _, cerr := o.checkOwned(p, recs)
 		owner := ProcessID{PID: r.PID, Start: r.Start}
 		if r.StartID != noneField {
 			owner.id = r.StartID
 		}
-		out = append(out, ownedTemp{name: r.Path, live: ownerAlive(owner), owned: cerr == nil})
+		out = append(out, ownedTemp{name: r.Path, live: ownerAlive(owner)})
 	}
 	return out, nil
 }
