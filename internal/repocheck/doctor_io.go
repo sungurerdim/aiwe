@@ -48,7 +48,7 @@ func RunGo(ctx context.Context, dir string, args ...string) ([]byte, error) {
 }
 
 // GoFiles reads every .go file of repo, skipping hidden directories, testdata and vendor; each
-// Path is repository-relative and slash-separated.
+// Path is repository-relative and slash-separated. A repository without a .go file is an error.
 func GoFiles(repo string) ([]SourceFile, error) {
 	var files []SourceFile
 	err := filepath.WalkDir(repo, func(p string, d fs.DirEntry, err error) error {
@@ -74,6 +74,10 @@ func GoFiles(repo string) ([]SourceFile, error) {
 	})
 	if err != nil {
 		return nil, fmt.Errorf("read go files of %s: %w", repo, err)
+	}
+	if len(files) == 0 {
+		// Zero files read is nothing measured, never a pass (DR-13).
+		return nil, fmt.Errorf("read go files of %s: no .go file found", repo)
 	}
 	return files, nil
 }
