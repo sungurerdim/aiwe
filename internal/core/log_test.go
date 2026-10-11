@@ -336,6 +336,16 @@ func TestLogKeys(t *testing.T) {
 				l.Info("unit_started", slog.Group("g", "unit", "98", "runId", "r-forged"), "detail", "clone ready")
 			},
 			want: []string{"ts", "level", "event", "detail"}},
+		{name: "slog.Group named after an allowed key reaches the line",
+			write: func(l *slog.Logger) {
+				l.Info("unit_started", slog.Group("unit", "detail", "forged"), "detail", "clone ready")
+			},
+			want: []string{"ts", "level", "event", "detail"}},
+		{name: "slog.Group from With named after an allowed key reaches the line",
+			write: func(l *slog.Logger) {
+				l.With(slog.Group("runId", "detail", "forged")).Info("unit_started", "detail", "clone ready")
+			},
+			want: []string{"ts", "level", "event", "detail"}},
 		{name: "With fields lost from the line",
 			write: func(l *slog.Logger) {
 				l.With("runId", "r-20261011-0001", "unit", "98").Info("unit_started", "detail", "clone ready")
