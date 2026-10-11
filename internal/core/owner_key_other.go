@@ -4,6 +4,7 @@ package core
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"syscall"
 )
@@ -26,5 +27,18 @@ func checkOwnerOnly(p string) error {
 	return nil
 }
 
-// mkdirOwnerOnly makes the state root p, and any missing parent, with mode 0o700.
-func mkdirOwnerOnly(p string) error { return os.MkdirAll(p, 0o700) }
+// mkdirOwnerOnly makes the state root p, and any missing parent, with mode 0o700. A p that is a
+// link fails with ErrRootUnsafe, the same as on Windows; nothing is written at its target.
+func mkdirOwnerOnly(p string) error {
+	if err := os.MkdirAll(p, 0o700); err != nil {
+		return err
+	}
+	fi, err := os.Lstat(p)
+	if err != nil {
+		return err
+	}
+	if fi.Mode().Type() != fs.ModeDir {
+		return fmt.Errorf("%w: %q is not a plain directory (a link is never followed)", ErrRootUnsafe, p)
+	}
+	return nil
+}

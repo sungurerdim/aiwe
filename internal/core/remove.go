@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"time"
@@ -202,7 +201,7 @@ func (o *Owner) CreateOwned(ctx context.Context, root OwnedRoot, owner string) (
 		return OwnedDir{}, err
 	}
 	if !plainName(owner, maxOwnerName) {
-		return OwnedDir{}, fmt.Errorf("owner %q: want 1 to %d letters, digits, '.', '_' or '-', starting with a letter or digit", owner, maxOwnerName)
+		return OwnedDir{}, fmt.Errorf("owner %q: want 1 to %d letters, digits, '.', '_' or '-', starting with a letter or digit and not ending in '.'", owner, maxOwnerName)
 	}
 	suffix := make([]byte, dirSuffixBytes)
 	if _, err := rand.Read(suffix); err != nil {
@@ -297,79 +296,6 @@ func (o *Owner) checkOwned(p string, recs []ownedRecord) (string, string, error)
 		return root.path, name, nil
 	}
 	return "", "", fmt.Errorf("%w: no valid owned_dir record for %q under the temp or cache root", ErrNotOwned, p)
-}
-
-// removeTree removes name under rootPath through an os.Root, which never leaves rootPath and never
-// follows a link. A name that is not a plain name, or that is not a directory, such as one swapped
-// for a link, fails with ErrNotOwned at once. A failed attempt, such as a file another process holds
-// open, is retried 5 times, 200 ms apart, then fails with ErrResidueLocked (SPEC §6.4); the next
-// sweep retries.
-func removeTree(ctx context.Context, rootPath, name string) error {
-	if !plainName(name, maxOwnedName) {
-		return fmt.Errorf("%w: remove %q: not an owned directory name", ErrNotOwned, name)
-	}
-	rt, err := os.OpenRoot(rootPath)
-	if err != nil {
-		return fmt.Errorf("remove %q: %w", name, err)
-	}
-	defer rt.Close()
-	for attempt := 1; ; attempt++ {
-		err = removeOnce(rt, name)
-		if err == nil || errors.Is(err, ErrNotOwned) {
-			return err
-		}
-		if attempt == removeAttempts {
-			break
-		}
-		t := time.NewTimer(removeWait)
-		select {
-		case <-ctx.Done():
-			t.Stop()
-			return errors.Join(fmt.Errorf("remove %q: %w", name, err), ctx.Err())
-		case <-t.C:
-		}
-	}
-	return fmt.Errorf("%w: remove %q: %d attempts %v apart: %w", ErrResidueLocked, name, removeAttempts, removeWait, err)
-}
-
-// removeOnce removes the entries of name, then its marker, then name itself, so a removal that
-// stops part way leaves the marker and the next removal still finds the directory owned. A name that
-// is not a directory, such as a link, fails with ErrNotOwned.
-func removeOnce(rt *os.Root, name string) error {
-	fi, err := rt.Lstat(name)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if fi.Mode().Type() != fs.ModeDir {
-		return fmt.Errorf("%w: %q is not a directory (a link is never followed)", ErrNotOwned, name)
-	}
-	d, err := rt.Open(name)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	names, rerr := d.Readdirnames(-1)
-	if err := errors.Join(rerr, d.Close()); err != nil {
-		return err
-	}
-	var errs []error
-	for _, n := range names {
-		if n != markerFile {
-			errs = append(errs, rt.RemoveAll(filepath.Join(name, n)))
-		}
-	}
-	if err := errors.Join(errs...); err != nil {
-		return err
-	}
-	if err := rt.Remove(filepath.Join(name, markerFile)); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return err
-	}
-	return rt.Remove(name)
 }
 
 // plainName reports whether s is 1 to max letters, digits, '.', '_' or '-', starting with a letter

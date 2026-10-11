@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"math"
 	"os"
@@ -71,6 +72,140 @@ func removeEmptyDir(rootPath, name string) bool {
 		return false
 	}
 	return rt.Remove(name) == nil
+}
+
+// removeCheckedHook, when set, runs right after removeOnce has checked name and before it opens it;
+// a test uses it to swap name at that point.
+var removeCheckedHook func(name string)
+
+// removeTree removes name under rootPath through an os.Root, which never leaves rootPath. A name
+// that is not a plain name, or that is not a directory, such as one swapped for a link, fails with
+// ErrNotOwned at once. A failed attempt, such as a file another process holds open, is retried 5
+// times, 200 ms apart, then fails with ErrResidueLocked (SPEC §6.4); the next sweep retries.
+func removeTree(ctx context.Context, rootPath, name string) error {
+	if !plainName(name, maxOwnedName) {
+		return fmt.Errorf("%w: remove %q: not an owned directory name", ErrNotOwned, name)
+	}
+	rt, err := os.OpenRoot(rootPath)
+	if err != nil {
+		return fmt.Errorf("remove %q: %w", name, err)
+	}
+	defer rt.Close()
+	for attempt := 1; ; attempt++ {
+		err = removeOnce(rt, name)
+		if err == nil || errors.Is(err, ErrNotOwned) {
+			return err
+		}
+		if attempt == removeAttempts {
+			break
+		}
+		t := time.NewTimer(removeWait)
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			return errors.Join(fmt.Errorf("remove %q: %w", name, err), ctx.Err())
+		case <-t.C:
+		}
+	}
+	return fmt.Errorf("%w: remove %q: %d attempts %v apart: %w", ErrResidueLocked, name, removeAttempts, removeWait, err)
+}
+
+// removeOnce removes the entries of name, then its marker, then name itself, so a removal that
+// stops part way leaves the marker and the next removal still finds the directory owned. name is
+// checked once without following it, then opened once as a sub-root that must be the same
+// directory; the entries are removed through that sub-root, so a name swapped after the check,
+// such as for a link, is never followed and fails with ErrNotOwned.
+func removeOnce(rt *os.Root, name string) error {
+	fi, err := rt.Lstat(name)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if fi.Mode().Type() != fs.ModeDir {
+		return fmt.Errorf("%w: %q is not a directory (a link is never followed)", ErrNotOwned, name)
+	}
+	if removeCheckedHook != nil {
+		removeCheckedHook(name)
+	}
+	sub, err := openChecked(rt, name, fi)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if err := errors.Join(emptyOwned(sub, name, fi), sub.Close()); err != nil {
+		return err
+	}
+	// Root.Remove never follows a link and never removes a directory that holds an entry.
+	if err := sameEntry(rt, name, fi); err != nil {
+		return err
+	}
+	return rt.Remove(name)
+}
+
+// openChecked opens name under rt once as a sub-root. A failed open fails with ErrNotOwned when
+// name is no longer the directory fi describes.
+func openChecked(rt *os.Root, name string, fi fs.FileInfo) (*os.Root, error) {
+	sub, err := rt.OpenRoot(name)
+	if err != nil {
+		if serr := sameEntry(rt, name, fi); serr != nil {
+			return nil, serr
+		}
+		return nil, err
+	}
+	return sub, nil
+}
+
+// emptyOwned removes every entry of the sub-root sub, the marker last. It first proves that sub is
+// the directory fi describes, else it fails with ErrNotOwned and removes nothing.
+func emptyOwned(sub *os.Root, name string, fi fs.FileInfo) error {
+	d, err := sub.Open(".")
+	if err != nil {
+		return err
+	}
+	di, err := d.Stat()
+	if err == nil && !os.SameFile(fi, di) {
+		err = fmt.Errorf("%w: %q was swapped after the check (a link is never followed)", ErrNotOwned, name)
+	}
+	var names []string
+	if err == nil {
+		names, err = d.Readdirnames(-1)
+	}
+	if err := errors.Join(err, d.Close()); err != nil {
+		return err
+	}
+	var errs []error
+	for _, n := range names {
+		if n != markerFile {
+			errs = append(errs, sub.RemoveAll(n))
+		}
+	}
+	if err := errors.Join(errs...); err != nil {
+		return err
+	}
+	if err := sub.Remove(markerFile); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+// sameEntry fails with ErrNotOwned when name under rt, read without following it, is no longer the
+// directory fi describes. A name that no longer exists passes; the caller sees it as gone.
+func sameEntry(rt *os.Root, name string, fi fs.FileInfo) error {
+	now, err := rt.Lstat(name)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if now.Mode().Type() != fs.ModeDir || !os.SameFile(fi, now) {
+		return fmt.Errorf("%w: %q was swapped after the check (a link is never followed)", ErrNotOwned, name)
+	}
+	return nil
 }
 
 // ownedTemps returns each existing directory under the temp root that a valid owned_dir record
