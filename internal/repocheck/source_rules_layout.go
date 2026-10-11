@@ -63,8 +63,46 @@ func withoutOS(stem string) string {
 	return stem
 }
 
-// checkIOImports flags each IO import, aliased or grouped, in a file that may not import IO.
+// ruleEnvRead flags a process environment read outside envFile (SPEC §5.4).
+const ruleEnvRead = "env_read"
+
+// envFile is the only file that reads the process environment (SPEC §5.4).
+const envFile = "internal/core/env.go"
+
+// envReads are the os functions that read the process environment.
+func envReads() []string { return []string{"Environ", "Getenv", "LookupEnv"} }
+
+// checkEnvReads flags each os environment read, called or taken as a value, aliased or under a dot
+// import of os, outside envFile and test files (SPEC §5.4).
+func (c *sourceChecker) checkEnvReads(file *ast.File) {
+	if c.path == envFile || c.isTestFile() {
+		return
+	}
+	ast.Inspect(file, c.visitEnvRead)
+}
+
+// visitEnvRead flags n when it is os.<read> under any import name or, under a dot import of os, a
+// bare <read>; the selected name of a selector is never visited as a bare identifier.
+func (c *sourceChecker) visitEnvRead(n ast.Node) bool {
+	switch n := n.(type) {
+	case *ast.SelectorExpr:
+		if x, ok := n.X.(*ast.Ident); ok && c.imports[x.Name] == "os" && slices.Contains(envReads(), n.Sel.Name) {
+			c.add(ruleEnvRead, n.Pos())
+		}
+		ast.Inspect(n.X, c.visitEnvRead)
+		return false
+	case *ast.Ident:
+		if c.imports[".os"] == "os" && slices.Contains(envReads(), n.Name) {
+			c.add(ruleEnvRead, n.Pos())
+		}
+	}
+	return true
+}
+
+// checkIOImports flags each IO import, aliased or grouped, in a file that may not import IO, and
+// each environment read outside envFile, which is process IO too.
 func (c *sourceChecker) checkIOImports(file *ast.File) {
+	c.checkEnvReads(file)
 	if c.mayImportIO() {
 		return
 	}

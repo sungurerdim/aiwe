@@ -45,7 +45,7 @@ func Git(ctx context.Context, dir string, args ...string) (GitResult, error) {
 	c, err := Start(ctx, ChildSpec{
 		Argv:   gitArgv(hooks, args),
 		Dir:    dir,
-		Env:    CleanEnv(os.Environ(), nil),
+		Env:    CleanEnv(Environ(), nil),
 		Stdout: &stdout,
 		Stderr: &stderr,
 	})
