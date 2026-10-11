@@ -202,6 +202,11 @@ func TestOutput(t *testing.T) {
 			want:   `ok: path a\xffb\xc2` + "\n",
 		},
 		{
+			name:   "invisible, direction mark and line separator runes hide or reorder the displayed path",
+			detail: "a\u200bb\u200ec\u200fd\u061ce\ufefff\u2028g\u2029h",
+			want:   `ok: a\u200bb\u200ec\u200fd\u061ce\ufefff\u2028g\u2029h` + "\n",
+		},
+		{
 			name:   "plain Unicode, RTL script, newline and tab altered on the way out",
 			detail: "İıŞşĞğ 仓库 مستودع 🚀 é\ndocs\\plan.md\tnext",
 			want:   "ok: İıŞşĞğ 仓库 مستودع 🚀 é\ndocs\\plan.md\tnext\n",
@@ -248,6 +253,54 @@ func TestOutput(t *testing.T) {
 			t.Fatalf("text refusal = %q, want %q", got, want)
 		}
 	})
+
+	// A refusal is one line (SPEC §5.10): a newline or CR in Expected, Found or Next would fake a
+	// second result line (#200).
+	lineFakes := []struct {
+		name string
+		err  *core.Error
+		want string
+	}{
+		{
+			name: "LF in an undeclared flag fakes an ok line",
+			err:  &core.Error{Outcome: core.OutcomeUsage, Expected: "a declared flag", Found: "--zz\nok: gate pass"},
+			want: `usage: expected a declared flag; found --zz\x0aok: gate pass; next: run ` + core.Product + ` --help and correct the call` + "\n",
+		},
+		{
+			name: "CR LF in expected fakes a line",
+			err: &core.Error{Outcome: core.OutcomeError, Expected: "one file\r\nok: done", Found: "two files",
+				Next: "remove one file"},
+			want: `error: expected one file\x0d\x0aok: done; found two files; next: remove one file` + "\n",
+		},
+		{
+			name: "LF in next fakes a line",
+			err: &core.Error{Outcome: core.OutcomeError, Expected: "one file", Found: "two files",
+				Next: "remove one file\nok: done"},
+			want: `error: expected one file; found two files; next: remove one file\x0aok: done` + "\n",
+		},
+	}
+	for _, tc := range lineFakes {
+		t.Run("text refusal/"+tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			if err := core.WriteResult(&buf, core.FormatText, core.ErrorResult(tc.err)); err != nil {
+				t.Fatalf("WriteResult(text) error = %v", err)
+			}
+			if got := buf.String(); got != tc.want {
+				t.Fatalf("text refusal = %q, want %q", got, tc.want)
+			}
+		})
+		t.Run("json refusal/"+tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			if err := core.WriteResult(&buf, core.FormatJSON, core.ErrorResult(tc.err)); err != nil {
+				t.Fatalf("WriteResult(json) error = %v", err)
+			}
+			var env map[string]json.RawMessage
+			if err := json.Unmarshal(buf.Bytes(), &env); err != nil {
+				t.Fatalf("json output is not one JSON object: %v; output %q", err, buf.String())
+			}
+			assertJSONString(t, env, "detail", tc.err.Error())
+		})
+	}
 
 	t.Run("unknown format printed anyway instead of refused", func(t *testing.T) {
 		var buf bytes.Buffer
