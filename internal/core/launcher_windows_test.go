@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -268,6 +269,35 @@ func TestProcessTreeBatchLauncher(t *testing.T) {
 		if ran, ok := readLauncherRan(t, record); ok && !sameLauncherFile(t, ran, decided) {
 			t.Errorf("Start(%q, Dir %q) ran %s, want only %s (the file the decision was made on) or a refusal",
 				argv0, "sub", ran, decided)
+		}
+	})
+
+	// #105, security review: with "." in PATHEXT, LookPath resolves `run.cmd\` and `run.cmd\x\..\`
+	// to `run.cmd\.`; its extension "." passes the PATHEXT check and is not .cmd, so the batch file
+	// would run through CreateProcess with Go's quoting and `&` would run a command. The context is
+	// cancelled before Start, so Start returns before CreateProcess whatever the decision: no case
+	// starts a process. A refusal of the decision, or the batch rules refusing `%`, is the pass.
+	t.Run("a batch launcher named with a trailing separator or a dot element is refused", func(t *testing.T) {
+		t.Setenv("PATHEXT", ".COM;.EXE;.BAT;.CMD;.")
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "run.cmd"), []byte("@exit /b 0\r\n"), 0o600); err != nil {
+			t.Fatalf("write launcher: %v", err)
+		}
+		const arg = `a & type nul > injected %PATH%`
+		for _, name := range []string{`run.cmd\`, `run.cmd\x\..\`} {
+			t.Run(name, func(t *testing.T) {
+				program := filepath.Join(dir, "run.cmd") + strings.TrimPrefix(name, "run.cmd")
+				if _, err := exec.LookPath(program); err != nil {
+					t.Fatalf("LookPath(%q) = %v; the case needs a name Go resolves to the batch file", program, err)
+				}
+				ctx, cancel := context.WithCancel(t.Context())
+				cancel()
+				_, err := core.Start(ctx, core.ChildSpec{Argv: []string{program, arg}, Dir: dir, Env: os.Environ()})
+				if err == nil || errors.Is(err, context.Canceled) {
+					t.Errorf("Start(%q, %q) = %v, want a refusal: the name runs the batch file %s outside the batch rules",
+						program, arg, err, filepath.Join(dir, "run.cmd"))
+				}
+			})
 		}
 	})
 
