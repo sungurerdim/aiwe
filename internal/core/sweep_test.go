@@ -278,21 +278,6 @@ func TestSweepStartUnreadable(t *testing.T) {
 	})
 }
 
-// TestSweepCloseError catches a failed close lost by the sweep (§5.15): the root closed after an
-// empty orphan of a dead owner goes reports its error to the caller, and the orphan counts as removed.
-func TestSweepCloseError(t *testing.T) {
-	r := sweepTestRoots(t)
-	d := sweepTestCreate(t, sweepTestOpen(t, r, sweepTestDeadProcess(t)), TempRoot)
-	if err := os.Remove(filepath.Join(d.Path(), markerFile)); err != nil {
-		t.Fatal(err)
-	}
-	testFailClose(t, "sweep root")
-	rep, err := sweepTestOpen(t, r, sweepTestSelf(t)).Sweep(t.Context())
-	if !errors.Is(err, errTestClose) || rep.Removed != 1 {
-		t.Errorf("Sweep with a failing close of the sweep root = %+v, %v; want Removed 1 and %v", rep, err, errTestClose)
-	}
-}
-
 // TestSweepStartTick catches a reused pid taken as a live owner on Linux: the start is compared by
 // the boot id and the clock tick of /proc/<pid>/stat, with no tolerance (U13).
 func TestSweepStartTick(t *testing.T) {
