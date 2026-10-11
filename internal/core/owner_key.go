@@ -31,10 +31,6 @@ const (
 	kindOwnedDir       = "owned_dir"
 	maxOwnerKeyBytes   = 4096
 	maxLedgerLine      = 4 << 20
-	// openRootFix and foreignRootFix end the refusal of a path, %q, open to another user or owned
-	// by one, with the step that fixes it; %s is the product (SPEC §5.10).
-	openRootFix    = "; next: delete %q so the next %s run makes it owner-only, or remove the access of every other user from it"
-	foreignRootFix = "; next: delete %q, or give its ownership to the user that runs %s"
 )
 
 // ownedRecord is the owned_dir line of the ledger, the TempDirRecord of SPEC §8.5 with the fields

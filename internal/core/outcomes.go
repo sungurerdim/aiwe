@@ -1,6 +1,9 @@
 package core
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 // The outcomes the core itself names; every other outcome is a row of Outcomes.
 const (
@@ -49,6 +52,22 @@ func Outcomes() []OutcomeRow {
 		{Outcome: "config_invalid", Status: StatusError, Err: ErrConfigInvalid,
 			Next: "correct the state file the detail names to one JSON object of string values"},
 	}
+}
+
+// ownerOnlyNext returns the next step that fixes the refusal of p, open to another user or, when
+// foreign, owned by one (SPEC §5.10, §5.15). A directory is never named for delete: it may be the
+// home, a repository or a file-system root. A file, such as the owner key, is deleted first, so a
+// key another user could read is replaced rather than kept.
+func ownerOnlyNext(p string, dir, foreign bool) string {
+	switch {
+	case dir && foreign:
+		return fmt.Sprintf("; next: give its ownership to the user that runs %s, or set the root to a directory that user owns", Product)
+	case dir:
+		return fmt.Sprintf("; next: remove the access of every other user from %q", p)
+	case foreign:
+		return fmt.Sprintf("; next: delete %q, or give its ownership to the user that runs %s", p, Product)
+	}
+	return fmt.Sprintf("; next: delete %q so the next %s run makes it owner-only, or remove the access of every other user from it", p, Product)
 }
 
 // exitCodeRow maps one status word to its process exit code.
