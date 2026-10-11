@@ -41,12 +41,14 @@ func runnerTestGo(t *testing.T) string {
 }
 
 // runnerTestSteps builds the steps the runner cases share: two green steps, one red step and one
-// step whose tool does not exist.
+// step whose tool does not exist. The green test step prints the `go test -json` output of one
+// package that ran 2.4 s, far under half of the 60 s floor limit, so its duration check is green
+// (SPEC §5.13, §7.8).
 func runnerTestSteps(t *testing.T) (green1, green2, red, missing GateStep) {
 	t.Helper()
 	goBin := runnerTestGo(t)
 	green1 = GateStep{ID: "format", Command: []string{goBin, "version"}, Required: true}
-	green2 = GateStep{ID: "test", Command: []string{goBin, "version"}, Required: true}
+	green2 = durationsTestStep(t, durationsTestPackage("github.com/sungurerdim/aiwe/internal/core", 2.4))
 	red = GateStep{ID: "vuln", Command: []string{goBin, "help", "aiwe-no-such-help-topic"}, Required: true}
 	missing = GateStep{ID: "lint", Command: []string{"aiwe-gate-tool-that-is-not-installed"}, Required: true}
 	return green1, green2, red, missing

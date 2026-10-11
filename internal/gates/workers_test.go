@@ -14,7 +14,8 @@ import (
 )
 
 // workersArgvEnv makes this test binary a fake `go` tool: it writes the arguments it was started
-// with, one per line, to the file the variable names and exits 0. It opens no window.
+// with, one per line, to the file the variable names, prints the `go test -json` output of one
+// package that ran 2.4 s, far under half of the 60 s floor limit, and exits 0. It opens no window.
 const workersArgvEnv = "AIWE_GATES_TEST_ARGV"
 
 func init() {
@@ -24,6 +25,9 @@ func init() {
 	}
 	if err := os.WriteFile(path, []byte(strings.Join(os.Args[1:], "\n")), 0o600); err != nil {
 		os.Exit(3)
+	}
+	if _, err := os.Stdout.WriteString(durationsTestPackage("github.com/sungurerdim/aiwe/internal/core", 2.4)); err != nil {
+		os.Exit(4)
 	}
 	os.Exit(0)
 }

@@ -1,10 +1,13 @@
 package gates
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/sungurerdim/aiwe/internal/core"
@@ -50,9 +53,13 @@ type GateReport struct {
 
 // Runner runs the steps of a gate, one after another, each as a process tree (SPEC §5.20).
 // Capacity sets the test step's worker count (DR-7); without one the test step is not_measured.
-// A green or red test step prints the count with its inputs as its detail.
+// A green or red test step prints the count with its inputs as its detail. History holds each
+// step's recorded runs, oldest first, and sets the test step's limit (SPEC §7.8); Recorded holds
+// the recorded package durations that raise it (SPEC §5.13).
 type Runner struct {
 	Capacity core.Capacity
+	History  map[string][]StepRun
+	Recorded []PackageDuration
 }
 
 // Run runs the steps of def in dir. A non-empty only names the steps to run; every other step is
@@ -73,7 +80,7 @@ func (r *Runner) Run(ctx context.Context, def Definition, dir string, only []str
 			report.Steps = append(report.Steps, unmeasured(step.ID, "left out of this run"))
 			continue
 		}
-		report.Steps = append(report.Steps, r.runStep(ctx, step, dir))
+		report.Steps = append(report.Steps, r.runStep(ctx, step, dir, def.Proof))
 	}
 	report.Result = gateResult(report.Steps)
 	return report, nil
@@ -91,56 +98,98 @@ func checkOnly(def Definition, only []string) error {
 }
 
 // runStep runs one step as a process tree and judges it by its declared exit code. A step that
-// cannot start, is stopped before it exits, or declares an output expectation is not_measured.
-func (r *Runner) runStep(ctx context.Context, step GateStep, dir string) StepReport {
+// cannot start, is stopped before it exits, or declares an output expectation is not_measured. A
+// test step that exits as declared is then judged by its package durations (SPEC §5.13).
+func (r *Runner) runStep(ctx context.Context, step GateStep, dir string, proof *Proof) StepReport {
 	if err := ctx.Err(); err != nil {
 		return unmeasured(step.ID, "not started: "+err.Error())
 	}
 	if step.Expect.OutputMatches != "" || step.Expect.OutputRejects != "" {
 		return unmeasured(step.ID, "an output expectation cannot be checked: the runner does not capture output")
 	}
+	step, note, err := r.prepare(step, proof)
+	if err != nil {
+		return unmeasured(step.ID, "not started: "+err.Error())
+	}
+	var out bytes.Buffer
+	code, failed := execStep(ctx, step, dir, &out)
+	if failed != nil {
+		return *failed
+	}
+	if code != step.Expect.ExitCode {
+		return StepReport{ID: step.ID, Result: ResultRed, ExitCode: code, Detail: note}
+	}
+	if step.ID != testStepID {
+		return StepReport{ID: step.ID, Result: ResultGreen, ExitCode: code, Detail: note}
+	}
+	return judgeDurations(step, code, note, out.Bytes())
+}
+
+// prepare returns the step as it runs and the note its report carries. Every other step runs as
+// declared. The test step runs with the worker count of DR-7 under the limit of SPEC §7.8 (its
+// declared limit, else StepLimit), raised to 2 × the longest recorded package (SPEC §5.13); the
+// note prints the count with its inputs. A test step with no chosen count cannot run: the count
+// is never assumed (DR-13).
+func (r *Runner) prepare(step GateStep, proof *Proof) (prepared GateStep, note string, err error) {
+	if step.ID != testStepID {
+		return step, "", nil
+	}
+	if r.Capacity.Workers < 1 {
+		return step, "", errors.New("no worker count was chosen for the test step")
+	}
+	if step.TimeoutSeconds == 0 {
+		step.TimeoutSeconds = ceilSeconds(StepLimit(baseProofStep(proof, step.ID), r.History[step.ID]))
+	}
+	return PrepareTestStep(step, r.Capacity.Workers, r.Recorded), r.Capacity.String(), nil
+}
+
+// execStep runs step as a process tree under its time limit, writes its standard output to out
+// and returns its exit code. A non-nil report is the not_measured result of a step that gave no
+// exit code.
+func execStep(ctx context.Context, step GateStep, dir string, out io.Writer) (int, *StepReport) {
 	if step.TimeoutSeconds > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(step.TimeoutSeconds)*time.Second)
 		defer cancel()
 	}
-	argv, note, err := r.command(step)
-	if err != nil {
-		return unmeasured(step.ID, "not started: "+err.Error())
+	fail := func(detail string) (int, *StepReport) {
+		report := unmeasured(step.ID, detail)
+		return exitUnknown, &report
 	}
-	child, err := core.Start(ctx, core.ChildSpec{Argv: argv, Dir: dir})
+	child, err := core.Start(ctx, core.ChildSpec{Argv: step.Command, Dir: dir, Stdout: out})
 	if err != nil {
-		return unmeasured(step.ID, "could not start: "+err.Error())
+		return fail("could not start: " + err.Error())
 	}
 	waitErr := child.Wait()
 	if err := child.StopTree(stepGrace); err != nil {
-		return unmeasured(step.ID, "a leftover process could not be stopped: "+err.Error())
+		return fail("a leftover process could not be stopped: " + err.Error())
 	}
 	if err := ctx.Err(); err != nil {
-		return unmeasured(step.ID, "stopped before it exited: "+err.Error())
+		return fail("stopped before it exited: " + err.Error())
 	}
 	code, ok := exitCode(waitErr)
 	if !ok {
-		return unmeasured(step.ID, "no exit code: "+waitErr.Error())
+		return fail("no exit code: " + waitErr.Error())
 	}
-	result := ResultRed
-	if code == step.Expect.ExitCode {
-		result = ResultGreen
-	}
-	return StepReport{ID: step.ID, Result: result, ExitCode: code, Detail: note}
+	return code, nil
 }
 
-// command returns the argv a step runs and the note its report carries. The test step runs with
-// the worker count of DR-7, and the note prints the count with its inputs; every other step runs
-// as declared. A test step with no chosen count cannot run: the count is never assumed (DR-13).
-func (r *Runner) command(step GateStep) (argv []string, note string, err error) {
-	if step.ID != testStepID {
-		return step.Command, "", nil
+// judgeDurations judges a test step that exited as declared by the package durations its
+// `go test -json` output reports, against the step's limit. Output that measured no package is
+// not_measured, never green (DR-13).
+func judgeDurations(step GateStep, code int, note string, out []byte) StepReport {
+	limit := time.Duration(step.TimeoutSeconds) * time.Second
+	current, err := ParsePackageDurations(out)
+	if err != nil {
+		return StepReport{ID: step.ID, Result: ResultNotMeasured, ExitCode: code, Detail: joinDetail(note, err.Error())}
 	}
-	if r.Capacity.Workers < 1 {
-		return nil, "", errors.New("no worker count was chosen for the test step")
-	}
-	return withParallelism(step.Command, r.Capacity.Workers), r.Capacity.String(), nil
+	result, detail := CheckPackageDurations(limit, current)
+	return StepReport{ID: step.ID, Result: result, ExitCode: code, Detail: joinDetail(note, detail)}
+}
+
+// joinDetail joins the non-empty parts of a step detail.
+func joinDetail(parts ...string) string {
+	return strings.Join(slices.DeleteFunc(parts, func(p string) bool { return p == "" }), "; ")
 }
 
 // exitCode returns the exit code behind the error of Wait; ok is false when the child did not

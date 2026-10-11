@@ -9,6 +9,6 @@
     { "id": "deadcode", "command": ["go", "tool", "deadcode", "./cmd/..."], "required": true,
       "expect": { "exitCode": 0, "outputRejects": "\\S" } },
     { "id": "repo", "command": ["go", "run", "./internal/cmd/repocheck", "all", "--repo", "."], "required": true, "expect": { "exitCode": 0 } },
-    { "id": "test", "command": ["go", "test", "./..."], "required": true, "expect": { "exitCode": 0 } }
+    { "id": "test", "command": ["go", "test", "-json", "./..."], "required": true, "timeoutSeconds": 900, "expect": { "exitCode": 0 } }
   ]
 }
