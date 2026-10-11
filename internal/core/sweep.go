@@ -72,7 +72,7 @@ func (o *Owner) Sweep(ctx context.Context) (SweepReport, error) {
 func (o *Owner) sweepDead(ctx context.Context, name string, recs []ownedRecord) (bool, error) {
 	e, err := o.checkOwned(filepath.Join(o.temp, name), recs)
 	if err != nil {
-		return removeEmptyDir(o.temp, name), nil
+		return removeEmptyDir(o.temp, name)
 	}
 	if ownedCheckedHook != nil {
 		ownedCheckedHook(name)
@@ -85,21 +85,26 @@ func (o *Owner) sweepDead(ctx context.Context, name string, recs []ownedRecord) 
 
 // removeEmptyDir removes name under rootPath when it is a directory, not a link, with no entries; it
 // reports whether name was removed. It works through an os.Root, which never leaves rootPath, and
-// removes only the directory its check saw (removeDirEntry); a file never goes.
-func removeEmptyDir(rootPath, name string) bool {
+// removes only the directory its check saw (removeDirEntry); a file never goes. A name swapped after
+// the check fails with ErrNotOwned; any other failure, such as an entry in the directory, keeps it.
+func removeEmptyDir(rootPath, name string) (bool, error) {
 	rt, err := os.OpenRoot(rootPath)
 	if err != nil {
-		return false
+		return false, nil
 	}
 	defer rt.Close()
 	fi, err := rt.Lstat(name)
 	if err != nil || fi.Mode().Type() != fs.ModeDir {
-		return false
+		return false, nil
 	}
 	if removeEmptyCheckedHook != nil {
 		removeEmptyCheckedHook(name)
 	}
-	return removeDirEntry(rt, name, fi) == nil
+	err = removeDirEntry(rt, name, fi)
+	if errors.Is(err, ErrNotOwned) {
+		return false, err
+	}
+	return err == nil, nil
 }
 
 // removeEmptyCheckedHook, when set, runs right after removeEmptyDir has checked name and before it
@@ -137,19 +142,33 @@ func removeDirEntry(rt *os.Root, name string, fi fs.FileInfo) error {
 		err = rt.Remove(moved)
 	}
 	if err != nil {
-		err = errors.Join(err, moveBack(rt, moved, name))
+		err = errors.Join(err, moveBack(rt, moved, name, now))
 	}
 	return errors.Join(err, rt.Remove(aside))
 }
 
-// moveBack moves moved back to name when name is free; when name is taken again, moved stays
-// where it is and the error names that place, so nothing under name is replaced.
-func moveBack(rt *os.Root, moved, name string) error {
+// moveBack moves moved, whose file info is now, back to name when name is free, else keeps it and
+// names its place. A non-directory comes back as a hard link, which fails on a taken name; a
+// directory comes back by rename, which replaces a file (Windows) or an empty directory (elsewhere)
+// put under name in the moment after the check.
+func moveBack(rt *os.Root, moved, name string, now fs.FileInfo) error {
 	if _, err := rt.Lstat(name); !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("%q is kept at %q: its name is taken again", name, moved)
 	}
-	return rt.Rename(moved, name)
+	if moveBackCheckedHook != nil {
+		moveBackCheckedHook(name)
+	}
+	if now != nil && now.IsDir() {
+		return rt.Rename(moved, name)
+	}
+	if err := rt.Link(moved, name); err != nil {
+		return fmt.Errorf("%q is kept at %q: %w", name, moved, err)
+	}
+	return rt.Remove(moved)
 }
+
+// moveBackCheckedHook, when set, runs after moveBack has found name free and before the move back.
+var moveBackCheckedHook func(name string)
 
 // removeCheckedHook, when set, runs right after removeOnce has checked name and before it opens it;
 // a test uses it to swap name at that point.
