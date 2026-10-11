@@ -25,8 +25,9 @@ func footprintTestRoots(t *testing.T) core.OwnedRoots {
 		Home:      filepath.Join(base, "home"),
 		Canonical: []string{filepath.Join(base, "repo")},
 	}
-	for _, d := range []string{r.Temp, r.Cache, r.Home, r.Canonical[0]} {
-		if err := os.MkdirAll(d, 0o755); err != nil {
+	// OpenOwner makes the temp and cache roots owner-only; MkdirAll would inherit an open ACL on Windows.
+	for _, d := range []string{r.Home, r.Canonical[0]} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
 			t.Fatal(err)
 		}
 	}

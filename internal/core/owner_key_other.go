@@ -3,15 +3,17 @@
 package core
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"syscall"
 )
 
-// checkOwnerOnly refuses p, the state root or the owner key, when its mode gives group or others any
-// access, or when the effective user does not own it. p is not followed, so a link, whose mode
-// is 0777, is refused too. aiwe makes the state root 0o700 and the key 0o600.
+// checkOwnerOnly refuses p, the state, temp or cache root or the owner key, when its mode gives
+// group or others any access, or when the effective user does not own it. p is not followed, so a
+// link, whose mode is 0777, is refused too; a root that is a link is refused first by
+// mkdirOwnerOnly. aiwe makes each root 0o700 and the key 0o600.
 func checkOwnerOnly(p string) error {
 	fi, err := os.Lstat(p)
 	if err != nil {
@@ -27,11 +29,14 @@ func checkOwnerOnly(p string) error {
 	return nil
 }
 
-// mkdirOwnerOnly makes the state root p, and any missing parent, with mode 0o700. A p that is a
-// link fails with ErrRootUnsafe, the same as on Windows; nothing is written at its target.
+// mkdirOwnerOnly makes the state, temp or cache root p, and any missing parent, with mode 0o700;
+// a p that exists keeps its mode, and checkOwnerOnly refuses it when it is open. A p that is a link
+// fails with ErrRootUnsafe, the same as on Windows; nothing is written at its target.
 func mkdirOwnerOnly(p string) error {
-	if err := os.MkdirAll(p, 0o700); err != nil {
-		return err
+	if _, err := os.Lstat(p); errors.Is(err, fs.ErrNotExist) {
+		if err := os.MkdirAll(p, 0o700); err != nil {
+			return err
+		}
 	}
 	fi, err := os.Lstat(p)
 	if err != nil {
