@@ -78,7 +78,16 @@ func removeTestRootLink(t *testing.T, target, link string) {
 		}
 		return
 	}
-	if out, err := exec.Command("cmd", "/c", "mklink", "/J", link, target).CombinedOutput(); err != nil {
+	// cmd splits an unquoted argument at a comma, semicolon or equals sign, and exec quotes an
+	// argument only for a space. Run mklink in the link's dir with a base name and a relative
+	// target, so no part of the test's temp path reaches cmd; mklink /J stores the full target.
+	rel, err := filepath.Rel(filepath.Dir(link), target)
+	if err != nil {
+		t.Fatalf("junction target %s relative to %s: %v", target, filepath.Dir(link), err)
+	}
+	cmd := exec.Command("cmd", "/c", "mklink", "/J", filepath.Base(link), rel)
+	cmd.Dir = filepath.Dir(link)
+	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("junction %s -> %s: %v: %s", link, target, err, out)
 	}
 }
@@ -135,9 +144,9 @@ func TestOwnedRootLink(t *testing.T) {
 			for _, f := range removeTestLinkForms() {
 				dest := "an owner-only dir"
 				if victim {
-					dest = "the user's private dir"
+					dest = "the user private dir"
 				}
-				t.Run(root+" root links to "+dest+", "+f.name, func(t *testing.T) {
+				t.Run(root+" root links to "+dest+" "+f.name, func(t *testing.T) {
 					base := t.TempDir()
 					r := removeTestRoots(t, base)
 					target := filepath.Join(base, "real-"+root)
