@@ -298,7 +298,7 @@ func TestConfig(t *testing.T) {
 		if !ok {
 			t.Fatal("outcome config_invalid is not a row of core.Outcomes() (BC-1)")
 		}
-		if !errors.Is(row.Err, core.ErrConfigInvalid) || errors.Unwrap(row.Err) != nil || row.Status != core.StatusError || row.Next == "" {
+		if !errorsTestBare(row.Err, core.ErrConfigInvalid) || row.Status != core.StatusError || row.Next == "" {
 			t.Errorf("config_invalid row = %+v, want Err core.ErrConfigInvalid, status error and a next action", row)
 		}
 		if core.ErrConfigInvalid.Error() != "config_invalid" {
