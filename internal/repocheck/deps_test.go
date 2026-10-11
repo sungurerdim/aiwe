@@ -263,6 +263,58 @@ func TestDoctor(t *testing.T) {
 		}
 	})
 
+	t.Run("a go version with an experiment suffix is present", func(t *testing.T) {
+		// Guards against a parse that rejects the GOEXPERIMENT suffix `go version` prints.
+		got, err := repocheck.Doctor(doctorEnv(doctorRepo(t, "1.27.9"), "linux", "go1.27.9 X:jsonv2"))
+		if err != nil {
+			t.Fatalf("Doctor error = %v, want nil", err)
+		}
+		if p := prerequisite(t, got, "go"); !p.Present {
+			t.Fatalf("Doctor go = %+v, want present", p)
+		}
+	})
+
+	t.Run("a pre-release orders below its release and above the previous release", func(t *testing.T) {
+		// Guards against a compare that drops the rc suffix: go1.28rc2 comes before go1.28.0.
+		cases := []struct {
+			goLine, have string
+			present      bool
+		}{
+			{"1.28.0", "go1.28rc2", false},
+			{"1.27.9", "go1.28rc2", true},
+			{"1.28rc1", "go1.28rc2", true},
+			{"1.28rc2", "go1.28rc1", false},
+			{"1.28rc1", "go1.28.0", true},
+			{"1.28rc1", "go1.27.9", false},
+		}
+		for _, tc := range cases {
+			got, err := repocheck.Doctor(doctorEnv(doctorRepo(t, tc.goLine), "linux", tc.have))
+			if err != nil {
+				t.Fatalf("Doctor(go %s, %s) error = %v, want nil", tc.goLine, tc.have, err)
+			}
+			if p := prerequisite(t, got, "go"); p.Present != tc.present {
+				t.Errorf("Doctor(go %s, %s) go = %+v, want present=%v", tc.goLine, tc.have, p, tc.present)
+			}
+		}
+	})
+
+	t.Run("a go tool entry that does not resolve names a command that leaves go.mod unchanged", func(t *testing.T) {
+		// Guards against `go get -tool`, which rewrites go.mod; `go mod download` only fetches
+		// the modules go.mod already pins.
+		env := doctorEnv(doctorRepo(t, "1.27.9"), "linux", "go1.27.9")
+		env.ResolveTool = func(string) error { return errors.New("no such tool") }
+		got, err := repocheck.Doctor(env)
+		if err != nil {
+			t.Fatalf("Doctor error = %v, want nil", err)
+		}
+		for _, name := range doctorTools() {
+			p := prerequisite(t, got, name)
+			if !strings.HasPrefix(p.Install, "go mod download") || strings.Contains(p.Install, "go get") {
+				t.Errorf("Doctor %s install = %q, want a `go mod download` command", name, p.Install)
+			}
+		}
+	})
+
 	t.Run("a repository without go.mod is an error", func(t *testing.T) {
 		got, err := repocheck.Doctor(doctorEnv(t.TempDir(), "linux", "go1.27.9"))
 		if err == nil {
