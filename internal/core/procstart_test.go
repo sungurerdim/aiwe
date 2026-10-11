@@ -128,23 +128,6 @@ func TestProcessStart(t *testing.T) {
 	}
 }
 
-// procTestLink makes link point at target: a symlink where the OS allows it, else (Windows without
-// the symlink privilege) a directory junction.
-func procTestLink(t *testing.T, target, link string) {
-	t.Helper()
-	err := os.Symlink(target, link)
-	if err == nil {
-		return
-	}
-	if runtime.GOOS != "windows" {
-		t.Fatalf("symlink %s -> %s: %v", link, target, err)
-	}
-	out, jerr := exec.Command("cmd", "/c", "mklink", "/J", link, target).CombinedOutput()
-	if jerr != nil {
-		t.Fatalf("symlink %s -> %s: %v; junction: %v: %s", link, target, err, jerr, out)
-	}
-}
-
 // TestRealPath catches a real path that keeps a link, a letter case or a short name the file
 // system does not hold, or that reads a missing path as real (§5.15).
 func TestRealPath(t *testing.T) {
@@ -165,7 +148,7 @@ func TestRealPath(t *testing.T) {
 	}
 
 	link := filepath.Join(base, "link")
-	procTestLink(t, target, link)
+	removeTestLink(t, target, link)
 	if got, err := realPath(link); err != nil || got != want {
 		t.Errorf("realPath(%q) = %q, %v; want the link target %q", link, got, err, want)
 	}
