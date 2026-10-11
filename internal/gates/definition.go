@@ -96,7 +96,8 @@ func checkDefinition(def Definition) error {
 	seen := make(map[string]bool, len(def.Steps))
 	for i, s := range def.Steps {
 		if err := checkStep(s); err != nil {
-			return fmt.Errorf("step %d: %w", i+1, err)
+			err.Found = fmt.Sprintf("step %d: %s", i+1, err.Found)
+			return err
 		}
 		if seen[s.ID] {
 			return invalidGate("a unique step id", fmt.Sprintf("id %q twice", s.ID), nil)
@@ -107,8 +108,9 @@ func checkDefinition(def Definition) error {
 }
 
 // checkStep refuses a step without an id, without a program to run, with a negative time limit
-// or with an output pattern that is not valid RE2.
-func checkStep(s GateStep) error {
+// or with an output pattern that is not valid RE2. The refusal is a *core.Error, so the caller can
+// name the step inside it and the text line names the status once (#160).
+func checkStep(s GateStep) *core.Error {
 	if s.ID == "" {
 		return invalidGate("a step id", "an empty id", nil)
 	}
@@ -137,7 +139,7 @@ func validOrigin(origin string) bool {
 }
 
 // invalidGate returns the error of a gate.json that cannot be read as a gate.
-func invalidGate(expected, found string, cause error) error {
+func invalidGate(expected, found string, cause error) *core.Error {
 	return &core.Error{Outcome: core.OutcomeError, Expected: expected, Found: found,
 		Next: "correct gate.json to the format of SPEC §8.3", Err: cause}
 }
