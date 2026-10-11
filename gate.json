@@ -1,7 +1,8 @@
 {
   "formatVersion": 1,
   "steps": [
-    { "id": "format", "command": ["gofmt", "-l", "-d", "."], "required": true, "expect": { "exitCode": 0 } },
+    { "id": "format", "command": ["gofmt", "-l", "."], "required": true,
+      "expect": { "exitCode": 0, "outputRejects": "\\S" } },
     { "id": "lint", "command": ["custom-gcl", "run", "./..."], "required": true, "expect": { "exitCode": 0 } },
     { "id": "vuln", "command": ["go", "tool", "govulncheck", "./..."], "required": true, "expect": { "exitCode": 0 } },
     { "id": "tidy", "command": ["go", "mod", "tidy", "-diff"], "required": true, "expect": { "exitCode": 0 } },
