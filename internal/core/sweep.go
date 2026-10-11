@@ -2,8 +2,6 @@ package core
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -32,9 +30,10 @@ type ownedTemp struct {
 // built by hand on Linux: it has no exact start identity, so its owner counts as alive while its
 // pid runs (DR-25). A registered directory of a dead owner that fails the ownership checks is
 // removed only when it is an empty directory, such as one left by a crash before its marker; any
-// other is kept and counted as Refused. Each directory is checked right before its removal, and
-// only the directory the check approved is removed: a name swapped after the check is kept,
-// counted as Refused, and its not_owned error is returned. Cache directories are never touched.
+// other is kept and counted as Refused. Each directory is checked right before its removal, and a
+// file is never removed: a name swapped after the check is counted as Refused and its not_owned
+// error is returned; only an empty directory put under it may go (removeDirEntry). Cache
+// directories are never touched.
 func (o *Owner) Sweep(ctx context.Context) (SweepReport, error) {
 	var rep SweepReport
 	recs, err := o.records()
@@ -115,60 +114,48 @@ var removeEmptyCheckedHook func(name string)
 // last time and before it removes it; a test uses it to swap name at that point.
 var removeLastCheckedHook func(name string)
 
-// removeDirEntry removes name under rt only when it is the empty directory fi describes. Go has no
-// portable call that removes a directory through its own handle, and Root.Remove also removes a
-// file, so name first moves into a new directory with a random name, where it is checked again and
-// removed only while it is still that directory. Anything else under name, or a directory that
-// still holds an entry, moves back and is kept; a swapped name fails with ErrNotOwned.
+// removeDirEntry removes name under rt only when it is the empty directory fi describes. It holds
+// name open by a handle that never follows a link, checks that handle against fi, then removes name
+// through a directory-only call (rmdir_unix.go, rmdir_windows.go), so a file is never deleted. Go
+// has no portable call that removes a directory through its own handle, so a name swapped between
+// that check and the call stays possible: a file under name is kept, an empty directory under name
+// may go (the accepted worst case), and the held handle shows whether the approved directory went.
+// When it did not, the call fails with ErrNotOwned. A directory that still holds an entry is kept.
 func removeDirEntry(rt *os.Root, name string, fi fs.FileInfo) error {
-	suffix := make([]byte, dirSuffixBytes)
-	if _, err := rand.Read(suffix); err != nil {
-		return fmt.Errorf("remove %q: %w", name, err)
+	if filepath.Base(name) != name || !filepath.IsLocal(name) {
+		return fmt.Errorf("%w: remove %q: not a single name under the root", ErrNotOwned, name)
 	}
-	// A leading '.' fails plainName, so this name never meets an owned one.
-	aside := ".remove-" + hex.EncodeToString(suffix)
-	if err := rt.Mkdir(aside, 0o700); err != nil {
-		return fmt.Errorf("remove %q: %w", name, err)
-	}
-	moved := filepath.Join(aside, filepath.Base(name))
-	if err := rt.Rename(name, moved); err != nil {
-		return errors.Join(err, rt.Remove(aside))
-	}
-	now, err := rt.Lstat(moved)
-	if err == nil && (now.Mode().Type() != fs.ModeDir || !os.SameFile(fi, now)) {
-		err = fmt.Errorf("%w: %q was swapped after the check (a link is never followed)", ErrNotOwned, name)
-	}
-	if err == nil {
-		err = rt.Remove(moved)
-	}
+	h, err := openHeldDir(rt, name)
 	if err != nil {
-		err = errors.Join(err, moveBack(rt, moved, name, now))
+		return errors.Join(sameEntry(rt, name, fi), err)
 	}
-	return errors.Join(err, rt.Remove(aside))
+	defer h.close()
+	hi, err := h.f.Stat()
+	if err != nil {
+		return err
+	}
+	if hi.Mode().Type() != fs.ModeDir || !os.SameFile(fi, hi) {
+		return fmt.Errorf("%w: %q was swapped after the check (a link is never followed)", ErrNotOwned, name)
+	}
+	if rmdirCheckedHook != nil {
+		rmdirCheckedHook(name)
+	}
+	rmErr := h.rmdir()
+	gone, err := h.gone()
+	switch {
+	case err != nil:
+		return errors.Join(rmErr, err)
+	case gone:
+		return nil
+	case rmErr == nil, errors.Is(rmErr, fs.ErrNotExist):
+		return fmt.Errorf("%w: %q no longer names the approved directory, which stays elsewhere", ErrNotOwned, name)
+	}
+	return errors.Join(sameEntry(rt, name, fi), rmErr)
 }
 
-// moveBack moves moved, whose file info is now, back to name when name is free, else keeps it and
-// names its place. A non-directory comes back as a hard link, which fails on a taken name; a
-// directory comes back by rename, which replaces a file (Windows) or an empty directory (elsewhere)
-// put under name in the moment after the check.
-func moveBack(rt *os.Root, moved, name string, now fs.FileInfo) error {
-	if _, err := rt.Lstat(name); !errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("%q is kept at %q: its name is taken again", name, moved)
-	}
-	if moveBackCheckedHook != nil {
-		moveBackCheckedHook(name)
-	}
-	if now != nil && now.IsDir() {
-		return rt.Rename(moved, name)
-	}
-	if err := rt.Link(moved, name); err != nil {
-		return fmt.Errorf("%q is kept at %q: %w", name, moved, err)
-	}
-	return rt.Remove(moved)
-}
-
-// moveBackCheckedHook, when set, runs after moveBack has found name free and before the move back.
-var moveBackCheckedHook func(name string)
+// rmdirCheckedHook, when set, runs right after removeDirEntry has checked the held handle and
+// before the directory-only removal; a test uses it to swap name at that point.
+var rmdirCheckedHook func(name string)
 
 // removeCheckedHook, when set, runs right after removeOnce has checked name and before it opens it;
 // a test uses it to swap name at that point.
