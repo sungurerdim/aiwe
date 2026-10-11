@@ -26,12 +26,9 @@ const (
 	ledgerPrefix       = "ledger."
 	rotationSuffix     = ".jsonl.gz"
 	noneField          = "none"
-	markerFile         = ".owner"
 	ownerKeySize       = 32
 	ownedFormatVersion = 1
 	kindOwnedDir       = "owned_dir"
-	markerDomain       = "owned_marker"
-	maxMarkerBytes     = 4096
 	maxOwnerKeyBytes   = 4096
 	maxLedgerLine      = 4 << 20
 )
@@ -56,15 +53,6 @@ type ownedRecord struct {
 	StartID       string     `json:"start_id"`
 	RemovedAt     *time.Time `json:"removed_at"`
 	HMAC          string     `json:"hmac"`
-}
-
-// ownedMarker is the content of the .owner file inside an owned directory.
-type ownedMarker struct {
-	Path  string    `json:"path"`
-	Owner string    `json:"owner"`
-	PID   int       `json:"pid"`
-	Start time.Time `json:"start"`
-	HMAC  string    `json:"hmac"`
 }
 
 // orNone returns s, or "none" when s is empty.
@@ -322,26 +310,37 @@ func findRecord(recs []ownedRecord, root, name string) (ownedRecord, bool) {
 // dir was opened on, whatever path names later.
 func (o *Owner) checkMarker(rootPath string, dir *os.Root, path string, rec ownedRecord) error {
 	p := filepath.Join(path, markerFile)
-	fi, err := dir.Lstat(markerFile)
+	b, err := readMarker(dir)
 	if err != nil {
-		return fmt.Errorf("%w: marker: %v", ErrNotOwned, err)
+		return fmt.Errorf("%w: marker %q: %w", ErrNotOwned, p, err)
 	}
-	if !fi.Mode().IsRegular() || fi.Size() > maxMarkerBytes {
-		return fmt.Errorf("%w: marker %q is not a plain file of at most %d bytes", ErrNotOwned, p, maxMarkerBytes)
-	}
-	b, err := dir.ReadFile(markerFile)
+	return o.matchMarker(rootPath, p, b, rec)
+}
+
+// readMarker opens the marker under dir once, without blocking, so a FIFO cannot hang the open. Its
+// type, size and bytes all come from that handle; the name must not be a link to it.
+func readMarker(dir *os.Root) ([]byte, error) {
+	lfi, err := dir.Lstat(markerFile)
 	if err != nil {
-		return fmt.Errorf("%w: marker: %v", ErrNotOwned, err)
+		return nil, err
 	}
-	var m ownedMarker
-	if err := json.Unmarshal(b, &m); err != nil {
-		return fmt.Errorf("%w: marker %q: %v", ErrNotOwned, p, err)
+	f, err := dir.OpenFile(markerFile, ownerKeyOpenFlag, 0)
+	if err != nil {
+		return nil, err
 	}
-	if m.Path != rec.Path || m.Owner != rec.Owner || m.PID != rec.PID || !m.Start.Equal(rec.Start) ||
-		!o.validMAC(markerDomain, rootPath, rec, m.HMAC) {
-		return fmt.Errorf("%w: marker %q does not match its owned_dir record", ErrNotOwned, p)
+	defer func() { _ = f.Close() }()
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, err
 	}
-	return nil
+	if !lfi.Mode().IsRegular() || !fi.Mode().IsRegular() || !os.SameFile(lfi, fi) || fi.Size() > maxMarkerBytes {
+		return nil, errMarkerShape
+	}
+	b, err := io.ReadAll(io.LimitReader(f, maxMarkerBytes+1))
+	if err == nil && len(b) > maxMarkerBytes {
+		return nil, errMarkerShape
+	}
+	return b, err
 }
 
 // checkOwnedDir checks that p is a clean absolute path with an owned directory name, a directory
