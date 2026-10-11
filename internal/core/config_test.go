@@ -122,8 +122,8 @@ func TestConfig(t *testing.T) {
 			{
 				name: "a setting in a second state file is missed",
 				state: map[string]string{
-					"run.json":   `{"gateTimeout": "45m"}`,
-					"level.json": `{"logLevel": "error"}`,
+					"settings.run.json":   `{"gateTimeout": "45m"}`,
+					"settings.level.json": `{"logLevel": "error"}`,
 				},
 				wantValue: "error", wantOrigin: core.ConfigOriginState,
 			},
@@ -203,10 +203,10 @@ func TestConfig(t *testing.T) {
 			{name: "JSON array accepted as settings", state: map[string]string{"settings.json": `["logLevel", "error"]`}},
 			{name: "number value accepted as a string", state: map[string]string{"settings.json": `{"logLevel": 3}`}},
 			{name: "one broken file hidden by a valid one", state: map[string]string{
-				"a.json": `{"gateTimeout": "45m"}`, "b.json": `{"logLevel":`}},
+				"settings.a.json": `{"gateTimeout": "45m"}`, "settings.b.json": `{"logLevel":`}},
 			{name: "JSON null accepted as an empty settings object", state: map[string]string{"settings.json": `null`}},
 			{name: "one setting in two state files resolved by file order", state: map[string]string{
-				"a.json": `{"logLevel": "warn"}`, "b.json": `{"logLevel": "error"}`}},
+				"settings.a.json": `{"logLevel": "warn"}`, "settings.b.json": `{"logLevel": "error"}`}},
 		}
 		for _, tc := range tests {
 			t.Run(tc.name, func(t *testing.T) {
@@ -255,7 +255,7 @@ func TestConfig(t *testing.T) {
 	})
 
 	t.Run("upper-case .JSON suffix read as a state file", func(t *testing.T) {
-		// SPEC §5.12 names <state>/*.json; only the lower-case suffix is a state file.
+		// SPEC §5.12 names settings.json and settings.*.json; only the lower-case name is a settings file.
 		dir := configTestWriteState(t, map[string]string{"SETTINGS.JSON": `{"logLevel": "error"}`})
 		got, err := core.ResolveConfig(configTestSettings(), nil, configTestGetenv(nil), dir)
 		if err != nil {
