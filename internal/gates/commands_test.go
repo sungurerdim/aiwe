@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -51,6 +52,16 @@ func commandsTestRun(t *testing.T, args ...string) (int, commandsTestEnvelope, s
 		t.Fatalf("aiwe %s printed no JSON envelope: %v\n%s", strings.Join(argv, " "), err, out.String())
 	}
 	return code, env, out.String()
+}
+
+// commandsTestWithoutRepo returns detail with every form of the repo path removed: as given, with
+// forward slashes, and Go-quoted, so a check on the rest cannot match text the path supplies.
+func commandsTestWithoutRepo(detail, repo string) string {
+	quoted := strconv.Quote(repo)
+	for _, form := range []string{quoted[1 : len(quoted)-1], repo, filepath.ToSlash(repo)} {
+		detail = strings.ReplaceAll(detail, form, "")
+	}
+	return detail
 }
 
 // commandsTestRow returns the outcome table row named o; ok is false when the table has none.
@@ -197,16 +208,19 @@ func TestGatesCommand(t *testing.T) {
 	}
 	for _, tc := range refusals {
 		t.Run(tc.name, func(t *testing.T) {
-			code, env, raw := commandsTestRun(t, tc.args(commandsTestRepo(t, tc.steps))...)
+			repo := commandsTestRepo(t, tc.steps)
+			code, env, raw := commandsTestRun(t, tc.args(repo)...)
 			if env.Status != tc.want || code != tc.want.ExitCode() {
 				t.Fatalf("%s: status %q exit %d, want %q exit %d\n%s", tc.catches, env.Status, code, tc.want, tc.want.ExitCode(), raw)
 			}
 			if env.Outcome == "param_undeclared" {
 				t.Fatalf("%s: refused for an undeclared param\n%s", tc.catches, raw)
 			}
+			// The repo path holds the subtest name, so tc.found is searched only in the detail
+			// without the repo path; a detail that names tc.found only through that path fails.
 			prefix := string(env.Outcome) + ": expected "
 			if !strings.HasPrefix(env.Detail, prefix) || !strings.Contains(env.Detail, "; found ") ||
-				!strings.Contains(env.Detail, "; next: ") || !strings.Contains(env.Detail, tc.found) {
+				!strings.Contains(env.Detail, "; next: ") || !strings.Contains(commandsTestWithoutRepo(env.Detail, repo), tc.found) {
 				t.Errorf("%s: detail %q is not \"<outcome>: expected <x>; found <y>; next: <action>\" naming %q (SPEC §5.10)",
 					tc.catches, env.Detail, tc.found)
 			}
