@@ -97,63 +97,90 @@ func removeTestNames(t *testing.T, dir string) []string {
 	return names
 }
 
-// TestOwnedRootLink catches a temp or cache root that is a link (Unix symlink, Windows junction)
-// and is followed to its target. The target may be owner-only and still not the engine's: a link
-// to the user's private dir would make the engine create and remove run dirs inside it. The state
-// root is refused when it is a link; the temp and cache roots are refused the same way, and the
-// user names the real path through AIWE_TEMP or AIWE_CACHE instead (#134, owner decision).
+// removeTestLinkForms returns the spellings of an absolute link path that must all be refused as
+// the link itself. A trailing separator or a "." element makes Lstat follow the last link, so a
+// check that only Lstats the given path accepts the link and writes into its target (#134).
+func removeTestLinkForms() []struct{ name, prefix, suffix string } {
+	if runtime.GOOS == "windows" {
+		return []struct{ name, prefix, suffix string }{
+			{"as named", "", ""},
+			{"trailing backslash", "", `\`},
+			{"trailing slash", "", "/"},
+			{"trailing dot element", "", `\.\`},
+			{"extended-length with trailing backslash", `\\?\`, `\`},
+		}
+	}
+	return []struct{ name, prefix, suffix string }{
+		{"as named", "", ""},
+		{"trailing slash", "", "/"},
+		{"trailing dot", "", "/."},
+		{"trailing double slash", "", "//"},
+		{"trailing dot element", "", "/./"},
+	}
+}
+
+// TestOwnedRootLink catches a temp, cache or state root that is a link (Unix symlink, Windows
+// junction) and is followed to its target, in any spelling of the link path. The target may be
+// owner-only and still not the engine's: a link to the user's private dir would make the engine
+// create and remove run dirs, or write the owner key, inside it. Every root is refused when it is a
+// link; the user names the real path through AIWE_TEMP, AIWE_CACHE or the state root instead
+// (#134, owner decision).
 func TestOwnedRootLink(t *testing.T) {
 	self, err := CurrentProcess()
 	if err != nil {
 		t.Fatalf("CurrentProcess: %v", err)
 	}
-	for _, c := range []struct {
-		name, root string
-		victim     bool
-	}{
-		{"temp root links to an owner-only dir", "temp", false},
-		{"cache root links to an owner-only dir", "cache", false},
-		{"temp root links to the user's private dir", "temp", true},
-		{"cache root links to the user's private dir", "cache", true},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			base := t.TempDir()
-			r := removeTestRoots(t, base)
-			target := filepath.Join(base, "real-"+c.root)
-			if c.victim {
-				target = filepath.Join(r.Home, "private")
-			}
-			removeTestRootDir(t, target)
-			if runtime.GOOS != "windows" {
-				if err := os.Chmod(target, 0o700); err != nil {
-					t.Fatalf("chmod %s 0700: %v", target, err)
+	for _, root := range []string{"temp", "cache", "state"} {
+		for _, victim := range []bool{false, true} {
+			for _, f := range removeTestLinkForms() {
+				dest := "an owner-only dir"
+				if victim {
+					dest = "the user's private dir"
 				}
-			}
-			removeTestWrite(t, filepath.Join(target, "notes.txt"), "Kişisel notlar: şifre değil.\n")
-			before := removeTestNames(t, target)
-			link := filepath.Join(base, c.root+"-link")
-			removeTestRootLink(t, target, link)
-			root := map[string]OwnedRoot{"temp": TempRoot, "cache": CacheRoot}[c.root]
-			if c.root == "temp" {
-				r.Temp = link
-			} else {
-				r.Cache = link
-			}
+				t.Run(root+" root links to "+dest+", "+f.name, func(t *testing.T) {
+					base := t.TempDir()
+					r := removeTestRoots(t, base)
+					target := filepath.Join(base, "real-"+root)
+					if victim {
+						target = filepath.Join(r.Home, "private")
+					}
+					removeTestRootDir(t, target)
+					if runtime.GOOS != "windows" {
+						if err := os.Chmod(target, 0o700); err != nil {
+							t.Fatalf("chmod %s 0700: %v", target, err)
+						}
+					}
+					removeTestWrite(t, filepath.Join(target, "notes.txt"), "Kişisel notlar: şifre değil.\n")
+					before := removeTestNames(t, target)
+					link := filepath.Join(base, root+"-link")
+					removeTestRootLink(t, target, link)
+					given := f.prefix + link + f.suffix
+					switch root {
+					case "temp":
+						r.Temp = given
+					case "cache":
+						r.Cache = given
+					default:
+						r.State = given
+					}
 
-			o, err := OpenOwner(r, self)
-			if !errors.Is(err, ErrRootUnsafe) {
-				t.Errorf("OpenOwner with a %s root %s that links to %s: owner %t, error %v; want %v",
-					c.root, link, target, o != nil, err, ErrRootUnsafe)
+					o, err := OpenOwner(r, self)
+					if !errors.Is(err, ErrRootUnsafe) {
+						t.Errorf("OpenOwner with a %s root %s that links to %s: owner %t, error %v; want %v",
+							root, given, target, o != nil, err, ErrRootUnsafe)
+					}
+					if o != nil && root != "state" {
+						// An accepted owner shows what a followed link costs: its run dir lands in the target.
+						owned := map[string]OwnedRoot{"temp": TempRoot, "cache": CacheRoot}[root]
+						if _, err := o.CreateOwned(context.Background(), owned, "run-20261011-0001"); err != nil {
+							t.Logf("CreateOwned under the linked %s root: %v", root, err)
+						}
+					}
+					if after := removeTestNames(t, target); !slices.Equal(after, before) {
+						t.Errorf("link target %s has entries %q after OpenOwner, want %q unchanged", target, after, before)
+					}
+				})
 			}
-			if o != nil {
-				// An accepted owner shows what a followed link costs: its run dir lands in the target.
-				if _, err := o.CreateOwned(context.Background(), root, "run-20261011-0001"); err != nil {
-					t.Logf("CreateOwned under the linked %s root: %v", c.root, err)
-				}
-			}
-			if after := removeTestNames(t, target); !slices.Equal(after, before) {
-				t.Errorf("link target %s has entries %q after OpenOwner, want %q unchanged", target, after, before)
-			}
-		})
+		}
 	}
 }
