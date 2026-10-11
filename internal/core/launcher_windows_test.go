@@ -153,7 +153,8 @@ func TestProcessTreeBatchLauncher(t *testing.T) {
 	// Delayed expansion turns !NAME! into the value of NAME even inside quotes, and the launcher,
 	// not the caller, decides whether it is on; so "!" in a batch argument is refused.
 	t.Run("an exclamation mark in a batch launcher argument is refused", func(t *testing.T) {
-		const secretName, secret = "AIWE_PROBE_SECRET", "s3cr3t-value-from-env"
+		secretName := strings.ToUpper(core.Product) + "_PROBE_SECRET"
+		const secret = "s3cr3t-value-from-env"
 		launcher := filepath.Join(t.TempDir(), "delayed.cmd")
 		body := "@setlocal EnableDelayedExpansion\r\n@\"" + os.Args[0] + "\" %*\r\n"
 		if err := os.WriteFile(launcher, []byte(body), 0o600); err != nil {
@@ -258,7 +259,7 @@ func TestProcessTreeBatchLauncher(t *testing.T) {
 		ctx, cancel := context.WithTimeout(t.Context(), processOuterBound)
 		defer cancel()
 		argv0 := `.\agent.exe`
-		child, err := core.Start(ctx, core.ChildSpec{Argv: []string{argv0, launcherRecordArg}, Dir: "sub", Env: launcherRecordEnvFor(record)})
+		child, err := core.Start(ctx, core.ChildSpec{Argv: []string{argv0, launcherRecordArg()}, Dir: "sub", Env: launcherRecordEnvFor(record)})
 		if err == nil {
 			if waitErr := waitProcessChild(t, child, processBound); waitErr != nil {
 				t.Errorf("Start(%q, Dir %q): Wait = %v", argv0, "sub", waitErr)
@@ -316,7 +317,7 @@ func TestProcessTreeBatchLauncher(t *testing.T) {
 		record := t.TempDir()
 		ctx, cancel := context.WithTimeout(t.Context(), processOuterBound)
 		defer cancel()
-		child, err := core.Start(ctx, core.ChildSpec{Argv: []string{program, launcherRecordArg}, Dir: dir, Env: launcherRecordEnvFor(record)})
+		child, err := core.Start(ctx, core.ChildSpec{Argv: []string{program, launcherRecordArg()}, Dir: dir, Env: launcherRecordEnvFor(record)})
 		if err == nil {
 			t.Errorf("Start(%q) = nil error, want a refusal: %s is not in PATHEXT", program, ext)
 			if waitErr := waitProcessChild(t, child, processBound); waitErr != nil {
@@ -333,6 +334,7 @@ func TestProcessTreeBatchLauncher(t *testing.T) {
 	// they act as the characters checkBatchWord refuses.
 	t.Run("a best-fit form of a refused character is refused", func(t *testing.T) {
 		launcher := writeProcessLauncher(t, t.TempDir())
+		probe := strings.ToUpper(core.Product) + "_PROBE_SECRET"
 		tests := []struct {
 			name, arg string
 		}{
@@ -347,10 +349,10 @@ func TestProcessTreeBatchLauncher(t *testing.T) {
 			{"fullwidth quotation mark U+FF02", "prompt＂ --evil-flag ＂"},
 			{"arabic percent sign U+066A", "٪PATH٪"},
 			{"fullwidth percent sign U+FF05", "％PATH％"},
-			{"inverted exclamation mark U+00A1", "¡AIWE_PROBE_SECRET¡"},
-			{"latin letter retroflex click U+01C3", "ǃAIWE_PROBE_SECRETǃ"},
-			{"double exclamation mark U+203C", "‼AIWE_PROBE_SECRET‼"},
-			{"fullwidth exclamation mark U+FF01", "！AIWE_PROBE_SECRET！"},
+			{"inverted exclamation mark U+00A1", "¡" + probe + "¡"},
+			{"latin letter retroflex click U+01C3", "ǃ" + probe + "ǃ"},
+			{"double exclamation mark U+203C", "‼" + probe + "‼"},
+			{"fullwidth exclamation mark U+FF01", "！" + probe + "！"},
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
@@ -408,20 +410,21 @@ func writeProcessLauncher(t *testing.T, dir string) string {
 	return path
 }
 
-// launcherRecordEnv is set to a directory when the test binary runs as a copy whose start a
-// launcher case checks; the copy writes the full path of its own file there and exits.
-const launcherRecordEnv = "AIWE_LAUNCHER_TEST_RECORD"
+// launcherRecordEnv names the variable set to a directory when the test binary runs as a copy
+// whose start a launcher case checks; the copy writes the full path of its own file there and
+// exits.
+func launcherRecordEnv() string { return strings.ToUpper(core.Product) + "_LAUNCHER_TEST_RECORD" }
 
-// launcherRecordArg is the only argument a launcher case passes to such a copy. With the variable
-// set and any other arguments, the binary is not a copy a case started and exits 20.
-const launcherRecordArg = "aiwe-launcher-record"
+// launcherRecordArg returns the only argument a launcher case passes to such a copy. With the
+// variable set and any other arguments, the binary is not a copy a case started and exits 20.
+func launcherRecordArg() string { return core.Product + "-launcher-record" }
 
 func init() {
-	dir := os.Getenv(launcherRecordEnv)
+	dir := os.Getenv(launcherRecordEnv())
 	if dir == "" {
 		return
 	}
-	if len(os.Args) != 2 || os.Args[1] != launcherRecordArg {
+	if len(os.Args) != 2 || os.Args[1] != launcherRecordArg() {
 		os.Exit(20)
 	}
 	self, err := os.Executable()
@@ -437,7 +440,7 @@ func init() {
 // launcherRecordEnvFor returns the environment that makes a copy of the test binary record its
 // start in dir.
 func launcherRecordEnvFor(dir string) []string {
-	return append(os.Environ(), launcherRecordEnv+"="+dir)
+	return append(os.Environ(), launcherRecordEnv()+"="+dir)
 }
 
 // copyLauncherProgram copies the test binary to path, so a case can tell which file Start ran.

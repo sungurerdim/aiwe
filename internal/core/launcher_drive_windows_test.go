@@ -21,6 +21,9 @@ func TestLauncherBestFitBackslash(t *testing.T) {
 	// §5.20). In the middle of a word only text follows them, so the word passes intact.
 	t.Run("a best-fit form of a backslash at the end of an argument is refused", func(t *testing.T) {
 		launcher := writeProcessLauncher(t, t.TempDir())
+		// A fixed relative path: no host path literal, and no TMP value (a % in it is refused for
+		// another reason) decides the outcome.
+		const work = `work\notes`
 		chars := []struct{ name, r string }{
 			{"fullwidth reverse solidus U+FF3C", "\uff3c"},
 			{"set minus U+2216", "\u2216"},
@@ -32,8 +35,8 @@ func TestLauncherBestFitBackslash(t *testing.T) {
 				name, arg string
 				quotable  bool
 			}{
-				{"at the end", `C:\work` + c.r, false},
-				{"before trailing backslashes", `C:\work` + c.r + `\\`, false},
+				{"at the end", work + c.r, false},
+				{"before trailing backslashes", work + c.r + `\\`, false},
 				{"in the middle", `C:` + c.r + `work` + c.r + `notes`, true},
 			} {
 				t.Run(c.name+" "+pos.name, func(t *testing.T) {
@@ -51,6 +54,10 @@ func TestLauncherBestFitBackslash(t *testing.T) {
 						}
 						if _, statErr := os.Stat(filepath.Join(dir, "argv.json")); statErr == nil {
 							t.Errorf("Start refused %q with %v, but the launcher ran", pos.arg, err)
+						}
+						// Any other refusal would pass with the best-fit backslash check gone.
+						if want := "before the closing quote reads as \\ in an ANSI program"; !strings.Contains(err.Error(), want) {
+							t.Errorf("Start refused %q with %v; want the refusal %q", pos.arg, err, want)
 						}
 						return
 					}
@@ -91,11 +98,11 @@ func TestLauncherRecordHelper(t *testing.T) {
 		cmd.Env = launcherRecordEnvFor(record)
 		out, err := cmd.CombinedOutput()
 		if err == nil && !strings.Contains(string(out), "=== RUN") {
-			t.Errorf("test binary with %s set exited 0 and ran no test; output %q", launcherRecordEnv, out)
+			t.Errorf("test binary with %s set exited 0 and ran no test; output %q", launcherRecordEnv(), out)
 		}
 		if ran, ok := readLauncherRan(t, record); ok {
 			t.Errorf("test binary with %s set and no marker recorded a start of %s; want nothing recorded",
-				launcherRecordEnv, ran)
+				launcherRecordEnv(), ran)
 		}
 	})
 }
@@ -146,7 +153,7 @@ func startsDecidedLauncher(t *testing.T, program, dir, decided string) {
 	record := t.TempDir()
 	ctx, cancel := context.WithTimeout(t.Context(), processOuterBound)
 	defer cancel()
-	child, err := core.Start(ctx, core.ChildSpec{Argv: []string{program, launcherRecordArg}, Dir: dir, Env: launcherRecordEnvFor(record)})
+	child, err := core.Start(ctx, core.ChildSpec{Argv: []string{program, launcherRecordArg()}, Dir: dir, Env: launcherRecordEnvFor(record)})
 	if err != nil {
 		t.Fatalf("Start(%q, Dir %q) = %v, want %s started, as Go's Start resolves it", program, dir, err, decided)
 	}

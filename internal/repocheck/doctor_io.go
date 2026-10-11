@@ -49,27 +49,30 @@ func RunGo(ctx context.Context, dir string, args ...string) ([]byte, error) {
 
 // GoFiles reads every .go file of repo, skipping hidden directories, testdata and vendor; each
 // Path is repository-relative and slash-separated. A repository without a .go file is an error.
+// The walk and every read go through an os.Root at repo, so a link, or a directory swapped for
+// one during the walk, never leads a read outside the repository: it is an error.
 func GoFiles(repo string) ([]SourceFile, error) {
+	root, err := os.OpenRoot(repo)
+	if err != nil {
+		return nil, fmt.Errorf("read go files of %s: %w", repo, err)
+	}
+	defer func() { _ = root.Close() }()
 	var files []SourceFile
-	err := filepath.WalkDir(repo, func(p string, d fs.DirEntry, err error) error {
+	err = fs.WalkDir(root.FS(), ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if d.IsDir() {
-			return skipDir(repo, p, d.Name())
+			return skipDir(p, d.Name())
 		}
 		if !strings.HasSuffix(d.Name(), ".go") {
 			return nil
 		}
-		rel, err := filepath.Rel(repo, p)
+		body, err := root.ReadFile(p)
 		if err != nil {
 			return err
 		}
-		body, err := os.ReadFile(p)
-		if err != nil {
-			return err
-		}
-		files = append(files, SourceFile{Path: filepath.ToSlash(rel), Body: body})
+		files = append(files, SourceFile{Path: p, Body: body})
 		return nil
 	})
 	if err != nil {
@@ -83,8 +86,8 @@ func GoFiles(repo string) ([]SourceFile, error) {
 }
 
 // skipDir skips a hidden directory, testdata and vendor below the repository root.
-func skipDir(repo, p, name string) error {
-	if p == repo {
+func skipDir(p, name string) error {
+	if p == "." {
 		return nil
 	}
 	if strings.HasPrefix(name, ".") || name == "testdata" || name == "vendor" {
