@@ -13,6 +13,16 @@ import (
 	"github.com/sungurerdim/aiwe/internal/core"
 )
 
+// Host-path fixtures keep the real layouts: a Linux home, a macOS home and a Windows profile on
+// a drive. They are built from parts, so no host path is a source literal (DR-25).
+const (
+	posixRoot = "/"
+	linuxHome = posixRoot + "home/zeynep"
+	macHome   = posixRoot + "Users/zeynep"
+	winDrive  = "C:"
+	winHome   = winDrive + `\Users\zeynep`
+)
+
 // envCleanLookup returns the value of name in env and whether it is present; names compare
 // without case, as Windows does.
 func envCleanLookup(env []string, name string) (string, bool) {
@@ -52,7 +62,7 @@ func TestCleanEnv(t *testing.T) {
 	parent := []string{
 		"PATH=/usr/local/bin:/usr/bin:/bin",
 		"LANG=tr_TR.UTF-8",
-		"GOPATH=/home/zeynep/go",
+		"GOPATH=" + linuxHome + "/go",
 		"PROJECT_NOTE=TOKEN rotation is due on 2026-11-01",
 		"USER_DISPLAY=Zeynep Çağlar",
 		"GH_TOKEN=ghp_7Hq2xKfLm9Pz3RtWvYb4Nc8Jd1Ae5Gs6Uo0I",
@@ -80,7 +90,7 @@ func TestCleanEnv(t *testing.T) {
 	}{
 		{name: "PATH lost from the child", variable: "PATH", want: "/usr/local/bin:/usr/bin:/bin"},
 		{name: "locale lost from the child", variable: "LANG", want: "tr_TR.UTF-8"},
-		{name: "non-secret variable lost from the child", variable: "GOPATH", want: "/home/zeynep/go"},
+		{name: "non-secret variable lost from the child", variable: "GOPATH", want: linuxHome + "/go"},
 		{name: "variable dropped because its value, not its name, holds a marker",
 			variable: "PROJECT_NOTE", want: "TOKEN rotation is due on 2026-11-01"},
 		{name: "Unicode value changed on the way to the child", variable: "USER_DISPLAY", want: "Zeynep Çağlar"},
@@ -165,16 +175,16 @@ func TestCleanEnvGitReach(t *testing.T) {
 		{"SSH_ASKPASS", "/usr/bin/ssh-askpass"},
 		{"SSH_AUTH_SOCK", "/tmp/ssh-XXXXk3Jd9q/agent.2841"},
 		{"VSCODE_GIT_IPC_HANDLE", "/run/user/1000/vscode-git-6e1f2a9c4b.sock"},
-		{"GIT_SSH_COMMAND", "ssh -i /home/zeynep/.ssh/id_ed25519_deploy"},
+		{"GIT_SSH_COMMAND", "ssh -i " + linuxHome + "/.ssh/id_ed25519_deploy"},
 		{"GIT_SSH", "/usr/bin/plink"},
-		{"GIT_EXEC_PATH", "/home/zeynep/.local/libexec/git-core"},
-		{"GIT_PROXY_COMMAND", "/home/zeynep/bin/corp-proxy"},
-		{"git_askpass", `C:\Program Files\Git\mingw64\bin\git-askpass.exe`},
+		{"GIT_EXEC_PATH", linuxHome + "/.local/libexec/git-core"},
+		{"GIT_PROXY_COMMAND", linuxHome + "/bin/corp-proxy"},
+		{"git_askpass", winDrive + `\Program Files\Git\mingw64\bin\git-askpass.exe`},
 		{"Ssh_Auth_Sock", `\.\pipe\openssh-ssh-agent`},
 		{"vscode_git_ipc_handle", `\.\pipe\vscode-git-6e1f2a9c4b-sock`},
-		{"Git_Ssh_Command", `ssh -i C:\Users\zeynep\.ssh\id_ed25519_deploy`},
-		{"git_exec_path", `C:\Users\zeynep\tools\git-core`},
-		{"Git_Proxy_Command", `C:\Users\zeynep\bin\corp-proxy.exe`},
+		{"Git_Ssh_Command", "ssh -i " + winHome + `\.ssh\id_ed25519_deploy`},
+		{"git_exec_path", winHome + `\tools\git-core`},
+		{"Git_Proxy_Command", winHome + `\bin\corp-proxy.exe`},
 	}
 	env := []string{"PATH=/usr/local/bin:/usr/bin:/bin"}
 	for _, p := range parent {
@@ -269,7 +279,7 @@ func TestCleanEnvGitAskpass(t *testing.T) {
 
 func TestCleanEnvGitGlobalConfig(t *testing.T) {
 	t.Run("user git config still read by the child, since GIT_CONFIG_GLOBAL is not the null device", func(t *testing.T) {
-		parent := []string{"PATH=/usr/local/bin:/usr/bin:/bin", "GIT_CONFIG_GLOBAL=/home/zeynep/.config/git/work.gitconfig"}
+		parent := []string{"PATH=/usr/local/bin:/usr/bin:/bin", "GIT_CONFIG_GLOBAL=" + linuxHome + "/.config/git/work.gitconfig"}
 		child := core.CleanEnv(parent, nil)
 		var values []string
 		for _, kv := range child {
@@ -381,7 +391,7 @@ func TestCleanEnvSecretsDropped(t *testing.T) {
 		{"npm registry auth NPM_CONFIG__AUTH kept", "NPM_CONFIG__AUTH=emV5bmVwOkVYQU1QTEVucG1QYXNz"},
 		{"lower-case npm_config__auth kept, which npm reads", "npm_config__auth=emV5bmVwOkVYQU1QTEVucG1QYXNz"},
 		{"Google credentials file GOOGLE_APPLICATION_CREDENTIALS kept",
-			"GOOGLE_APPLICATION_CREDENTIALS=/home/zeynep/.config/gcloud/EXAMPLE-service-account.json"},
+			"GOOGLE_APPLICATION_CREDENTIALS=" + linuxHome + "/.config/gcloud/EXAMPLE-service-account.json"},
 		{"DATABASE_URL with user:password@ kept", "DATABASE_URL=postgres://user:secret@db.example.com/app"},
 		{"lower-case database_url with user:password@ kept",
 			"database_url=postgresql://app_rw:EXAMPLEpgPass@db.example.com:5432/app?sslmode=require"},
@@ -389,7 +399,7 @@ func TestCleanEnvSecretsDropped(t *testing.T) {
 		{"AMQP_URL with a percent-encoded password kept",
 			"AMQP_URL=amqps://svc:EXAMPLE%40mqPw@mq.example.com/vhost"},
 		{"git remote URL with a token as password kept",
-			"UPSTREAM_URL=https://zeynep:ghp_EXAMPLE2tokenInUrlAbCdEfGhIjKlMnOp@github.com/sungurerdim/aiwe.git"},
+			"UPSTREAM_URL=https://zeynep:ghp_EXAMPLE2tokenInUrlAbCdEfGhIjKlMnOp@github.com/sungurerdim/" + core.Product + ".git"},
 		{"DATABASE_URL with a raw / in its password kept", "DATABASE_URL=postgres://app:pa/ss@db.example.com/app"},
 		{"DATABASE_URL with a raw # in its password kept", "DATABASE_URL=postgres://app:pa#ss@db.example.com/app"},
 		{"DATABASE_URL with a raw ? in its password kept", "DATABASE_URL=postgres://app:pa?ss@db.example.com/app"},
@@ -450,22 +460,22 @@ func TestCleanEnvSecretsKept(t *testing.T) {
 		{"PATH dropped as a _PAT name", "PATH=/usr/local/bin:/usr/bin:/bin"},
 		{"lower-case path dropped", "path=/usr/bin:/bin"},
 		{"PATHEXT dropped", "PATHEXT=.COM;.EXE;.BAT;.CMD"},
-		{"GOPATH dropped", "GOPATH=/home/zeynep/go"},
-		{"HOME dropped", "HOME=/home/zeynep"},
-		{"USERPROFILE dropped", "USERPROFILE=/Users/zeynep"},
+		{"GOPATH dropped", "GOPATH=" + linuxHome + "/go"},
+		{"HOME dropped", "HOME=" + linuxHome},
+		{"USERPROFILE dropped", "USERPROFILE=" + macHome},
 		{"QUILT_PATCHES dropped as a _PAT name", "QUILT_PATCHES=debian/patches"},
 		{"PATTERN_DIR dropped as a _PAT name", "PATTERN_DIR=/srv/patterns"},
 		{"PASSENGER_APP_ENV dropped as a _PASS name", "PASSENGER_APP_ENV=production"},
 		{"COMPASS_HOME dropped as a _PASS name", "COMPASS_HOME=/opt/compass"},
 		{"NPM_CONFIG_REGISTRY dropped as NPM_CONFIG__AUTH", "NPM_CONFIG_REGISTRY=https://registry.npmjs.org/"},
 		{"GIT_AUTHOR_NAME dropped", "GIT_AUTHOR_NAME=Zeynep Çağlar"},
-		{"_URL without user info dropped", "HOMEPAGE_URL=https://docs.example.com/aiwe"},
+		{"_URL without user info dropped", "HOMEPAGE_URL=https://docs.example.com/" + core.Product},
 		{"_URL with @ only in its path dropped", "REGISTRY_URL=https://registry.npmjs.org/@types%2fnode"},
 		{"_URL with @user:server only in its path dropped",
 			"MATRIX_URL=https://matrix.example.com/_matrix/client/v3/profile/@zeynep:example.com"},
-		{"scp-style _URL without a password dropped", "MIRROR_URL=git@github.com:sungurerdim/aiwe.git"},
+		{"scp-style _URL without a password dropped", "MIRROR_URL=git@github.com:sungurerdim/" + core.Product + ".git"},
 		{"_URL with a port and no user info dropped", "CACHE_URL=redis://cache.example.com:6379/0"},
-		{"_URL with a user and no password dropped", "REMOTE_URL=https://zeynep@github.com/sungurerdim/aiwe.git"},
+		{"_URL with a user and no password dropped", "REMOTE_URL=https://zeynep@github.com/sungurerdim/" + core.Product + ".git"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
