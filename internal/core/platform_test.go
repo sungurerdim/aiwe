@@ -161,6 +161,7 @@ func TestPlatform(t *testing.T) {
 	})
 	platformTrailingSeparator(t)
 	platformConventionChecks(t)
+	platformTrailingSpaceOrDot(t)
 }
 
 // platformTrailingSeparator checks that an override that ends in a separator names a directory
@@ -257,6 +258,57 @@ func platformConventionChecks(t *testing.T) {
 			})
 		}
 	}
+	// A windows convention value with a component ending in a space or a dot is refused like an
+	// override: Windows strips it and walks another path (DR-37). The rule is read from the goos
+	// argument, not the host: the windows cases fail on a POSIX host and the POSIX controls fail on
+	// a windows host when the convention checks ignore goos.
+	for _, stripped := range []struct{ name, value string }{
+		{"a trailing dot", base + sep + "a."},
+		{"a trailing space", base + sep + "a "},
+	} {
+		for _, tc := range []struct {
+			goos, variable string
+			env            map[string]string
+		}{
+			{"windows", "LOCALAPPDATA", map[string]string{"TEMP": tmp}},
+			// An override for one root must not let LOCALAPPDATA skip the rule for the other.
+			{"windows", "LOCALAPPDATA", map[string]string{"TEMP": tmp, platformOverride("CACHE"): ovCache}},
+			{"windows", "LOCALAPPDATA", map[string]string{"TEMP": tmp, platformOverride("HOME"): ovState}},
+			{"windows", "TEMP", map[string]string{"LOCALAPPDATA": local}},
+		} {
+			t.Run(tc.goos+" "+tc.variable+" with "+stripped.name+" accepted instead of refused", func(t *testing.T) {
+				env := map[string]string{tc.variable: stripped.value}
+				for k, v := range tc.env {
+					env[k] = v
+				}
+				got, err := core.ResolveRoots(tc.goos, func(k string) string { return env[k] }, home)
+				if !errors.Is(err, core.ErrRootUnresolved) {
+					t.Errorf("ResolveRoots(%s) with %s=%q = %+v, %v; want %v",
+						tc.goos, tc.variable, stripped.value, got, err, core.ErrRootUnresolved)
+				}
+			})
+		}
+		for _, tc := range []struct {
+			goos, variable string
+			root           func(core.Roots) string
+		}{
+			{"darwin", "TMPDIR", func(r core.Roots) string { return r.Temp }},
+			{"linux", "XDG_STATE_HOME", func(r core.Roots) string { return r.State }},
+			{"linux", "TMPDIR", func(r core.Roots) string { return r.Temp }},
+		} {
+			t.Run(tc.goos+" "+tc.variable+" with "+stripped.name+" refused as a stripped name", func(t *testing.T) {
+				env := map[string]string{tc.variable: stripped.value}
+				got, err := core.ResolveRoots(tc.goos, func(k string) string { return env[k] }, home)
+				if err != nil {
+					t.Fatalf("ResolveRoots(%s) with %s=%q: %v; want it accepted", tc.goos, tc.variable, stripped.value, err)
+				}
+				if want := filepath.Join(stripped.value, p); tc.root(got) != want {
+					t.Errorf("ResolveRoots(%s) with %s=%q: root %q, want %q",
+						tc.goos, tc.variable, stripped.value, tc.root(got), want)
+				}
+			})
+		}
+	}
 }
 
 // platformUserRoots checks the run-time entry on the host OS: conventions first, then overrides.
@@ -308,5 +360,72 @@ func platformUserRoots(t *testing.T) {
 	}
 	if want := (core.Roots{State: ovState, Cache: ovCache, Temp: ovTemp}); got != want {
 		t.Errorf("UserRoots with overrides on %s\n got  %+v\n want %+v", runtime.GOOS, got, want)
+	}
+}
+
+// platformTrailingSpaceOrDot checks that a windows override whose path has a component ending in
+// a space or a dot is refused: Windows strips the space or dot and walks another path than the
+// one checked (DR-37). The rule is read from the goos argument, so it runs on every host OS; on
+// POSIX such a name is an ordinary directory and stays accepted.
+func platformTrailingSpaceOrDot(t *testing.T) {
+	sep := string(filepath.Separator)
+	base := filepath.Join(t.TempDir(), "Users", "zeynep", "AppData", "Local")
+	tmp := filepath.Join(t.TempDir(), "Temp")
+	local := filepath.Join(t.TempDir(), "Local")
+	home := filepath.Join(t.TempDir(), "home", "zeynep")
+	stripped := []struct{ name, value string }{
+		{".. with a trailing space", base + sep + "a" + sep + ".. "},
+		{"a trailing dot", base + sep + "a."},
+		{"a trailing space", base + sep + "a "},
+		{"a trailing dot then space", base + sep + "a. "},
+		{"a trailing space then dot", base + sep + "a ."},
+		{"several trailing dots", base + sep + "a..."},
+		{"a trailing dot in a middle component", base + sep + "a." + sep + "aiwe"},
+		{"a trailing space in a middle component", base + sep + "a " + sep + "aiwe"},
+		{"a trailing dot before a trailing separator", base + sep + "a." + sep},
+		{"a Unicode component with a trailing dot", base + sep + "Masaüstü."},
+		{"a Unicode component with a trailing space", base + sep + "çalışma "},
+	}
+	if sep != "/" {
+		stripped = append(stripped, struct{ name, value string }{
+			"a trailing dot with forward slashes", filepath.ToSlash(base) + "/a./aiwe"})
+	}
+	for _, tc := range stripped {
+		for _, suffix := range []string{"HOME", "CACHE", "TMP"} {
+			name := platformOverride(suffix)
+			t.Run("windows override with "+tc.name+" accepted instead of refused ("+name+")", func(t *testing.T) {
+				env := map[string]string{"LOCALAPPDATA": local, "TEMP": tmp, name: tc.value}
+				got, err := core.ResolveRoots("windows", func(k string) string { return env[k] }, home)
+				if !errors.Is(err, core.ErrRootUnresolved) {
+					t.Errorf("ResolveRoots(windows) with %s=%q = %+v, %v; want %v",
+						name, tc.value, got, err, core.ErrRootUnresolved)
+				}
+			})
+		}
+	}
+	kept := []struct{ goos, name, value string }{
+		{"windows", "a . element", base + sep + "." + sep + "aiwe"},
+		{"windows", "a dot inside a component", base + sep + "aiwe.v2"},
+		{"windows", "a leading dot", base + sep + ".aiwe"},
+		{"windows", "a space inside a component", base + sep + "Program Data"},
+		{"windows", "a leading space", base + sep + " aiwe"},
+		{"windows", "a Unicode component", base + sep + "Masaüstü"},
+		{"linux", "a trailing dot", base + sep + "a."},
+		{"linux", "a trailing space", base + sep + "a "},
+		{"linux", ".. with a trailing space", base + sep + "a" + sep + ".. "},
+		{"darwin", "a trailing dot", base + sep + "a."},
+	}
+	for _, tc := range kept {
+		t.Run(tc.goos+" override with "+tc.name+" refused as a stripped name", func(t *testing.T) {
+			name := platformOverride("HOME")
+			env := map[string]string{"LOCALAPPDATA": local, "TEMP": tmp, "TMPDIR": tmp, name: tc.value}
+			got, err := core.ResolveRoots(tc.goos, func(k string) string { return env[k] }, home)
+			if err != nil {
+				t.Fatalf("ResolveRoots(%s) with %s=%q: %v; want it accepted", tc.goos, name, tc.value, err)
+			}
+			if want := filepath.Clean(tc.value); got.State != want {
+				t.Errorf("ResolveRoots(%s) with %s=%q: state root %q, want %q", tc.goos, name, tc.value, got.State, want)
+			}
+		})
 	}
 }
