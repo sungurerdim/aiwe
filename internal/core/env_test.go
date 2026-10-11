@@ -431,8 +431,11 @@ func TestCleanEnvSecretsKept(t *testing.T) {
 		{"GIT_AUTHOR_NAME dropped", "GIT_AUTHOR_NAME=Zeynep Çağlar"},
 		{"_URL without user info dropped", "HOMEPAGE_URL=https://docs.example.com/aiwe"},
 		{"_URL with @ only in its path dropped", "REGISTRY_URL=https://registry.npmjs.org/@types%2fnode"},
-		{"_URL with user:server@ only in its path dropped",
+		{"_URL with @user:server only in its path dropped",
 			"MATRIX_URL=https://matrix.example.com/_matrix/client/v3/profile/@zeynep:example.com"},
+		{"_URL with a port and @ only in its path dropped", "P1_URL=https://git.example.com:8443/users/@zeynep"},
+		{"_URL with user:host@ only in its query dropped",
+			"P2_URL=https://host.example.com/login?next=mailto:zeynep@example.com"},
 		{"scp-style _URL without a password dropped", "MIRROR_URL=git@github.com:sungurerdim/aiwe.git"},
 		{"_URL with a port and no user info dropped", "CACHE_URL=redis://cache.example.com:6379/0"},
 	}
