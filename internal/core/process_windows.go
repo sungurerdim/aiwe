@@ -178,7 +178,10 @@ func (k kernel32) prepareLauncher(cmd *exec.Cmd, attr *syscall.SysProcAttr) erro
 // attach assigns the suspended child to the job, then resumes it once the job reports that it
 // holds the child.
 func (t *tree) attach(p *os.Process) error {
-	pid := uint32(p.Pid) // a Windows process id is a DWORD
+	pid, err := windowsPID(p.Pid)
+	if err != nil {
+		return err
+	}
 	h, err := syscall.OpenProcess(processSetQuota|processQueryLimitedInfo|syscall.PROCESS_TERMINATE, false, pid)
 	if err != nil {
 		return fmt.Errorf("open process %d: %w", pid, err)

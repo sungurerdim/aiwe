@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"path/filepath"
 	"strconv"
 	"syscall"
 )
@@ -37,7 +36,10 @@ func liveMember(name string, pgid int) (bool, error) {
 	if _, err := strconv.Atoi(name); err != nil {
 		return false, nil // not a process directory
 	}
-	stat, err := os.ReadFile(filepath.Join("/proc", name, "stat"))
+	stat, err := fs.ReadFile(os.DirFS("/proc"), name+"/stat") // reads only below /proc
+	if pathErr, ok := errors.AsType[*fs.PathError](err); ok {
+		pathErr.Path = "/proc/" + pathErr.Path // the error names the full path, as os.ReadFile does
+	}
 	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ESRCH) {
 		return false, nil // the process ended after the listing
 	}

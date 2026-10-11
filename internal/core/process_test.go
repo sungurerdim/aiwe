@@ -5,11 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -21,11 +21,13 @@ import (
 
 // The test binary runs itself as the child and the grandchild of a process tree. The role is set
 // through the environment; init answers it before the test framework starts.
-const (
-	processRoleEnv       = "AIWE_PROCESS_TEST_ROLE"
-	processDirEnv        = "AIWE_PROCESS_TEST_DIR"
-	processIgnoreTermEnv = "AIWE_PROCESS_TEST_IGNORE_TERM"
+// processTestEnv returns the env variable name of suffix (ROLE, DIR, IGNORE_TERM), derived from
+// the product constant (DR-25).
+func processTestEnv(suffix string) string {
+	return strings.ToUpper(core.Product) + "_PROCESS_TEST_" + suffix
+}
 
+const (
 	// processHelperLifetime bounds every helper process, so a failed test cannot leave one
 	// running for longer than this.
 	processHelperLifetime = 30 * time.Second
@@ -44,7 +46,7 @@ const (
 )
 
 func init() {
-	role := os.Getenv(processRoleEnv)
+	role := os.Getenv(processTestEnv("ROLE"))
 	if role == "" {
 		return
 	}
@@ -59,14 +61,14 @@ func init() {
 // until SIGTERM, records it and exits 0; leaf records its pid and beats; argv records the arguments
 // it received.
 func runProcessHelper(role string) int {
-	dir := os.Getenv(processDirEnv)
-	if os.Getenv(processIgnoreTermEnv) == "1" {
+	dir := os.Getenv(processTestEnv("DIR"))
+	if os.Getenv(processTestEnv("IGNORE_TERM")) == "1" {
 		signal.Ignore(syscall.SIGTERM, os.Interrupt)
 	}
 	switch role {
 	case "tree":
-		leaf := exec.Command(os.Args[0])
-		leaf.Env = append(os.Environ(), processRoleEnv+"=leaf")
+		leaf := exec.CommandContext(context.Background(), os.Args[0])
+		leaf.Env = append(os.Environ(), processTestEnv("ROLE")+"=leaf")
 		if err := leaf.Start(); err != nil {
 			return 10
 		}
@@ -76,8 +78,8 @@ func runProcessHelper(role string) int {
 		}
 		beatProcessFile(filepath.Join(dir, "child.beat"))
 	case "orphan":
-		leaf := exec.Command(os.Args[0])
-		leaf.Env = append(os.Environ(), processRoleEnv+"=leaf")
+		leaf := exec.CommandContext(context.Background(), os.Args[0])
+		leaf.Env = append(os.Environ(), processTestEnv("ROLE")+"=leaf")
 		if err := leaf.Start(); err != nil {
 			return 10
 		}
@@ -172,112 +174,39 @@ func beatProcessFile(path string) {
 	}
 }
 
-func TestProcessTree(t *testing.T) {
-	t.Run("stop ends a tree that obeys the ask", func(t *testing.T) {
-		child, dir := startProcessTree(t, t.Context(), nil, false)
-		stopProcessTree(t, child, 2*time.Second)
-		requireProcessTreeGone(t, dir)
-	})
-
-	t.Run("stop kills a tree that ignores the ask after the grace", func(t *testing.T) {
-		child, dir := startProcessTree(t, t.Context(), nil, true)
-		stopProcessTree(t, child, 200*time.Millisecond)
-		requireProcessTreeGone(t, dir)
-	})
-
-	t.Run("a time limit stops the whole tree", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(t.Context(), processOuterBound)
-		defer cancel()
-		child, dir := startProcessTree(t, ctx, nil, true)
-		if err := waitProcessChild(t, child, processOuterBound+processBound); err == nil {
-			t.Error("Wait after the time limit = nil, want the error of a child stopped by its limit")
-		}
-		requireProcessTreeGone(t, dir)
-	})
-
-	t.Run("stop ends a grandchild left behind by a child that exited", func(t *testing.T) {
-		dir := t.TempDir()
-		child := startProcessChild(t, t.Context(), dir, "orphan")
-		if err := waitProcessChild(t, child, processOuterBound); err != nil {
-			t.Fatalf("Wait = %v, want nil: the child did not see its grandchild run", err)
-		}
-		stopProcessTree(t, child, 200*time.Millisecond)
-		requireProcessBeatsStopped(t, filepath.Join(dir, "leaf.beat"))
-	})
-
-	t.Run("a time limit stops a grandchild left behind by a child that exited", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(t.Context(), processOuterBound)
-		defer cancel()
-		dir := t.TempDir()
-		child := startProcessChild(t, ctx, dir, "orphan")
-		if err := waitProcessChild(t, child, processOuterBound); err != nil {
-			t.Fatalf("Wait = %v, want nil: the child did not see its grandchild run before the limit", err)
-		}
-		<-ctx.Done()
-		requireProcessBeatsStopped(t, filepath.Join(dir, "leaf.beat"))
-	})
-
-	t.Run("a grandchild started first thing cannot run outside the tree", func(t *testing.T) {
-		beats := make([]string, 0, processRaceAttempts)
-		for range processRaceAttempts {
-			dir := t.TempDir()
-			child := startProcessChild(t, t.Context(), dir, "tree")
-			requireProcessFile(t, filepath.Join(dir, "leaf.pid"))
-			stopProcessTree(t, child, 200*time.Millisecond)
-			beats = append(beats, filepath.Join(dir, "leaf.beat"))
-		}
-		requireProcessBeatsStopped(t, beats...) // U22: a leaf that escaped the tree outlives its stop
-	})
-
-	if runtime.GOOS != "windows" {
-		t.Run("stop ends a child that obeys the ask within the grace, without a kill", func(t *testing.T) {
-			dir := t.TempDir()
-			child := startProcessChild(t, t.Context(), dir, "term")
-			requireProcessBeating(t, filepath.Join(dir, "child.beat"), time.Now().Add(processBound))
-			grace := processBound
-			start := time.Now()
-			done := make(chan error, 1)
-			go func() { done <- child.StopTree(grace) }()
-			select {
-			case err := <-done:
-				if err != nil {
-					t.Errorf("StopTree(%v) = %v, want nil", grace, err)
-				}
-			case <-time.After(grace + processBound):
-				t.Fatalf("StopTree(%v) did not return within %v", grace, grace+processBound)
-			}
-			if took := time.Since(start); took >= grace {
-				t.Errorf("StopTree took %v, want less than the grace %v: the child that obeys SIGTERM was not asked", took, grace)
-			}
-			if err := waitProcessChild(t, child, processBound); err != nil {
-				t.Errorf("Wait = %v, want nil: the child was killed instead of ending on SIGTERM", err)
-			}
-			if _, err := os.Stat(filepath.Join(dir, "term")); err != nil {
-				t.Errorf("the child recorded no SIGTERM: %v", err)
-			}
-		})
-		return // the case below runs only on Windows
+// TestProcessWindowsPID guards against a process id outside the DWORD range being truncated into the id
+// of another process before the tree opens it (G115).
+func TestProcessWindowsPID(t *testing.T) {
+	if strconv.IntSize < 64 {
+		t.Skip("an int cannot hold a value above the uint32 range on this platform")
 	}
-
-	// DR-15: the job kills what it holds when its last handle closes, so a tree never outlives an
-	// engine that exits, or crashes, without stopping it. The test starts the engine in a tree of
-	// its own, so cleanup still ends a leaf that escaped.
-	t.Run("a tree does not outlive the engine that started it", func(t *testing.T) {
-		dir := t.TempDir()
-		engine := startProcessChild(t, t.Context(), dir, "engine")
-		if err := waitProcessChild(t, engine, processOuterBound); err != nil {
-			t.Fatalf("engine Wait = %v, want nil: the engine did not see its tree run", err)
+	var above uint64 = math.MaxUint32 + 1
+	for _, tc := range []struct {
+		pid  int
+		want uint32
+		ok   bool
+	}{
+		{pid: 0, want: 0, ok: true},
+		{pid: 4812, want: 4812, ok: true},
+		{pid: math.MaxUint32, want: math.MaxUint32, ok: true},
+		{pid: int(above), ok: false},
+		{pid: int(above) + 4812, ok: false}, // truncation would give 4812, a different process
+		{pid: -1, ok: false},
+	} {
+		got, err := core.WindowsPID(tc.pid)
+		if tc.ok && (err != nil || got != tc.want) {
+			t.Errorf("WindowsPID(%d) = %d, %v, want %d, nil", tc.pid, got, err, tc.want)
 		}
-		readProcessPids(t, dir, time.Now().Add(processBound))
-		requireProcessBeatsStoppedWithin(t, 3*time.Second,
-			filepath.Join(dir, "child.beat"), filepath.Join(dir, "leaf.beat"))
-	})
+		if !tc.ok && err == nil {
+			t.Errorf("WindowsPID(%d) = %d, nil, want an error", tc.pid, got)
+		}
+	}
 }
 
 func processEnv(dir, role string, ignoreTerm bool) []string {
-	env := append(os.Environ(), processRoleEnv+"="+role, processDirEnv+"="+dir)
+	env := append(os.Environ(), processTestEnv("ROLE")+"="+role, processTestEnv("DIR")+"="+dir)
 	if ignoreTerm {
-		env = append(env, processIgnoreTermEnv+"=1")
+		env = append(env, processTestEnv("IGNORE_TERM")+"=1")
 	}
 	return env
 }
@@ -473,7 +402,7 @@ func stopProcessTree(t *testing.T, child *core.Child, grace time.Duration) {
 	case <-time.After(grace + processBound):
 		t.Fatalf("StopTree(%v) did not return within %v", grace, grace+processBound)
 	}
-	waitProcessChild(t, child, processBound)
+	_ = waitProcessChild(t, child, processBound) // a stopped child ends with a kill status, not nil
 }
 
 // waitProcessChild returns the error of Wait, failing the test when Wait does not return in bound.

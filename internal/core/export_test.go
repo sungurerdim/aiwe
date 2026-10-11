@@ -31,3 +31,9 @@ func ChildCreationFlags(c *Child) (uint32, bool) {
 	}
 	return uint32(field.Uint()), true
 }
+
+// WindowsPID converts a process id to the DWORD the Windows API takes, refusing one outside its
+// range.
+func WindowsPID(pid int) (uint32, error) {
+	return windowsPID(pid)
+}
