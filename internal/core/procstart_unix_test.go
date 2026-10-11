@@ -32,6 +32,7 @@ func TestParseProcStat(t *testing.T) {
 		{"comm with spaces and parentheses", strings.Replace(procTestStatLine, "(bash)", "(my (odd) ) name)", 1), 98765},
 		{"comm with field-like text", strings.Replace(procTestStatLine, "(bash)", "(S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20)", 1), 98765},
 		{"comm that ends in a zombie state", strings.Replace(procTestStatLine, "(bash)", "(sh) Z X)", 1), 98765},
+		{"last tick a time.Duration holds", strings.Replace(procTestStatLine, " 98765 ", " 922337203685 ", 1), 922337203685},
 	}
 	for _, c := range cases {
 		got, running, err := parseProcStat([]byte(c.data))
@@ -61,8 +62,9 @@ func TestParseProcStatNotRunning(t *testing.T) {
 }
 
 // TestParseProcStatMalformed catches a malformed /proc/<pid>/stat read as a start: a truncated
-// line, an empty input, no command name, a ')' with no '(' before it, or a field 22 that is not a
-// tick count must each be an error, never a start (U13, fail-closed).
+// line, an empty input, no command name, a ')' with no '(' before it, a field 22 that is not a
+// tick count, or one past the range of a time.Duration, which would wrap into a false start, must
+// each be an error, never a start (U13, fail-closed).
 func TestParseProcStatMalformed(t *testing.T) {
 	fields := strings.Fields(procTestStatLine)
 	cases := []struct {
@@ -79,6 +81,8 @@ func TestParseProcStatMalformed(t *testing.T) {
 		{"non-numeric field 22", strings.Replace(procTestStatLine, " 98765 ", " 98x65 ", 1)},
 		{"negative field 22", strings.Replace(procTestStatLine, " 98765 ", " -98765 ", 1)},
 		{"field 22 over uint64", strings.Replace(procTestStatLine, " 98765 ", " 18446744073709551616 ", 1)},
+		{"field 22 one tick past time.Duration", strings.Replace(procTestStatLine, " 98765 ", " 922337203686 ", 1)},
+		{"field 22 at the int64 maximum", strings.Replace(procTestStatLine, " 98765 ", " 9223372036854775807 ", 1)},
 		{"zombie truncated before field 22", strings.Join(strings.Fields(procTestState("Z"))[:21], " ")},
 		{"zombie with non-numeric field 22", strings.Replace(procTestState("Z"), " 98765 ", " 98x65 ", 1)},
 	}
