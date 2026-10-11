@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -168,6 +169,55 @@ func TestRunnerExitCode(t *testing.T) {
 		if s.ExitCode != want {
 			t.Errorf("step %q exit code = %d, want %d", s.ID, s.ExitCode, want)
 		}
+	}
+}
+
+// TestRunnerNotRequired catches a step with required false that changes the gate result, and a
+// required red step that no longer makes the gate red. A step that is not required still runs and
+// reports its own result, and its detail says it is not required (#186).
+func TestRunnerNotRequired(t *testing.T) {
+	green1, _, red, missing := runnerTestSteps(t)
+	optionalRed, optionalMissing := red, missing
+	optionalRed.Required, optionalMissing.Required = false, false
+	cases := []struct {
+		name  string
+		steps []GateStep
+		want  Result
+	}{
+		{"red step not required", []GateStep{green1, optionalRed}, ResultGreen},
+		{"unmeasured step not required", []GateStep{green1, optionalMissing}, ResultGreen},
+		{"red step required", []GateStep{green1, red}, ResultRed},
+		{"required red beside not required", []GateStep{optionalMissing, red}, ResultRed},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			def := Definition{FormatVersion: 1, Steps: tc.steps}
+			report, err := (&Runner{Owner: rootsTestOwner(t)}).Run(context.Background(), def, t.TempDir(), nil)
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			if report.Result != tc.want {
+				t.Errorf("gate result = %q, want %q; steps %+v", report.Result, tc.want, report.Steps)
+			}
+			for i, s := range report.Steps {
+				notRequired := strings.Contains(s.Detail, "not required")
+				if notRequired == tc.steps[i].Required {
+					t.Errorf("step %q required=%t but detail %q", s.ID, tc.steps[i].Required, s.Detail)
+				}
+			}
+		})
+	}
+	stepResults := map[string]Result{}
+	def := Definition{FormatVersion: 1, Steps: []GateStep{optionalRed, optionalMissing}}
+	report, err := (&Runner{Owner: rootsTestOwner(t)}).Run(context.Background(), def, t.TempDir(), nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	for _, s := range report.Steps {
+		stepResults[s.ID] = s.Result
+	}
+	if stepResults["vuln"] != ResultRed || stepResults["lint"] != ResultNotMeasured {
+		t.Errorf("not required steps reported %v; want vuln red and lint not_measured", stepResults)
 	}
 }
 
