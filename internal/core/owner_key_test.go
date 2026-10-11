@@ -433,3 +433,56 @@ func TestOwnerKeyACL(t *testing.T) {
 		})
 	}
 }
+
+// TestOwnerKeyMode catches a state dir or owner key that group or others can write and that
+// OpenOwner still loads on Unix, so another user swaps the key and forges ownership (#109, medium).
+// Root ignores modes on access, so the check reads the mode, not an access attempt.
+func TestOwnerKeyMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix modes; TestOwnerKeyACL covers Windows")
+	}
+	self, err := CurrentProcess()
+	if err != nil {
+		t.Fatalf("CurrentProcess: %v", err)
+	}
+	t.Run("made by OpenOwner", func(t *testing.T) {
+		r := removeTestRoots(t, t.TempDir())
+		removeTestOpen(t, r)
+		for p, want := range map[string]os.FileMode{r.State: 0o700, filepath.Join(r.State, ownerKeyFile): 0o600} {
+			if fi, err := os.Stat(p); err != nil {
+				t.Errorf("stat %s: %v", p, err)
+			} else if fi.Mode().Perm() != want {
+				t.Errorf("%s has mode %#o; want %#o", p, fi.Mode().Perm(), want)
+			}
+		}
+	})
+	for _, c := range []struct {
+		name, target string
+		mode         os.FileMode
+		preset       bool
+	}{
+		{"state dir 0777 made beforehand", ".", 0o777, true},
+		{"state dir group-writable", ".", 0o770, false},
+		{"key 0666", ownerKeyFile, 0o666, false},
+		{"key group-writable", ownerKeyFile, 0o620, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			r := removeTestRoots(t, t.TempDir())
+			if c.preset {
+				removeTestMkdir(t, r.State)
+			} else {
+				removeTestOpen(t, r)
+			}
+			target := filepath.Join(r.State, c.target)
+			if err := os.Chmod(target, c.mode); err != nil {
+				t.Fatal(err)
+			}
+			if o, err := OpenOwner(r, self); !errors.Is(err, ErrRootUnsafe) {
+				t.Errorf("OpenOwner with %s at mode %#o: owner %t, error %v; want %v", target, c.mode, o != nil, err, ErrRootUnsafe)
+			}
+			if c.preset && removeTestExists(t, filepath.Join(r.State, ownerKeyFile)) {
+				t.Errorf("OpenOwner refused %s yet wrote a key into it", r.State)
+			}
+		})
+	}
+}
