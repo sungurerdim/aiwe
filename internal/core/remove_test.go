@@ -26,20 +26,28 @@ func removeTestRoots(t *testing.T, base string) OwnedRoots {
 		Canonical: []string{filepath.Join(base, "repo")},
 	}
 	for _, d := range []string{r.Temp, r.Cache, r.Home, r.Canonical[0]} {
-		removeTestMkdir(t, d)
+		removeTestRootDir(t, d)
 	}
 	return r
 }
 
-// removeTestMkdir makes dir owner-only when it is missing, the same as OpenOwner makes a root: a
-// dir made with MkdirAll on Windows inherits the parent's ACL, which may let other users in.
-func removeTestMkdir(t *testing.T, dir string) {
+// removeTestRootDir makes the root dir owner-only when it is missing, the same as OpenOwner: a dir
+// made with MkdirAll on Windows inherits the parent's ACL, which may let other users in.
+func removeTestRootDir(t *testing.T, dir string) {
 	t.Helper()
 	mkdir := func(p string) error { return os.MkdirAll(p, 0o700) }
 	if _, err := os.Lstat(dir); errors.Is(err, os.ErrNotExist) {
 		mkdir = mkdirOwnerOnly
 	}
 	if err := mkdir(dir); err != nil {
+		t.Fatalf("mkdir %s: %v", dir, err)
+	}
+}
+
+// removeTestMkdir makes dir with MkdirAll; on Windows it inherits the parent's ACL.
+func removeTestMkdir(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir %s: %v", dir, err)
 	}
 }
@@ -373,7 +381,7 @@ func TestOwnedRoot(t *testing.T) {
 			r := removeTestRoots(t, base)
 			tc.adjust(t, base, &r)
 			for _, d := range append([]string{r.Temp, r.Cache, r.Home}, r.Canonical...) {
-				removeTestMkdir(t, d)
+				removeTestRootDir(t, d)
 			}
 			_, err := OpenOwner(r, self)
 			if tc.unsafe {
