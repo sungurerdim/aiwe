@@ -22,4 +22,5 @@ aiwe is pre-release. The design is [docs/SPEC.md](docs/SPEC.md); this page links
 
 One adapter file under `internal/adapters/`, one line in `adapters/all.go`, and the contract suite
 `providertest.Run` green for it. No core change (SPEC §4). Harness behaviour comes from its
-documentation or the running program; no leaked or unlicensed harness source is read or copied.
+documentation or the running program; no leaked or unlicensed harness source is read, quoted or
+copied (SPEC §12.1).

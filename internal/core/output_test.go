@@ -104,6 +104,56 @@ func TestOutput(t *testing.T) {
 		})
 	}
 
+	// A refusal's detail is core.Error's message, which already starts with "<outcome>: " (SPEC §5.10);
+	// the text line names that outcome once (#143).
+	refusals := []struct {
+		name string
+		err  *core.Error
+		want string
+	}{
+		{
+			name: "usage refusal printed as usage: usage:",
+			err:  &core.Error{Outcome: core.OutcomeUsage, Expected: "the repo parameter", Found: "no repo parameter"},
+			want: "usage: expected the repo parameter; found no repo parameter; next: run aiwe --help and correct the call\n",
+		},
+		{
+			name: "error refusal printed as error: error:",
+			err: &core.Error{Outcome: core.OutcomeError, Expected: "a readable ledger", Found: "permission denied",
+				Next: "grant read access to the ledger"},
+			want: "error: expected a readable ledger; found permission denied; next: grant read access to the ledger\n",
+		},
+		{
+			name: "named outcome under the error status dropped or printed twice",
+			err: &core.Error{Outcome: core.Outcome("config_invalid"), Expected: "one JSON object",
+				Found: "a JSON array", Next: "correct the state file"},
+			want: "error: config_invalid: expected one JSON object; found a JSON array; next: correct the state file\n",
+		},
+	}
+	for _, tc := range refusals {
+		t.Run("text refusal/"+tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			if err := core.WriteResult(&buf, core.FormatText, core.ErrorResult(tc.err)); err != nil {
+				t.Fatalf("WriteResult(text) error = %v", err)
+			}
+			if got := buf.String(); got != tc.want {
+				t.Fatalf("text refusal = %q, want %q", got, tc.want)
+			}
+		})
+	}
+
+	t.Run("text refusal/status word printed twice when the outcome differs from the status", func(t *testing.T) {
+		var buf bytes.Buffer
+		r := core.Result[any]{Status: core.StatusError, Outcome: core.Outcome("config_invalid"),
+			Detail: "error: expected one JSON object; found a JSON array; next: correct the state file"}
+		if err := core.WriteResult(&buf, core.FormatText, r); err != nil {
+			t.Fatalf("WriteResult(text) error = %v", err)
+		}
+		want := "error: expected one JSON object; found a JSON array; next: correct the state file\n"
+		if got := buf.String(); got != want {
+			t.Fatalf("text refusal = %q, want %q", got, want)
+		}
+	})
+
 	t.Run("unknown format printed anyway instead of refused", func(t *testing.T) {
 		var buf bytes.Buffer
 		r := core.Result[any]{Status: core.StatusOK, Outcome: core.Outcome("ok"), Detail: "done"}

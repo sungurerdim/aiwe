@@ -328,6 +328,57 @@ func TestDoctor(t *testing.T) {
 		}
 	})
 
+	t.Run("a go directive gover rejects is an error, not a version", func(t *testing.T) {
+		// Guards against a hand parse that accepts what Go's gover rejects: strconv.Atoi reads +1 and
+		// 01, and a patch number may not carry a pre-release suffix.
+		for _, goLine := range []string{"+1.28", "1.28.0rc1", "1.28beta01", "1.28.01", "go1.28", "1.28-abc", "garbage"} {
+			got, err := repocheck.Doctor(doctorEnv(doctorRepo(t, goLine), "linux", "go1.28.0"))
+			if err == nil {
+				t.Errorf("Doctor(go %s) = %+v, nil error; want an error", goLine, got)
+			}
+		}
+	})
+
+	t.Run("a toolchain version gover rejects is not present", func(t *testing.T) {
+		// Guards against reading an unparsable toolchain as some version that meets go.mod.
+		for _, have := range []string{"go+1.28", "go1.28.0rc1", "go1.28beta01", "go1.28.01", "gogarbage", "1.28.0", ""} {
+			got, err := repocheck.Doctor(doctorEnv(doctorRepo(t, "1.27.9"), "linux", have))
+			if err != nil {
+				t.Fatalf("Doctor(%q) error = %v, want nil", have, err)
+			}
+			if p := prerequisite(t, got, "go"); p.Present {
+				t.Errorf("Doctor(%q) go = %+v, want missing", have, p)
+			}
+		}
+	})
+
+	t.Run("a version below 1.21 without a patch number is its .0 release", func(t *testing.T) {
+		// Guards against ordering 1.20 below 1.20rc1: gover reads 1.20 as 1.20.0, and only from 1.21
+		// on is a short version the language version below its release candidates.
+		cases := []struct {
+			goLine, have string
+			present      bool
+		}{
+			{"1.20", "go1.20rc1", false},
+			{"1.20", "go1.20.0", true},
+			{"1.20.0", "go1.20", true},
+			{"1.20rc1", "go1.20", true},
+			{"1.21", "go1.21rc1", true},
+			{"1.21.0", "go1.21", false},
+			{"1.21", "go1.21.0", true},
+			{"1.27.9", "go1.27.9-custom", true},
+		}
+		for _, tc := range cases {
+			got, err := repocheck.Doctor(doctorEnv(doctorRepo(t, tc.goLine), "linux", tc.have))
+			if err != nil {
+				t.Fatalf("Doctor(go %s, %s) error = %v, want nil", tc.goLine, tc.have, err)
+			}
+			if p := prerequisite(t, got, "go"); p.Present != tc.present {
+				t.Errorf("Doctor(go %s, %s) go = %+v, want present=%v", tc.goLine, tc.have, p, tc.present)
+			}
+		}
+	})
+
 	t.Run("a go tool entry that does not resolve names a command that leaves go.mod unchanged", func(t *testing.T) {
 		// Guards against `go get -tool`, which rewrites go.mod; `go mod download` only fetches
 		// the modules go.mod already pins.
