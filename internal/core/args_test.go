@@ -15,7 +15,7 @@ import (
 // --repo is a usage error; ResolvePath never uses the process working directory. The one exception,
 // a relative --repo at the CLI boundary, is pinned by TestRepoFlag.
 func TestArgs(t *testing.T) {
-	repo := filepath.Join(t.TempDir(), "aiwe")
+	repo := filepath.Join(t.TempDir(), core.Product)
 	elsewhere := filepath.Join(t.TempDir(), "state", "ledger.jsonl")
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -63,7 +63,7 @@ func TestArgs(t *testing.T) {
 	}{
 		{name: "relative path accepted without --repo", repo: "", path: "docs/SPEC.md"},
 		{name: "relative Unicode path accepted without --repo", repo: "", path: "belgeler/özet.md"},
-		{name: "relative --repo resolved against the working directory", repo: "aiwe", path: "docs/SPEC.md"},
+		{name: "relative --repo resolved against the working directory", repo: core.Product, path: "docs/SPEC.md"},
 		{name: "empty path accepted as the repository root", repo: repo, path: ""},
 		{name: "empty path accepted without --repo", repo: "", path: ""},
 	}
@@ -93,7 +93,7 @@ func TestRepoFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("getwd: %v", err)
 	}
-	elsewhere := filepath.Join(t.TempDir(), "aiwe")
+	elsewhere := filepath.Join(t.TempDir(), core.Product)
 
 	run := func(t *testing.T, args ...string) (int, core.Input, bool, string) {
 		t.Helper()
@@ -116,8 +116,8 @@ func TestRepoFlag(t *testing.T) {
 		want string
 	}{
 		{name: "dot --repo refused or passed on as a relative path", repo: ".", want: cwd},
-		{name: "relative --repo passed on as a relative path", repo: "aiwe", want: filepath.Join(cwd, "aiwe")},
-		{name: "relative --repo with dot segments not cleaned", repo: "./x/../aiwe", want: filepath.Join(cwd, "aiwe")},
+		{name: "relative --repo passed on as a relative path", repo: core.Product, want: filepath.Join(cwd, core.Product)},
+		{name: "relative --repo with dot segments not cleaned", repo: "./x/../" + core.Product, want: filepath.Join(cwd, core.Product)},
 		{name: "relative Unicode --repo mangled", repo: "depolar/özet", want: filepath.Join(cwd, "depolar", "özet")},
 		{name: "absolute --repo rewritten against the working directory", repo: elsewhere, want: elsewhere},
 	}
