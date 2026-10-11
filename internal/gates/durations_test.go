@@ -300,6 +300,7 @@ func TestDurationsRunner(t *testing.T) {
 				Capacity: core.CapacityFor(core.Measured[int64]{Value: 4, Known: true}, 1),
 				History:  map[string][]StepRun{"test": tc.history},
 				Recorded: tc.recorded,
+				Owner:    rootsTestOwner(t),
 			}
 			report, err := r.Run(context.Background(), def, t.TempDir(), nil)
 			if err != nil {

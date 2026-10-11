@@ -57,7 +57,8 @@ type GateReport struct {
 // step's recorded runs, oldest first, and sets the test step's limit (SPEC §7.8); Recorded holds
 // the recorded package durations that raise it (SPEC §5.13). Each step's output streams to Output
 // while it runs (DR-38); a nil Output streams nowhere. Each step runs in fresh state, cache and
-// temp roots and a secret-free environment (DR-35, SPEC §7.8); Owner, when set, owns those roots.
+// temp roots and a secret-free environment (DR-35, SPEC §7.8): an owned directory of Owner under
+// the temp root. A Runner with no Owner runs no step; each step is not_measured (SPEC §6.4).
 type Runner struct {
 	Capacity core.Capacity
 	History  map[string][]StepRun

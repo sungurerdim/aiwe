@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,31 +25,26 @@ func rootVar(c rootCell) string {
 	return strings.ToUpper(core.Product) + "_" + c.suffix
 }
 
-// checkRoots is one fresh directory that holds a check's state, cache and temp roots (SPEC §7.8).
-// With an owner it is an owned directory in the temp root, removed through the owner; without one
-// it is a new directory in the OS temp directory, removed only while it is empty.
+// checkRoots is one fresh directory that holds a check's state, cache and temp roots (SPEC §7.8):
+// an owned directory in the temp root, removed through its owner (SPEC §6.4).
 type checkRoots struct {
 	owner *core.Owner
 	owned core.OwnedDir
 	base  string
 }
 
-// freshRoots makes the fresh roots of one check.
+// freshRoots makes the fresh roots of one check. A Runner with no owner refuses: a check never
+// runs in roots no owner made.
 func (r *Runner) freshRoots(ctx context.Context) (*checkRoots, error) {
-	roots := &checkRoots{owner: r.Owner}
-	if r.Owner != nil {
-		d, err := r.Owner.CreateOwned(ctx, core.TempRoot, "check")
-		if err != nil {
-			return nil, err
-		}
-		roots.owned, roots.base = d, d.Path()
-	} else {
-		base, err := os.MkdirTemp("", core.Product+"-check-")
-		if err != nil {
-			return nil, err
-		}
-		roots.base = base
+	if r.Owner == nil {
+		return nil, &core.Error{Outcome: core.OutcomeError, Expected: "an engine owner of the check's roots",
+			Found: "a runner with no owner", Next: "open the engine owner under the resolved roots, then run the gate again"}
 	}
+	d, err := r.Owner.CreateOwned(ctx, core.TempRoot, "check")
+	if err != nil {
+		return nil, err
+	}
+	roots := &checkRoots{owner: r.Owner, owned: d, base: d.Path()}
 	for _, c := range rootCells() {
 		if err := os.Mkdir(filepath.Join(roots.base, c.dir), 0o700); err != nil {
 			return nil, errors.Join(err, roots.remove(ctx))
@@ -103,19 +97,9 @@ func (c *checkRoots) leftovers() ([]string, error) {
 	return left, nil
 }
 
-// remove removes the fresh roots. Without an owner it removes only empty directories, so it never
-// removes a tree (DR-25); an entry left inside keeps the directory and fails.
+// remove removes the fresh roots through their owner, the one owner of a recursive removal (DR-25).
 func (c *checkRoots) remove(ctx context.Context) error {
-	if c.owner != nil {
-		return c.owner.RemoveOwned(context.WithoutCancel(ctx), c.owned)
-	}
-	var errs []error
-	for _, cell := range rootCells() {
-		if err := os.Remove(filepath.Join(c.base, cell.dir)); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			errs = append(errs, err)
-		}
-	}
-	return errors.Join(append(errs, os.Remove(c.base))...)
+	return c.owner.RemoveOwned(context.WithoutCancel(ctx), c.owned)
 }
 
 // close judges the fresh roots after the check and removes them. An entry left in them turns the

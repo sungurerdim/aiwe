@@ -56,8 +56,10 @@ func runnerTestSteps(t *testing.T) (green1, green2, red, missing GateStep) {
 
 // runnerTestRunner returns a Runner with a chosen worker count, so a gate with a test step runs
 // that step (DR-7).
-func runnerTestRunner() *Runner {
-	return &Runner{Capacity: core.CapacityFor(core.Measured[int64]{Value: 4, Known: true}, 1)}
+func runnerTestRunner(t *testing.T) *Runner {
+	t.Helper()
+	return &Runner{Capacity: core.CapacityFor(core.Measured[int64]{Value: 4, Known: true}, 1),
+		Owner: rootsTestOwner(t)}
 }
 
 // runnerTestIDs returns the step ids of a report in report order.
@@ -124,7 +126,7 @@ func TestRunner(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			def := Definition{FormatVersion: 1, Steps: tc.steps}
-			report, err := runnerTestRunner().Run(context.Background(), def, t.TempDir(), tc.only)
+			report, err := runnerTestRunner(t).Run(context.Background(), def, t.TempDir(), tc.only)
 			if err != nil {
 				t.Fatalf("catches %s: Run returned an error, but a decided gate is a result (SPEC §5.3): %v", tc.catches, err)
 			}
@@ -157,7 +159,7 @@ func TestRunner(t *testing.T) {
 func TestRunnerExitCode(t *testing.T) {
 	green1, _, red, _ := runnerTestSteps(t)
 	def := Definition{FormatVersion: 1, Steps: []GateStep{green1, red}}
-	report, err := (&Runner{}).Run(context.Background(), def, t.TempDir(), nil)
+	report, err := (&Runner{Owner: rootsTestOwner(t)}).Run(context.Background(), def, t.TempDir(), nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -174,7 +176,7 @@ func TestRunnerExitCode(t *testing.T) {
 func TestRunnerNothingRun(t *testing.T) {
 	green1, green2, _, _ := runnerTestSteps(t)
 
-	empty, err := (&Runner{}).Run(context.Background(), Definition{FormatVersion: 1}, t.TempDir(), nil)
+	empty, err := (&Runner{Owner: rootsTestOwner(t)}).Run(context.Background(), Definition{FormatVersion: 1}, t.TempDir(), nil)
 	if err == nil && string(empty.Result) == "green" {
 		t.Errorf("a gate with zero steps reported green; want not green or an error")
 	}
@@ -182,7 +184,7 @@ func TestRunnerNothingRun(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	def := Definition{FormatVersion: 1, Steps: []GateStep{green1, green2}}
-	stopped, err := (&Runner{}).Run(ctx, def, t.TempDir(), nil)
+	stopped, err := (&Runner{Owner: rootsTestOwner(t)}).Run(ctx, def, t.TempDir(), nil)
 	if err != nil {
 		return // could not decide: an error is never a green gate
 	}
@@ -205,7 +207,7 @@ func TestRunnerTimeout(t *testing.T) {
 		TimeoutSeconds: 1, Expect: Expect{ExitCode: 1}}
 	def := Definition{FormatVersion: 1, Steps: []GateStep{slow}}
 	start := time.Now()
-	report, err := runnerTestRunner().Run(context.Background(), def, t.TempDir(), nil)
+	report, err := runnerTestRunner(t).Run(context.Background(), def, t.TempDir(), nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}

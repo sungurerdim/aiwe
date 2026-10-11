@@ -45,12 +45,48 @@ func runGate(ctx context.Context, in core.Input) (core.Result[any], error) {
 	// One gate run starts no other job on this path, and no admission count exists yet: jobs is 1.
 	capacity := core.CapacityFor(core.MeasureCores(), 1)
 	capacity.JobsFrom = "single-run"
-	r := Runner{Capacity: capacity}
+	owner, err := engineOwner(repo)
+	if err != nil {
+		return core.Result[any]{}, err
+	}
+	r := Runner{Capacity: capacity, Output: in.Stream, Owner: owner}
 	report, err := r.Run(ctx, def, repo, only)
 	if err != nil {
 		return core.Result[any]{}, err
 	}
 	return gateOutcome(report), nil
+}
+
+// engineOwner opens the engine owner under the resolved roots, with repo as the canonical
+// repository it must keep out of reach (SPEC §6.4, §5.15). Every check runs in roots this owner
+// makes, so a gate with no owner refuses: an unsafe or unresolved root keeps its named outcome.
+func engineOwner(repo string) (*core.Owner, error) {
+	roots, err := core.UserRoots()
+	if err != nil {
+		return nil, ownerRefusal(err)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, ownerRefusal(fmt.Errorf("%w: home: %w", core.ErrRootUnsafe, err))
+	}
+	self, err := core.CurrentProcess()
+	if err != nil {
+		return nil, ownerRefusal(err)
+	}
+	owner, err := core.OpenOwner(core.OwnedRoots{State: roots.State, Temp: roots.Temp, Cache: roots.Cache,
+		Home: home, Canonical: []string{repo}}, self)
+	if err != nil {
+		return nil, ownerRefusal(err)
+	}
+	return owner, nil
+}
+
+// ownerRefusal is the refusal of a gate whose engine owner did not open. Its outcome is the one the
+// cause names in the outcome table, and so is its next action (BC-1).
+func ownerRefusal(err error) error {
+	outcome := core.ErrorResult(err).Outcome
+	return &core.Error{Outcome: outcome, Expected: "an engine owner over the resolved state, cache and temp roots",
+		Found: err.Error(), Err: err}
 }
 
 // stepNames splits the --step value into step ids; an empty id is a usage error. No --step runs
