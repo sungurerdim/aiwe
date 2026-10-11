@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestCreateOwnedTrailingDot pins the narrowing of #109 (finding 14): an owner such as "run." is
@@ -137,6 +138,23 @@ func swapTestReplace(t *testing.T, owned, moved, foreign string) {
 	}
 }
 
+// swapTestLstat returns the file info of name under root, read without following it through an
+// os.Root, as the ownership check reads the identity it approves. A path-based os.Lstat is no
+// stand-in: on Windows it reads the file identity later, from whatever the path names by then.
+func swapTestLstat(t *testing.T, root, name string) os.FileInfo {
+	t.Helper()
+	rt, err := os.OpenRoot(root)
+	if err != nil {
+		t.Fatalf("open root %s: %v", root, err)
+	}
+	defer rt.Close()
+	fi, err := rt.Lstat(name)
+	if err != nil {
+		t.Fatalf("lstat %s under %s: %v", name, root, err)
+	}
+	return fi
+}
+
 // TestRemoveOwnedSwapAfterOwnerCheck catches a RemoveOwned that checks ownership by name, then
 // removes by name: a plain dir moved under the owned name after the check is emptied though the
 // owner never made it (#109). The swap runs in ownedCheckedHook, right after the ownership check
@@ -251,5 +269,93 @@ func TestRemoveOwnedSwapBeforeMarkerOpen(t *testing.T) {
 	}
 	if !removeTestExists(t, keep) {
 		t.Errorf("file %q in a dir the owner never made was removed through the swapped name", keep)
+	}
+}
+
+// TestOwnerCheckMarkerOfSwappedName catches a checkMarkerOf that reads a marker through the dir it
+// opened by name without proving that dir is the one its caller's Lstat saw (#109, finding 3).
+// TestRemoveOwnedSwapBeforeMarkerOpen cannot pin this: the checks that follow checkMarkerOf refuse
+// that swap too, yet they would pass a swap followed by a swap back. So the test calls
+// checkMarkerOf itself, with the info read before the swap. The dir now under the name holds a
+// copy of the owned marker, and a control call shows that it passes under its own info, so only
+// the identity check can refuse.
+func TestOwnerCheckMarkerOfSwappedName(t *testing.T) {
+	r := removeTestRoots(t, t.TempDir())
+	o := removeTestOpen(t, r)
+	d := removeTestCreate(t, o, TempRoot)
+	name := filepath.Base(d.Path())
+	marker, err := os.ReadFile(filepath.Join(d.Path(), markerFile))
+	if err != nil {
+		t.Fatalf("read the owned marker: %v", err)
+	}
+	recs, err := o.records()
+	if err != nil {
+		t.Fatalf("read the ledger: %v", err)
+	}
+	rec, ok := findRecord(recs, "temp", name)
+	if !ok {
+		t.Fatalf("ledger has no owned_dir record for %q", name)
+	}
+	foreign := filepath.Join(o.temp, "not-ours")
+	removeTestWrite(t, filepath.Join(foreign, "keep.txt"), "inside the temp root, not owned")
+	removeTestWrite(t, filepath.Join(foreign, markerFile), string(marker))
+	rt, err := os.OpenRoot(o.temp)
+	if err != nil {
+		t.Fatalf("open root %s: %v", o.temp, err)
+	}
+	defer rt.Close()
+
+	before := swapTestLstat(t, o.temp, name)
+	swapTestReplace(t, d.Path(), filepath.Join(o.temp, "moved-away"), foreign)
+	after := swapTestLstat(t, o.temp, name)
+	if err := o.checkMarkerOf(rt, o.temp, name, after, rec); err != nil {
+		t.Fatalf("checkMarkerOf of the dir now under %q = %v; its marker copy must pass under its own info", name, err)
+	}
+	err = o.checkMarkerOf(rt, o.temp, name, before, rec)
+	if !errors.Is(err, ErrNotOwned) {
+		t.Errorf("checkMarkerOf(%q) with the info read before the swap = %v, want %v", name, err, ErrNotOwned)
+	}
+}
+
+// TestRemoveTreeEscape catches an owned name that leaves its root, or was swapped for a link out
+// of it after the check, reported as residue_locked after 5 retries instead of not_owned at once.
+// Each name comes with the info of a real dir, so the refusal must come from the name check or the
+// link check, not from the refusal of a nil approval (TestRemoveTreeNilApproved).
+func TestRemoveTreeEscape(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "temp")
+	outside := filepath.Join(base, "outside")
+	keep := filepath.Join(outside, "keep.txt")
+	removeTestMkdir(t, root)
+	removeTestWrite(t, keep, "outside the temp root")
+	// The ownership check approved a real dir under this name; then the name became a link out of
+	// the root. The dir moves away rather than going, so no new entry can take over its identity.
+	swapped := "run-20261011-0004-0123456789abcdef"
+	removeTestMkdir(t, filepath.Join(root, swapped))
+	cases := []struct {
+		name     string
+		approved os.FileInfo
+	}{
+		{filepath.Join("..", "outside"), swapTestLstat(t, base, "outside")},
+		{swapped, swapTestLstat(t, root, swapped)},
+	}
+	if err := os.Rename(filepath.Join(root, swapped), filepath.Join(base, "moved-away")); err != nil {
+		t.Fatalf("move the approved dir away: %v", err)
+	}
+	removeTestLink(t, outside, filepath.Join(root, swapped))
+
+	for _, tc := range cases {
+		begin := time.Now()
+		err := removeTree(context.Background(), root, tc.name, tc.approved)
+		took := time.Since(begin)
+		if !errors.Is(err, ErrNotOwned) || errors.Is(err, ErrResidueLocked) {
+			t.Errorf("removeTree(%q) = %v, want not_owned, not residue_locked", tc.name, err)
+		}
+		if took >= removeWait {
+			t.Errorf("removeTree(%q) took %v, want no retry of an escape (under %v)", tc.name, took, removeWait)
+		}
+		if !removeTestExists(t, keep) {
+			t.Fatalf("file %q outside the root was removed through %q", keep, tc.name)
+		}
 	}
 }
