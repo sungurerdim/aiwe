@@ -405,3 +405,19 @@ func TestGateDetailReason(t *testing.T) {
 		t.Errorf("gateDetail = %q, want %q", got, want)
 	}
 }
+
+// TestGateDefinitionLinkOut catches a gate that reads a gate.json link leading out of the
+// repository: the definition read stays inside --repo, and a link out of it is refused as an error.
+func TestGateDefinitionLinkOut(t *testing.T) {
+	outside := commandsTestRepo(t, []GateStep{{ID: "outside", Command: []string{"go", "version"}, Required: true}})
+	repo := t.TempDir()
+	if err := os.Symlink(filepath.Join(outside, "gate.json"), filepath.Join(repo, "gate.json")); err != nil {
+		t.Skipf("file symlink: %v; a junction links only a directory", err)
+	}
+	def, err := readDefinition(repo)
+	var cerr *core.Error
+	if !errors.As(err, &cerr) || cerr.Outcome != core.OutcomeError || !strings.Contains(cerr.Expected, "inside the repository") {
+		t.Fatalf("readDefinition = %+v, %v; want a *core.Error with outcome %q that names a gate.json inside the repository",
+			def, err, core.OutcomeError)
+	}
+}
