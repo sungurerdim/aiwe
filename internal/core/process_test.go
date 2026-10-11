@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -171,6 +172,35 @@ func beatProcessFile(path string) {
 	for n := 1; time.Now().Before(end); n++ {
 		_ = writeProcessFile(path, []byte(strconv.Itoa(n))) // a write lost to a reader is retried
 		time.Sleep(processBeatEvery)
+	}
+}
+
+// TestProcessWindowsPID guards against a process id outside the DWORD range being truncated into the id
+// of another process before the tree opens it (G115).
+func TestProcessWindowsPID(t *testing.T) {
+	if strconv.IntSize < 64 {
+		t.Skip("an int cannot hold a value above the uint32 range on this platform")
+	}
+	var above uint64 = math.MaxUint32 + 1
+	for _, tc := range []struct {
+		pid  int
+		want uint32
+		ok   bool
+	}{
+		{pid: 0, want: 0, ok: true},
+		{pid: 4812, want: 4812, ok: true},
+		{pid: math.MaxUint32, want: math.MaxUint32, ok: true},
+		{pid: int(above), ok: false},
+		{pid: int(above) + 4812, ok: false}, // truncation would give 4812, a different process
+		{pid: -1, ok: false},
+	} {
+		got, err := core.WindowsPID(tc.pid)
+		if tc.ok && (err != nil || got != tc.want) {
+			t.Errorf("WindowsPID(%d) = %d, %v, want %d, nil", tc.pid, got, err, tc.want)
+		}
+		if !tc.ok && err == nil {
+			t.Errorf("WindowsPID(%d) = %d, nil, want an error", tc.pid, got)
+		}
 	}
 }
 
