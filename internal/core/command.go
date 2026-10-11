@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 )
 
 // Sentinel errors of the parameter dictionary check.
@@ -18,9 +19,12 @@ type ParamDef struct {
 	Meaning string
 }
 
-// Input holds the parameter values of one command call, keyed by parameter name.
+// Input holds the parameter values of one command call, keyed by parameter name, and the writer
+// its progress output streams to. Stream is never the result envelope's writer, so --format json
+// stays one parseable envelope (SPEC §5).
 type Input struct {
 	Params map[string]string
+	Stream io.Writer
 }
 
 // Command is one entry of the command registry; every surface is built from it.
