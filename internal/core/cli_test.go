@@ -82,7 +82,7 @@ func TestCLIProductName(t *testing.T) {
 			next: "run " + core.Product + " --help and pass only its parameters"},
 	}
 	for _, tc := range refusals {
-		t.Run(tc.name+" refusal names the product by a literal", func(t *testing.T) {
+		t.Run(tc.name+" refusal names the product through core.Product", func(t *testing.T) {
 			var out bytes.Buffer
 			code := core.RunCLI(context.Background(), cliRegistry(), tc.args, &out, io.Discard)
 			if code != 2 || !strings.Contains(out.String(), tc.next) {
