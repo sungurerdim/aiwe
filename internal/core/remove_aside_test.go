@@ -5,7 +5,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
+	"syscall"
 	"testing"
 )
 
@@ -13,18 +15,26 @@ import (
 // handle check and the directory-only removal: an unowned file, an unowned empty dir, or nothing.
 var rmdirTestKinds = []string{"file", "empty dir", "nothing"}
 
+// rmdirSharingViolation is ERROR_SHARING_VIOLATION: on Windows the removal holds the owned dir
+// open without delete sharing, so the system refuses to move it.
+const rmdirSharingViolation = syscall.Errno(32)
+
 // rmdirTestSwap arms rmdirCheckedHook for one removal of name under temp: the owned dir moves to
-// moved, then an entry of kind takes its name. It returns a func that reports whether the hook ran.
-func rmdirTestSwap(t *testing.T, temp, name, moved, kind string) func() bool {
+// moved, then an entry of kind takes its name. It returns a func that reports whether the hook ran
+// and whether the system refused the move (Windows only), so no swap took place.
+func rmdirTestSwap(t *testing.T, temp, name, moved, kind string) func() (bool, bool) {
 	t.Helper()
-	swapped := false
+	swapped, refused := false, false
 	rmdirCheckedHook = func(n string) {
 		if swapped || n != name {
 			return
 		}
 		swapped = true
 		if err := os.Rename(filepath.Join(temp, name), moved); err != nil {
-			t.Errorf("move the owned dir %s away: %v", name, err)
+			refused = runtime.GOOS == "windows" && errors.Is(err, rmdirSharingViolation)
+			if !refused {
+				t.Errorf("move the owned dir %s away: %v", name, err)
+			}
 			return
 		}
 		if kind != "nothing" {
@@ -32,7 +42,23 @@ func rmdirTestSwap(t *testing.T, temp, name, moved, kind string) func() bool {
 		}
 	}
 	t.Cleanup(func() { rmdirCheckedHook = nil })
-	return func() bool { return swapped }
+	return func() (bool, bool) { return swapped, refused }
+}
+
+// rmdirTestCheckRemoved fails t unless a removal whose swap the system refused returned nil and
+// left temp empty: the owned dir is gone and nothing else was made.
+func rmdirTestCheckRemoved(t *testing.T, err error, temp string) {
+	t.Helper()
+	if err != nil {
+		t.Errorf("removal after a refused swap = %v, want nil: the owned dir never left its name", err)
+	}
+	entries, rerr := os.ReadDir(temp)
+	if rerr != nil {
+		t.Fatalf("read the temp root %s: %v", temp, rerr)
+	}
+	for _, e := range entries {
+		t.Errorf("temp root %s holds %q after the removal, want it empty", temp, e.Name())
+	}
 }
 
 // rmdirTestCheckKept fails t unless the owned dir is still at moved, an unowned file under name
@@ -76,8 +102,11 @@ func TestRemoveOwnedSwapBeforeRmdir(t *testing.T) {
 			ran := rmdirTestSwap(t, o.temp, name, moved, kind)
 
 			err := o.RemoveOwned(context.Background(), d)
-			if !ran() {
+			if ok, refused := ran(); !ok {
 				t.Fatalf("rmdirCheckedHook never ran for %q", name)
+			} else if refused {
+				rmdirTestCheckRemoved(t, err, o.temp)
+				return
 			}
 			if !errors.Is(err, ErrNotOwned) {
 				t.Errorf("RemoveOwned after the swap = %v, want %v: the owned dir stays at %s", err, ErrNotOwned, moved)
@@ -100,8 +129,14 @@ func TestSweepSwapBeforeRmdir(t *testing.T) {
 			ran := rmdirTestSwap(t, dead.temp, name, moved, kind)
 
 			rep, err := sweepTestOpen(t, r, sweepTestSelf(t)).Sweep(context.Background())
-			if !ran() {
+			if ok, refused := ran(); !ok {
 				t.Fatalf("rmdirCheckedHook never ran for %q", name)
+			} else if refused {
+				rmdirTestCheckRemoved(t, err, dead.temp)
+				if rep.Removed != 1 || rep.Refused != 0 {
+					t.Errorf("Sweep report = %+v, want Removed 1, Refused 0 after a refused swap", rep)
+				}
+				return
 			}
 			if !errors.Is(err, ErrNotOwned) {
 				t.Errorf("Sweep after the swap = %v, want %v", err, ErrNotOwned)
@@ -131,8 +166,14 @@ func TestSweepEmptyDirSwapBeforeRmdir(t *testing.T) {
 			ran := rmdirTestSwap(t, dead.temp, name, moved, kind)
 
 			rep, err := sweepTestOpen(t, r, sweepTestSelf(t)).Sweep(context.Background())
-			if !ran() {
+			if ok, refused := ran(); !ok {
 				t.Fatalf("rmdirCheckedHook never ran for %q", name)
+			} else if refused {
+				rmdirTestCheckRemoved(t, err, dead.temp)
+				if rep.Removed != 1 || rep.Refused != 0 {
+					t.Errorf("Sweep report = %+v, want Removed 1, Refused 0 after a refused swap", rep)
+				}
+				return
 			}
 			if !errors.Is(err, ErrNotOwned) {
 				t.Errorf("Sweep after the swap = %v, want %v", err, ErrNotOwned)
