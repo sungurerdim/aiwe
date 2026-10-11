@@ -130,6 +130,9 @@ func bind(cmds []Command, c call) (Command, Input, error) {
 		}
 		in.Params[f.Name] = f.Value
 	}
+	if err := resolveRepo(in); err != nil {
+		return Command{}, Input{}, err
+	}
 	return cmd, in, nil
 }
 

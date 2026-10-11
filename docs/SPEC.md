@@ -344,6 +344,9 @@ event, detail}`. No colour codes. Benefit: logs are machine-read. Enforced: test
 flags > environment variables > state files (`<state>/*.json`) > built-in defaults.
 `aiwe config show` prints each value and its origin. Every path parameter resolves against `--repo`;
 a relative path without `--repo` is a `usage` error; the process working directory is never used.
+The one exception is `--repo` itself: a relative `--repo` resolves once, at the CLI boundary,
+against the working directory, so `aiwe gates gate --repo .` works; an empty `--repo` is a `usage`
+error.
 Enforced: tests `core/config_test.go`, `core/args_test.go`.
 
 ### 5.13 Test structure
