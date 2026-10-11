@@ -98,7 +98,7 @@ func TestRepoFlag(t *testing.T) {
 		t.Helper()
 		var got core.Input
 		ran := false
-		cmds := []core.Command{{Module: "gates", Object: "gates", Verb: "gate", Params: []string{"repo", "step"},
+		cmds := []core.Command{{Module: "gates", Object: "gates", Verb: "gate", Params: []string{"repo", "step", "format"},
 			Purpose: "run the gate",
 			Run: func(_ context.Context, in core.Input) (core.Result[any], error) {
 				got, ran = in, true
