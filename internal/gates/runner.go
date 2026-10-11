@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"slices"
 	"time"
 
@@ -27,6 +28,8 @@ const (
 	exitUnknown = -1
 	// stepGrace is how long a step's leftover processes get to end before they are killed (DR-15).
 	stepGrace = 2 * time.Second
+	// testStepID is the step that runs the tests with the measured worker count (DR-7).
+	testStepID = "test"
 )
 
 // StepReport is the result of one declared step. ExitCode is exitUnknown when the step never
@@ -47,7 +50,13 @@ type GateReport struct {
 }
 
 // Runner runs the steps of a gate, one after another, each as a process tree (SPEC §5.20).
-type Runner struct{}
+// Capacity sets the test step's worker count and Out receives it printed (DR-7). The test step is
+// not_measured when either is missing; the green or red test step also carries the count as its
+// detail.
+type Runner struct {
+	Capacity core.Capacity
+	Out      io.Writer
+}
 
 // Run runs the steps of def in dir. A non-empty only names the steps to run; every other step is
 // reported not_measured and the gate is at best incomplete (DR-10, SPEC §7.8). Any red step makes
@@ -98,7 +107,11 @@ func (r *Runner) runStep(ctx context.Context, step GateStep, dir string) StepRep
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(step.TimeoutSeconds)*time.Second)
 		defer cancel()
 	}
-	child, err := core.Start(ctx, core.ChildSpec{Argv: step.Command, Dir: dir})
+	argv, note, err := r.command(step)
+	if err != nil {
+		return unmeasured(step.ID, "not started: "+err.Error())
+	}
+	child, err := core.Start(ctx, core.ChildSpec{Argv: argv, Dir: dir})
 	if err != nil {
 		return unmeasured(step.ID, "could not start: "+err.Error())
 	}
@@ -117,7 +130,28 @@ func (r *Runner) runStep(ctx context.Context, step GateStep, dir string) StepRep
 	if code == step.Expect.ExitCode {
 		result = ResultGreen
 	}
-	return StepReport{ID: step.ID, Result: result, ExitCode: code}
+	return StepReport{ID: step.ID, Result: result, ExitCode: code, Detail: note}
+}
+
+// command returns the argv a step runs and the note its report carries. The test step runs with
+// the worker count of DR-7, and the count is printed with its inputs; every other step runs as
+// declared. A test step with no chosen count, or nowhere to print it, cannot run: the count is
+// never assumed (DR-13) and is always printed (DR-7).
+func (r *Runner) command(step GateStep) (argv []string, note string, err error) {
+	if step.ID != testStepID {
+		return step.Command, "", nil
+	}
+	if r.Capacity.Workers < 1 {
+		return nil, "", errors.New("no worker count was chosen for the test step")
+	}
+	if r.Out == nil {
+		return nil, "", errors.New("the worker count has nowhere to be printed")
+	}
+	note = r.Capacity.String()
+	if _, err := fmt.Fprintf(r.Out, "step %s: %s\n", step.ID, note); err != nil {
+		return nil, "", fmt.Errorf("the worker count could not be printed: %w", err)
+	}
+	return withParallelism(step.Command, r.Capacity.Workers), note, nil
 }
 
 // exitCode returns the exit code behind the error of Wait; ok is false when the child did not

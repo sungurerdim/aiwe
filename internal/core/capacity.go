@@ -13,9 +13,11 @@ const (
 
 // Capacity is a worker count chosen from measured cores and concurrent jobs (DR-7).
 type Capacity struct {
-	Cores   Measured[int64]
-	Jobs    int
-	Workers int
+	Cores Measured[int64]
+	Jobs  int
+	// JobsFrom names where the concurrent job count came from; empty prints nothing.
+	JobsFrom string
+	Workers  int
 }
 
 // CapacityFor returns workers = cores ÷ jobs, rounded down, minimum 1. Unmeasured cores or a job
@@ -42,7 +44,11 @@ func (c Capacity) String() string {
 	if c.Cores.Known {
 		cores = fmt.Sprint(c.Cores.Value)
 	}
-	return fmt.Sprintf("workers=%d cores=%s jobs=%d bound=%s", c.Workers, cores, c.Jobs, c.bound())
+	line := fmt.Sprintf("workers=%d cores=%s jobs=%d bound=%s", c.Workers, cores, c.Jobs, c.bound())
+	if c.JobsFrom != "" {
+		line += " jobs_from=" + c.JobsFrom
+	}
+	return line
 }
 
 // MeasureCores measures the cores this process may use at run time: the lower of the machine's
