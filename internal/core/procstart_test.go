@@ -2,6 +2,7 @@ package core
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"io/fs"
@@ -18,7 +19,7 @@ import (
 // procTestDeadPID starts a child that exits at once and returns its pid after it is gone.
 func procTestDeadPID(t *testing.T) int {
 	t.Helper()
-	cmd := exec.Command(os.Args[0], "-test.run=^$")
+	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^$")
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start child: %v", err)
 	}
@@ -186,7 +187,8 @@ func TestProcStartChild(t *testing.T) {
 // the wall clock just before and just after the start.
 func procTestChild(t *testing.T) (pid int, before, after time.Time) {
 	t.Helper()
-	cmd := exec.Command(os.Args[0], "-test.run=^TestProcStartChild$")
+	// The child runs until its stdin closes in the cleanup, after the test context is done.
+	cmd := exec.CommandContext(context.WithoutCancel(t.Context()), os.Args[0], "-test.run=^TestProcStartChild$")
 	cmd.Env = append(os.Environ(), procTestChildEnv+"=1")
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -198,7 +200,9 @@ func procTestChild(t *testing.T) (pid int, before, after time.Time) {
 	}
 	after = time.Now()
 	t.Cleanup(func() {
-		stdin.Close()
+		if err := stdin.Close(); err != nil {
+			t.Errorf("child stdin: %v", err)
+		}
 		if err := cmd.Wait(); err != nil {
 			t.Errorf("child: %v", err)
 		}

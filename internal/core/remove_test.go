@@ -87,7 +87,7 @@ func removeTestOpen(t *testing.T, r OwnedRoots) *Owner {
 
 func removeTestCreate(t *testing.T, o *Owner, root OwnedRoot) OwnedDir {
 	t.Helper()
-	d, err := o.CreateOwned(context.Background(), root, "run-20261010-0001")
+	d, err := o.CreateOwned(t.Context(), root, "run-20261010-0001")
 	if err != nil {
 		t.Fatalf("CreateOwned: %v", err)
 	}
@@ -115,8 +115,6 @@ func removeTestLink(t *testing.T, target, link string) {
 // TestOwnedRemove catches recursive removal of a directory the engine did not create, register
 // and mark as its own (DR-25, §5.15).
 func TestOwnedRemove(t *testing.T) {
-	ctx := context.Background()
-
 	t.Run("created temp dir is removed with its contents", func(t *testing.T) {
 		base := filepath.Join(t.TempDir(), "çalışma-ağacı")
 		r := removeTestRoots(t, base)
@@ -137,7 +135,7 @@ func TestOwnedRemove(t *testing.T) {
 			t.Fatalf("created dir %q has no .owner marker", d.Path())
 		}
 		removeTestWrite(t, filepath.Join(d.Path(), "src", "main.go"), "package main\n")
-		if err := o.RemoveOwned(ctx, d); err != nil {
+		if err := o.RemoveOwned(t.Context(), d); err != nil {
 			t.Fatalf("RemoveOwned of an owned dir: %v", err)
 		}
 		if removeTestExists(t, d.Path()) {
@@ -160,7 +158,7 @@ func TestOwnedRemove(t *testing.T) {
 		if !strings.HasPrefix(realDir, realCache+string(filepath.Separator)) {
 			t.Fatalf("created dir %q is not under the cache root %q", realDir, realCache)
 		}
-		if err := o.RemoveOwned(ctx, d); err != nil {
+		if err := o.RemoveOwned(t.Context(), d); err != nil {
 			t.Fatalf("RemoveOwned of an owned cache dir: %v", err)
 		}
 		if removeTestExists(t, d.Path()) {
@@ -174,7 +172,7 @@ func TestOwnedRemove(t *testing.T) {
 		d := removeTestCreate(t, o, TempRoot)
 		removeTestWrite(t, filepath.Join(d.Path(), "sub", "a.txt"), "a\n")
 		removeTestLink(t, filepath.Join(d.Path(), "sub"), filepath.Join(d.Path(), "inner"))
-		if err := o.RemoveOwned(ctx, d); err != nil {
+		if err := o.RemoveOwned(t.Context(), d); err != nil {
 			t.Fatalf("RemoveOwned with an inner link: %v", err)
 		}
 		if removeTestExists(t, d.Path()) {
@@ -278,7 +276,7 @@ func TestOwnedRemove(t *testing.T) {
 			forged, keep := tc.setup(t, base, r, o)
 			// A fresh owner reads every record from disk, as after a restart.
 			fresh := removeTestOpen(t, r)
-			err := fresh.RemoveOwned(ctx, forged)
+			err := fresh.RemoveOwned(t.Context(), forged)
 			if !errors.Is(err, ErrNotOwned) {
 				t.Fatalf("RemoveOwned(%q) = %v, want %v", forged.path, err, ErrNotOwned)
 			}
@@ -298,7 +296,7 @@ func TestOwnedRemove(t *testing.T) {
 		other.State = filepath.Join(base, "other-state")
 		keep := filepath.Join(d.Path(), "work.txt")
 		removeTestWrite(t, keep, "work\n")
-		err := removeTestOpen(t, other).RemoveOwned(ctx, d)
+		err := removeTestOpen(t, other).RemoveOwned(t.Context(), d)
 		if !errors.Is(err, ErrNotOwned) {
 			t.Fatalf("RemoveOwned under another state = %v, want %v", err, ErrNotOwned)
 		}
@@ -432,7 +430,9 @@ func TestOwnedRemoveLocked(t *testing.T) {
 	closed := false
 	t.Cleanup(func() {
 		if !closed {
-			f.Close()
+			if err := f.Close(); err != nil {
+				t.Errorf("close %s: %v", held, err)
+			}
 		}
 	})
 
