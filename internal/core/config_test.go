@@ -236,6 +236,24 @@ func TestConfig(t *testing.T) {
 		}
 	})
 
+	t.Run("state file that is not settings read as settings", func(t *testing.T) {
+		// SPEC §6.4: the state root also holds sources.json and sources.state.json (§8.1); they are
+		// not settings, so they never make config resolution fail.
+		dir := configTestWriteState(t, map[string]string{
+			"settings.json": `{"logLevel": "error"}`,
+			"sources.json": `{"formatVersion": 1, "window": 100, "sources": [
+				{"id": "sub-a", "adapter": "claude-code", "kind": "subscription", "share": 50}]}`,
+			"sources.state.json": `{"sub-a": {"state": "active", "credit": 12}}`,
+		})
+		got, err := core.ResolveConfig(configTestSettings(), nil, configTestGetenv(nil), dir)
+		if err != nil {
+			t.Fatalf("ResolveConfig: %v; want the non-settings state files ignored", err)
+		}
+		if v := configTestFind(t, got, "logLevel"); v.Value != "error" || v.Origin != core.ConfigOriginState {
+			t.Errorf("logLevel = %q from %q, want %q from %q", v.Value, v.Origin, "error", core.ConfigOriginState)
+		}
+	})
+
 	t.Run("upper-case .JSON suffix read as a state file", func(t *testing.T) {
 		// SPEC §5.12 names <state>/*.json; only the lower-case suffix is a state file.
 		dir := configTestWriteState(t, map[string]string{"SETTINGS.JSON": `{"logLevel": "error"}`})
