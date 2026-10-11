@@ -31,6 +31,7 @@ const (
 	kindOwnedDir       = "owned_dir"
 	maxOwnerKeyBytes   = 4096
 	maxLedgerLine      = 4 << 20
+	ownerOnlyFix       = "%w; next: remove the access of every other user from %q, or delete it so the next %s run makes it owner-only" // §5.10
 )
 
 // ownedRecord is the owned_dir line of the ledger, the TempDirRecord of SPEC §8.5 with the fields
@@ -92,7 +93,7 @@ func loadOwnerKey(state string) ([]byte, error) {
 		ownerKeyTakenHook()
 	}
 	if err := checkOwnerOnlyFile(f, p); err != nil {
-		return nil, err
+		return nil, fmt.Errorf(ownerOnlyFix, err, p, Product)
 	}
 	b, err := io.ReadAll(io.LimitReader(f, maxOwnerKeyBytes+1))
 	if err != nil {
@@ -115,7 +116,10 @@ func openOwnerOnlyRoot(state string) (*os.Root, error) {
 	if err != nil {
 		return nil, errors.Join(fmt.Errorf("%w: owner-only check of %q: %v", ErrRootUnsafe, state, err), rt.Close())
 	}
-	if err := errors.Join(checkOwnerOnlyFile(dir, state), dir.Close()); err != nil {
+	if err := checkOwnerOnlyFile(dir, state); err != nil {
+		return nil, errors.Join(fmt.Errorf(ownerOnlyFix, err, state, Product), dir.Close(), rt.Close())
+	}
+	if err := dir.Close(); err != nil {
 		return nil, errors.Join(err, rt.Close())
 	}
 	return rt, nil
@@ -125,8 +129,7 @@ func openOwnerOnlyRoot(state string) (*os.Root, error) {
 // synced to a file of its own, then hard-linked to the key's name, which fails when it exists. A reader
 // never sees the key without its bytes; of two racing processes, the loser reads the winner's key.
 func createOwnerKey(rt *os.Root) error {
-	k := make([]byte, ownerKeySize)
-	tag := make([]byte, dirSuffixBytes)
+	k, tag := make([]byte, ownerKeySize), make([]byte, dirSuffixBytes)
 	if _, err := rand.Read(k); err != nil {
 		return fmt.Errorf("owner key: %w", err)
 	}
@@ -198,9 +201,7 @@ func (o *Owner) appendRecord(rec ownedRecord) error {
 		return fmt.Errorf("owned_dir record: %w", err)
 	}
 	_, werr := f.Write(append(b, '\n'))
-	serr := f.Sync()
-	cerr := f.Close()
-	if err := errors.Join(werr, serr, cerr); err != nil {
+	if err := errors.Join(werr, f.Sync(), f.Close()); err != nil {
 		return fmt.Errorf("owned_dir record: %w", err)
 	}
 	return nil
