@@ -198,8 +198,8 @@ func TestSweepSwapAfterOwnerCheck(t *testing.T) {
 	if !swapped {
 		t.Fatalf("ownedCheckedHook never ran for %q", filepath.Base(b.Path()))
 	}
-	if err != nil && !errors.Is(err, ErrNotOwned) {
-		t.Errorf("Sweep after the swap: %v, want nil or %v", err, ErrNotOwned)
+	if !errors.Is(err, ErrNotOwned) {
+		t.Errorf("Sweep after the swap: %v, want %v for the swapped name", err, ErrNotOwned)
 	}
 	if !removeTestExists(t, keep) {
 		t.Errorf("file %q in a dir the owner never made was swept through the swapped name", keep)
@@ -209,5 +209,47 @@ func TestSweepSwapAfterOwnerCheck(t *testing.T) {
 	}
 	if rep.Removed != 1 {
 		t.Errorf("Sweep report = %+v, want Removed 1: the swapped name %q must not count as removed", rep, filepath.Base(b.Path()))
+	}
+	if rep.Refused != 1 {
+		t.Errorf("Sweep report = %+v, want Refused 1: the swapped name %q must count as refused", rep, filepath.Base(b.Path()))
+	}
+}
+
+// TestRemoveOwnedSwapBeforeMarkerOpen catches an ownership check that reads the marker through a
+// dir opened by name without proving it is the dir its Lstat saw (#109, finding 3). The swap runs
+// in ownedMarkerHook, after the Lstat and before the open. The unowned dir holds a copy of the
+// owned marker, so a missing marker cannot be the reason for the refusal.
+func TestRemoveOwnedSwapBeforeMarkerOpen(t *testing.T) {
+	r := removeTestRoots(t, t.TempDir())
+	o := removeTestOpen(t, r)
+	d := removeTestCreate(t, o, TempRoot)
+	removeTestWrite(t, filepath.Join(d.Path(), "work.txt"), "owned work")
+	marker, err := os.ReadFile(filepath.Join(d.Path(), markerFile))
+	if err != nil {
+		t.Fatalf("read the owned marker: %v", err)
+	}
+	foreign := filepath.Join(o.temp, "not-ours")
+	removeTestWrite(t, filepath.Join(foreign, "keep.txt"), "inside the temp root, not owned")
+	removeTestWrite(t, filepath.Join(foreign, markerFile), string(marker))
+	keep := filepath.Join(d.Path(), "keep.txt")
+	swapped := false
+	ownedMarkerHook = func(name string) {
+		if swapped || name != filepath.Base(d.Path()) {
+			return
+		}
+		swapped = true
+		swapTestReplace(t, d.Path(), filepath.Join(o.temp, "moved-away"), foreign)
+	}
+	t.Cleanup(func() { ownedMarkerHook = nil })
+
+	err = o.RemoveOwned(context.Background(), d)
+	if !swapped {
+		t.Fatalf("ownedMarkerHook never ran for %q", filepath.Base(d.Path()))
+	}
+	if !errors.Is(err, ErrNotOwned) {
+		t.Errorf("RemoveOwned after the swap before the marker open = %v, want %v", err, ErrNotOwned)
+	}
+	if !removeTestExists(t, keep) {
+		t.Errorf("file %q in a dir the owner never made was removed through the swapped name", keep)
 	}
 }

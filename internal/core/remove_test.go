@@ -465,7 +465,7 @@ func TestRemoveTreeEscape(t *testing.T) {
 
 	for _, name := range []string{filepath.Join("..", "outside"), swapped} {
 		begin := time.Now()
-		err := removeTree(context.Background(), root, name)
+		err := removeTree(context.Background(), root, name, nil)
 		took := time.Since(begin)
 		if !errors.Is(err, ErrNotOwned) || errors.Is(err, ErrResidueLocked) {
 			t.Errorf("removeTree(%q) = %v, want not_owned, not residue_locked", name, err)
@@ -476,5 +476,23 @@ func TestRemoveTreeEscape(t *testing.T) {
 		if !removeTestExists(t, keep) {
 			t.Fatalf("file %q outside the root was removed through %q", keep, name)
 		}
+	}
+}
+
+// TestRemoveTreeNilApproved catches a removeTree that, given no approved identity, approves the dir
+// it finds and empties it (#109, finding 2a). Only the ownership check may approve a dir, so a nil
+// approval fails with ErrNotOwned and removes nothing.
+func TestRemoveTreeNilApproved(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "temp")
+	name := "run-20261011-0006-0123456789abcdef"
+	keep := filepath.Join(root, name, "keep.txt")
+	removeTestWrite(t, keep, "inside the temp root, never approved")
+
+	err := removeTree(context.Background(), root, name, nil)
+	if !errors.Is(err, ErrNotOwned) {
+		t.Errorf("removeTree(%q, nil approved) = %v, want %v", name, err, ErrNotOwned)
+	}
+	if !removeTestExists(t, keep) {
+		t.Errorf("file %q was removed though no ownership check approved %q", keep, name)
 	}
 }
