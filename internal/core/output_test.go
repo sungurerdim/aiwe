@@ -141,6 +141,19 @@ func TestOutput(t *testing.T) {
 		})
 	}
 
+	t.Run("text refusal/status word printed twice when the outcome differs from the status", func(t *testing.T) {
+		var buf bytes.Buffer
+		r := core.Result[any]{Status: core.StatusError, Outcome: core.Outcome("config_invalid"),
+			Detail: "error: expected one JSON object; found a JSON array; next: correct the state file"}
+		if err := core.WriteResult(&buf, core.FormatText, r); err != nil {
+			t.Fatalf("WriteResult(text) error = %v", err)
+		}
+		want := "error: expected one JSON object; found a JSON array; next: correct the state file\n"
+		if got := buf.String(); got != want {
+			t.Fatalf("text refusal = %q, want %q", got, want)
+		}
+	})
+
 	t.Run("unknown format printed anyway instead of refused", func(t *testing.T) {
 		var buf bytes.Buffer
 		r := core.Result[any]{Status: core.StatusOK, Outcome: core.Outcome("ok"), Detail: "done"}
