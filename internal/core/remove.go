@@ -95,19 +95,16 @@ func OpenOwner(r OwnedRoots, self ProcessID) (*Owner, error) {
 	return &Owner{state: paths["state"], temp: paths["temp"], cache: paths["cache"], key: key, self: self}, nil
 }
 
-// resolveOwnedRoot returns the real path of the root n. A missing root is made owner-only
-// (mkdirOwnerOnly), and the state root is always passed to it, so a state link is refused. An
-// existing temp or cache root, such as a shared /tmp/aiwe another user made first, is kept as it
-// is; OpenOwner checks it at its real path after checkRootSafe (checkOwnerOnly), and loadOwnerKey
-// checks the state root.
+// resolveOwnedRoot returns the real path of the root n. A missing root is made owner-only, and a
+// root that is a link or junction is refused, never followed (mkdirOwnerOnly). An existing temp or
+// cache root, such as a shared /tmp/aiwe another user made first, keeps its mode; OpenOwner
+// checks it after checkRootSafe (checkOwnerOnly), and loadOwnerKey checks the state root.
 func resolveOwnedRoot(n namedPath) (string, error) {
 	if n.path == "" || !filepath.IsAbs(n.path) {
 		return "", fmt.Errorf("%w: %s root %q is not an absolute path", ErrRootUnsafe, n.name, n.path)
 	}
-	if _, err := os.Lstat(n.path); n.name == "state" || errors.Is(err, fs.ErrNotExist) {
-		if err := mkdirOwnerOnly(n.path); err != nil {
-			return "", fmt.Errorf("%s root: %w", n.name, err)
-		}
+	if err := mkdirOwnerOnly(n.path); err != nil {
+		return "", fmt.Errorf("%s root: %w", n.name, err)
 	}
 	return realDir(n)
 }

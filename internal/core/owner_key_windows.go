@@ -25,9 +25,8 @@ const ownerOnlyMask = windows.FILE_READ_DATA | windows.FILE_WRITE_DATA | windows
 // than the current user, SYSTEM or Administrators owns it or can read or write it through its
 // DACL; the 0o600/0o700 modes do nothing on Windows. CREATOR OWNER counts as the user: it becomes
 // the creator of each entry made below p. A missing DACL grants everyone every right, and an ACE
-// type other than allow or deny cannot be proven safe, so both are refused (fail-closed).
-// OpenOwner passes the real path of a temp or cache root, so a root that is a junction or link is
-// checked at its target.
+// type other than allow or deny cannot be proven safe, so both are refused (fail-closed). A root
+// that is a junction or link never reaches it: mkdirOwnerOnly refuses it first.
 func checkOwnerOnly(p string) error {
 	trusted, err := ownerOnlySIDs()
 	if err != nil {
@@ -76,15 +75,31 @@ func checkOwnerOnlyACE(p string, ace *windows.ACCESS_ALLOWED_ACE, trusted []*win
 		"Administrators may read or write it", ErrRootUnsafe, p, sid, uint32(ace.Mask))
 }
 
-// mkdirOwnerOnly makes the root p, and any missing parent, when p is missing. OpenOwner passes it
-// the state root always and a temp or cache root only when missing, so a state root that is a
-// junction or link is refused, and a temp or cache root that is one is checked at its target. p
-// itself is made in one step with a protected DACL that allows only the current user, SYSTEM and
-// Administrators, and that each entry below it inherits, such as the owner key; no ACE of an open
-// parent reaches it.
-// A p that exists is left as it is: checkOwnerOnly refuses it when it is open. A p that is not a
-// plain directory, such as a junction, fails with ErrRootUnsafe before anything follows it.
+// mkdirOwnerOnly makes the state, temp or cache root p, and any missing parent, when p is missing
+// (createOwnerOnlyDir). A p that exists is left as it is, so CreateDirectory never runs on a
+// file-system root: checkOwnerOnly refuses p when it is open. A p that is not a plain directory,
+// such as a junction or link, fails with ErrRootUnsafe before anything follows it.
 func mkdirOwnerOnly(p string) error {
+	if _, err := os.Lstat(p); errors.Is(err, fs.ErrNotExist) {
+		if err := createOwnerOnlyDir(p); err != nil {
+			return err
+		}
+	}
+	fi, err := os.Lstat(p)
+	if err != nil {
+		return err
+	}
+	if fi.Mode().Type() != fs.ModeDir {
+		return fmt.Errorf("%w: %q is not a plain directory (a junction or link is never followed)", ErrRootUnsafe, p)
+	}
+	return nil
+}
+
+// createOwnerOnlyDir makes p, and any missing parent. p itself is made in one step with a
+// protected DACL that allows only the current user, SYSTEM and Administrators, and that each entry
+// below it inherits, such as the owner key; no ACE of an open parent reaches it. A p made by
+// another process in the meantime is left as it is.
+func createOwnerOnlyDir(p string) error {
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		return err
 	}
@@ -105,13 +120,6 @@ func mkdirOwnerOnly(p string) error {
 	sa.Length = uint32(unsafe.Sizeof(sa))
 	if err := windows.CreateDirectory(name, &sa); err != nil && !errors.Is(err, fs.ErrExist) {
 		return &fs.PathError{Op: "mkdir", Path: p, Err: err}
-	}
-	fi, err := os.Lstat(p)
-	if err != nil {
-		return err
-	}
-	if fi.Mode().Type() != fs.ModeDir {
-		return fmt.Errorf("%w: %q is not a plain directory (a junction or link is never followed)", ErrRootUnsafe, p)
 	}
 	return nil
 }
