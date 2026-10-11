@@ -7,9 +7,15 @@ import (
 	"strings"
 )
 
-// logKeys are the record keys a caller may set; ts, level and event come from the record itself
-// (SPEC §5.11).
-var logKeys = map[string]bool{"runId": true, "unit": true, "detail": true}
+// logKey reports whether key is a record key a caller may set; ts, level and event come from the
+// record itself (SPEC §5.11).
+func logKey(key string) bool {
+	switch key {
+	case "runId", "unit", "detail":
+		return true
+	}
+	return false
+}
 
 // NewLog returns the one logger (SPEC §5.11): one JSON object per line through slog's JSON handler,
 // with the time under "ts" and the message under "event". A line carries only ts, level, event,
@@ -74,7 +80,7 @@ func (h *logHandler) Handle(ctx context.Context, r slog.Record) error {
 	seen := map[string]bool{}
 	add := func(a slog.Attr) bool {
 		v := a.Value.Resolve()
-		if v.Kind() != slog.KindGroup && logKeys[a.Key] && !seen[a.Key] {
+		if v.Kind() != slog.KindGroup && logKey(a.Key) && !seen[a.Key] {
 			seen[a.Key] = true
 			out.AddAttrs(slog.String(a.Key, logStrip(v.String())))
 		}

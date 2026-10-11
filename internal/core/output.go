@@ -32,7 +32,7 @@ func WriteResult(w io.Writer, f Format, r Result[any]) error {
 	case FormatJSON:
 		enc := json.NewEncoder(&buf)
 		enc.SetEscapeHTML(false)
-		if err := enc.Encode(envelope{Status: r.Status, Outcome: r.Outcome, Data: r.Data, Detail: r.Detail}); err != nil {
+		if err := enc.Encode(envelope(r)); err != nil {
 			return fmt.Errorf("encode result envelope: %w", err)
 		}
 	case FormatText:

@@ -24,7 +24,7 @@ func Outcomes() []OutcomeRow {
 		{Outcome: OutcomeOK, Status: StatusOK, Next: "read the data of the result"},
 		{Outcome: OutcomeError, Status: StatusError,
 			Next: "fix the condition the detail names, then run the command again"},
-		{Outcome: OutcomeUsage, Status: StatusUsage, Next: "run aiwe --help and correct the call"},
+		{Outcome: OutcomeUsage, Status: StatusUsage, Next: "run " + Product + " --help and correct the call"},
 		{Outcome: "red", Status: StatusRed, Next: "fix the failing step, then run the gate again"},
 		{Outcome: "incomplete", Status: StatusError,
 			Next: "run every gate step, and fix each step the report marks not_measured, then run the gate again"},

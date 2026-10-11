@@ -114,7 +114,7 @@ func TestOutput(t *testing.T) {
 		{
 			name: "usage refusal printed as usage: usage:",
 			err:  &core.Error{Outcome: core.OutcomeUsage, Expected: "the repo parameter", Found: "no repo parameter"},
-			want: "usage: expected the repo parameter; found no repo parameter; next: run aiwe --help and correct the call\n",
+			want: "usage: expected the repo parameter; found no repo parameter; next: run " + core.Product + " --help and correct the call\n",
 		},
 		{
 			name: "error refusal printed as error: error:",

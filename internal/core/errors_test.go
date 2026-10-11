@@ -8,7 +8,43 @@ import (
 	"github.com/sungurerdim/aiwe/internal/core"
 )
 
+// errorsTestBare reports whether err is the sentinel itself: errors.Is finds sentinel, err has the
+// sentinel's text and err neither wraps an error nor matches by an Is method. With no Unwrap and
+// no Is method, errors.Is reduces to identity, so the check is as strict as err == sentinel.
+func errorsTestBare(err, sentinel error) bool {
+	if !errors.Is(err, sentinel) || err.Error() != sentinel.Error() {
+		return false
+	}
+	switch any(err).(type) {
+	case interface{ Unwrap() error }, interface{ Unwrap() []error }, interface{ Is(error) bool }:
+		return false
+	}
+	return true
+}
+
 func TestErrors(t *testing.T) {
+	t.Run("wrapped or joined sentinel taken for the bare sentinel", func(t *testing.T) {
+		other := errors.New("state file unreadable")
+		tests := []struct {
+			name string
+			err  error
+			want bool
+		}{
+			{name: "bare sentinel refused", err: core.ErrConfigInvalid, want: true},
+			{name: "joined sentinel accepted", err: errors.Join(core.ErrConfigInvalid, other)},
+			{name: "sentinel wrapped twice in one error accepted", err: fmt.Errorf("%w %w", core.ErrConfigInvalid, other)},
+			{name: "sentinel wrapped with context accepted", err: fmt.Errorf("read state: %w", core.ErrConfigInvalid)},
+			{name: "new error with the sentinel's text accepted", err: errors.New(core.ErrConfigInvalid.Error())},
+		}
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				if got := errorsTestBare(tc.err, core.ErrConfigInvalid); got != tc.want {
+					t.Errorf("errorsTestBare(%v, ErrConfigInvalid) = %v, want %v", tc.err, got, tc.want)
+				}
+			})
+		}
+	})
+
 	t.Run("error matched by its text instead of errors.Is or errors.As", func(t *testing.T) {
 		tests := []struct {
 			name    string
@@ -37,7 +73,7 @@ func TestErrors(t *testing.T) {
 			},
 			{
 				name:    "a core.Error wrapped with context is not found by errors.As",
-				err:     fmt.Errorf("clone %s: %w", "sungurerdim/aiwe", &core.Error{Outcome: "usage", Expected: "a repository path", Found: "an empty value", Next: "pass --repo"}),
+				err:     fmt.Errorf("clone %s: %w", "sungurerdim/"+core.Product, &core.Error{Outcome: "usage", Expected: "a repository path", Found: "an empty value", Next: "pass --repo"}),
 				outcome: "usage",
 			},
 		}
@@ -57,7 +93,7 @@ func TestErrors(t *testing.T) {
 		if !errors.Is(wrapped, core.ErrParamDuplicate) {
 			t.Error("errors.Is(wrapped core.Error, ErrParamDuplicate) = false: Unwrap does not return Err")
 		}
-		if got := errors.Unwrap(e); got != core.ErrParamDuplicate {
+		if got := errors.Unwrap(e); !errorsTestBare(got, core.ErrParamDuplicate) {
 			t.Errorf("(*core.Error).Unwrap() = %v, want ErrParamDuplicate", got)
 		}
 		var target *core.Error
