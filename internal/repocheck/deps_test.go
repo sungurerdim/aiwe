@@ -298,6 +298,36 @@ func TestDoctor(t *testing.T) {
 		}
 	})
 
+	t.Run("a short go directive orders below its release candidates", func(t *testing.T) {
+		// Guards against reading `go 1.28` as 1.28.0: Go orders 1.28 below 1.28rc1 below 1.28.0,
+		// and a devel toolchain counts as its language version, as cmd/go reads it.
+		cases := []struct {
+			goLine, have string
+			present      bool
+		}{
+			{"1.28", "go1.28rc1", true},
+			{"1.28", "go1.28beta1", true},
+			{"1.28", "go1.27.9", false},
+			{"1.28", "go1.28.0", true},
+			{"1.28", "go1.28.1", true},
+			{"1.28.0", "go1.28rc1", false},
+			{"1.28", "devel go1.28-abc", true},
+			{"1.28", "devel go1.28-abc Mon Oct 5 10:00:00 2026 +0000", true},
+			{"1.28.0", "devel go1.28-abc", false},
+			{"1.28rc1", "devel go1.28-abc", false},
+			{"1.28", "devel go1.27-abc", false},
+		}
+		for _, tc := range cases {
+			got, err := repocheck.Doctor(doctorEnv(doctorRepo(t, tc.goLine), "linux", tc.have))
+			if err != nil {
+				t.Fatalf("Doctor(go %s, %s) error = %v, want nil", tc.goLine, tc.have, err)
+			}
+			if p := prerequisite(t, got, "go"); p.Present != tc.present {
+				t.Errorf("Doctor(go %s, %s) go = %+v, want present=%v", tc.goLine, tc.have, p, tc.present)
+			}
+		}
+	})
+
 	t.Run("a go tool entry that does not resolve names a command that leaves go.mod unchanged", func(t *testing.T) {
 		// Guards against `go get -tool`, which rewrites go.mod; `go mod download` only fetches
 		// the modules go.mod already pins.
