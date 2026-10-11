@@ -28,12 +28,16 @@ func resolveLauncher(program, dir string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve program %q: %w", program, err)
 	}
+	if err := checkLauncherPath(path); err != nil { // the batch decision is made on this path
+		return "", err
+	}
 	return path, checkPathExt(path)
 }
 
 // checkPathExt refuses a program whose extension is not in PATHEXT, read as Start reads it.
 // CreateProcess runs an executable image whatever its extension, and the shell opens a file
-// outside PATHEXT through its file association.
+// outside PATHEXT through its file association. An entry with no name, such as ".", accepts no
+// extension: a path whose extension is empty or "." names no program type.
 func checkPathExt(path string) error {
 	exts := os.Getenv("PATHEXT")
 	if exts == "" {
@@ -41,7 +45,7 @@ func checkPathExt(path string) error {
 	}
 	ext := filepath.Ext(path)
 	for e := range strings.SplitSeq(exts, ";") {
-		if e != "" && strings.EqualFold(ext, "."+strings.TrimPrefix(e, ".")) {
+		if name := strings.TrimPrefix(e, "."); name != "" && strings.EqualFold(ext, "."+name) {
 			return nil
 		}
 	}
@@ -70,11 +74,22 @@ func (k kernel32) commandShell() (string, error) {
 // windowsStrippedTail is what Windows strips from the end of a file name before it opens it.
 const windowsStrippedTail = ". "
 
-// checkLauncherPath refuses a program path that ends in a dot or a space. Windows strips them, so
-// "launch.cmd." runs as the batch file "launch.cmd" while its own extension says it is not one.
+// checkLauncherPath refuses a program path whose last element is not the file Windows opens. It
+// strips a trailing dot or space, so "launch.cmd." runs as the batch file "launch.cmd" while its
+// own extension says it is not one. A trailing separator or a "." or ".." element resolves away
+// too: LookPath returns `run.cmd\.` for `run.cmd\` and `run.cmd\x\..\`, whose extension is ".".
 func checkLauncherPath(path string) error {
 	if strings.TrimRight(path, windowsStrippedTail) != path {
 		return fmt.Errorf("program %q ends in a dot or a space, which Windows strips: refused", path)
+	}
+	rest := path[len(filepath.VolumeName(path)):]
+	if rest != "" && os.IsPathSeparator(rest[len(rest)-1]) {
+		return fmt.Errorf("program %q ends in a path separator: refused", path)
+	}
+	for _, elem := range strings.FieldsFunc(rest, func(r rune) bool { return r == '\\' || r == '/' }) {
+		if elem == "." || elem == ".." {
+			return fmt.Errorf("program %q holds a %q element: refused", path, elem)
+		}
 	}
 	return nil
 }
