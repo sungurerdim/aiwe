@@ -4,7 +4,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -38,10 +37,12 @@ type check struct {
 	run  func(ctx context.Context, repo string) (measured, error)
 }
 
-// measured is what one check found and the counts it reports beside its findings.
+// measured is what one check found and the counts it reports beside its findings; absent names
+// the missing input when the check measured nothing.
 type measured struct {
 	findings []repocheck.Finding
 	detail   string
+	absent   string
 }
 
 // findingsOnly adapts a check that reports findings and no counts.
@@ -135,10 +136,10 @@ func runAll(ctx context.Context, in core.Input) (core.Result[any], error) {
 func runCheck(ctx context.Context, c check, repo string) checkResult {
 	m, err := c.run(ctx, repo)
 	switch {
-	case errors.Is(err, repocheck.ErrNoWorkflow):
-		return checkResult{Check: c.name, Result: resultNotMeasured, Detail: err.Error()}
 	case err != nil:
 		return checkResult{Check: c.name, Result: resultError, Detail: err.Error()}
+	case m.absent != "":
+		return checkResult{Check: c.name, Result: resultNotMeasured, Detail: m.absent + " is absent"}
 	case len(m.findings) > 0:
 		return checkResult{Check: c.name, Result: resultRed, Findings: m.findings, Detail: m.detail}
 	}
@@ -147,9 +148,9 @@ func runCheck(ctx context.Context, c check, repo string) checkResult {
 
 // runCIShape checks the shape of the CI workflow of repo and reports its counts (DR-42).
 func runCIShape(_ context.Context, repo string) (measured, error) {
-	rep, err := repocheck.CIShape(os.DirFS(repo))
-	if err != nil {
-		return measured{}, err
+	rep, present, err := repocheck.CIShape(os.DirFS(repo))
+	if err != nil || !present {
+		return measured{absent: ".github/workflows/ci.yml"}, err
 	}
 	return measured{findings: rep.Findings,
 		detail: fmt.Sprintf("%d workflows, %d jobs, %d steps", rep.Workflows, rep.Jobs, rep.Steps)}, nil

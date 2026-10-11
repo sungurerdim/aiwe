@@ -29,9 +29,6 @@ const (
 	concurrencyCancel = "${{github.event_name=='pull_request'}}"
 )
 
-// ErrNoWorkflow reports that the tree has no CI workflow, so the shape was not measured (DR-13).
-var ErrNoWorkflow = errors.New("no CI workflow")
-
 // pinnedUsesPattern matches an action or reusable workflow named by a full commit SHA.
 var pinnedUsesPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+@[0-9a-f]{40}$`)
 
@@ -46,20 +43,21 @@ type CIShapeReport struct {
 // CIShape checks the CI workflow of the tree fsys against SPEC §12.2: every step carries a
 // `# why:` comment, every `uses:` names a full commit SHA, the triggers are push on main,
 // pull_request and workflow_dispatch, the concurrency is the prescribed one, and ci.yml is the
-// only workflow. A tree without ci.yml is ErrNoWorkflow, never green (DR-13).
-func CIShape(fsys fs.FS) (CIShapeReport, error) {
+// only workflow. present is false when the tree has no ci.yml: the shape was not measured, and
+// the caller reports it so, never green (DR-13).
+func CIShape(fsys fs.FS) (rep CIShapeReport, present bool, err error) {
 	body, err := fs.ReadFile(fsys, ciWorkflowPath)
 	if errors.Is(err, fs.ErrNotExist) {
-		return CIShapeReport{}, fmt.Errorf("ci-shape: %s: %w", ciWorkflowPath, ErrNoWorkflow)
+		return CIShapeReport{}, false, nil
 	}
 	if err != nil {
-		return CIShapeReport{}, fmt.Errorf("ci-shape: %w", err)
+		return CIShapeReport{}, false, fmt.Errorf("ci-shape: %w", err)
 	}
 	entries, err := fs.ReadDir(fsys, workflowDir)
 	if err != nil {
-		return CIShapeReport{}, fmt.Errorf("ci-shape: %w", err)
+		return CIShapeReport{}, false, fmt.Errorf("ci-shape: %w", err)
 	}
-	rep := workflowShape(parseYAML(string(body)))
+	rep = workflowShape(parseYAML(string(body)))
 	for _, e := range entries {
 		ext := path.Ext(e.Name())
 		if e.IsDir() || (ext != ".yml" && ext != ".yaml") {
@@ -71,7 +69,7 @@ func CIShape(fsys fs.FS) (CIShapeReport, error) {
 		}
 	}
 	sortFindings(rep.Findings)
-	return rep, nil
+	return rep, true, nil
 }
 
 // workflowShape checks the parsed top-level keys of ci.yml.

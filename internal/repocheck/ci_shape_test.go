@@ -1,7 +1,6 @@
 package repocheck
 
 import (
-	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -62,9 +61,9 @@ jobs:
 // ciShapeOf runs CIShape on a tree that holds body as the one workflow.
 func ciShapeOf(t *testing.T, body string) CIShapeReport {
 	t.Helper()
-	rep, err := CIShape(fstest.MapFS{ciWorkflowPath: {Data: []byte(body)}})
-	if err != nil {
-		t.Fatalf("CIShape: %v", err)
+	rep, present, err := CIShape(fstest.MapFS{ciWorkflowPath: {Data: []byte(body)}})
+	if err != nil || !present {
+		t.Fatalf("CIShape: present %v, err %v; want the workflow measured", present, err)
 	}
 	return rep
 }
@@ -199,12 +198,12 @@ func TestCIShape(t *testing.T) {
 	})
 
 	t.Run("refuses a second workflow file", func(t *testing.T) {
-		rep, err := CIShape(fstest.MapFS{
+		rep, present, err := CIShape(fstest.MapFS{
 			ciWorkflowPath:                   {Data: []byte(ciFixture)},
 			".github/workflows/release.yaml": {Data: []byte(ciFixture)},
 		})
-		if err != nil {
-			t.Fatalf("CIShape: %v", err)
+		if err != nil || !present {
+			t.Fatalf("CIShape: present %v, err %v; want the workflow measured", present, err)
 		}
 		if rep.Workflows != 2 || !slices.ContainsFunc(rep.Findings, func(f Finding) bool {
 			return f.Rule == "extra_workflow" && f.Path == ".github/workflows/release.yaml"
@@ -214,9 +213,10 @@ func TestCIShape(t *testing.T) {
 	})
 
 	t.Run("reports an absent workflow as unmeasured, never green", func(t *testing.T) {
-		_, err := CIShape(fstest.MapFS{"go.mod": {Data: []byte("module example.com/x\n")}})
-		if !errors.Is(err, ErrNoWorkflow) {
-			t.Fatalf("CIShape without %s: err = %v, want ErrNoWorkflow", ciWorkflowPath, err)
+		rep, present, err := CIShape(fstest.MapFS{"go.mod": {Data: []byte("module example.com/x\n")}})
+		if err != nil || present || rep.Workflows != 0 || len(rep.Findings) != 0 {
+			t.Fatalf("CIShape without %s: report %+v, present %v, err %v; want not present and no error",
+				ciWorkflowPath, rep, present, err)
 		}
 	})
 }
