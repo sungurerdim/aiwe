@@ -31,9 +31,15 @@ func removeTestRoots(t *testing.T, base string) OwnedRoots {
 	return r
 }
 
+// removeTestMkdir makes dir owner-only when it is missing, the same as OpenOwner makes a root: a
+// dir made with MkdirAll on Windows inherits the parent's ACL, which may let other users in.
 func removeTestMkdir(t *testing.T, dir string) {
 	t.Helper()
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	mkdir := func(p string) error { return os.MkdirAll(p, 0o700) }
+	if _, err := os.Lstat(dir); errors.Is(err, os.ErrNotExist) {
+		mkdir = mkdirOwnerOnly
+	}
+	if err := mkdir(dir); err != nil {
 		t.Fatalf("mkdir %s: %v", dir, err)
 	}
 }
