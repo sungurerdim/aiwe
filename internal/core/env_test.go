@@ -399,6 +399,27 @@ func TestCleanEnvSecretsDropped(t *testing.T) {
 			"PIP_EXTRA_INDEX_URL=https://pypi.org https://ci:tok3n@pypi.example.com/simple"},
 		{"comma-separated _URL list with a password in its second URL kept",
 			"PIP_EXTRA_INDEX_URL=https://pypi.org/simple,https://ci:tok3n@pypi.example.com/simple"},
+		{"DATABASE_URL with a digit-led password and a raw / kept",
+			"DATABASE_URL=postgres://app:2024/Secret@db.example.com/app"},
+		{"DATABASE_URL with a digit-led password and a raw ? kept",
+			"DATABASE_URL=postgres://app:2024?Secret@db.example.com/app"},
+		{"DATABASE_URL with a digit-led password and a raw # kept",
+			"DATABASE_URL=postgres://app:2024#Secret@db.example.com/app"},
+		{"DATABASE_URL with a password that starts with / kept", "DATABASE_URL=postgres://app:/Secret@db.example.com/app"},
+		{"DATABASE_URL with a password that starts with # kept", "DATABASE_URL=postgres://app:#Secret@db.example.com/app"},
+		{"DATABASE_URL with a password that starts with ? kept", "DATABASE_URL=postgres://app:?Secret@db.example.com/app"},
+		{"semicolon-joined _URL list with a password in its second URL kept",
+			"PIP_EXTRA_INDEX_URL=https://pypi.org/simple;https://ci:tok3n@pypi.example.com/simple"},
+		{"pipe-joined _URL list with a password in its second URL kept",
+			"PIP_EXTRA_INDEX_URL=https://pypi.org/simple|https://ci:tok3n@pypi.example.com/simple"},
+		{"semicolon-joined _URL list whose first URL has no path, with a password in its second URL kept",
+			"PIP_EXTRA_INDEX_URL=https://pypi.org;https://ci:tok3n@pypi.example.com/simple"},
+		{"zero-width-space-joined _URL list with a password in its second URL kept",
+			"PIP_EXTRA_INDEX_URL=https://pypi.org/simple\u200bhttps://ci:tok3n@pypi.example.com/simple"},
+		{"_URL with a port and @ later in its path kept, as : then @ after :// drops it",
+			"P1_URL=https://git.example.com:8443/users/@zeynep"},
+		{"_URL with user:host@ in its query kept, as : then @ after :// drops it",
+			"P2_URL=https://host.example.com/login?next=mailto:zeynep@example.com"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -442,11 +463,9 @@ func TestCleanEnvSecretsKept(t *testing.T) {
 		{"_URL with @ only in its path dropped", "REGISTRY_URL=https://registry.npmjs.org/@types%2fnode"},
 		{"_URL with @user:server only in its path dropped",
 			"MATRIX_URL=https://matrix.example.com/_matrix/client/v3/profile/@zeynep:example.com"},
-		{"_URL with a port and @ only in its path dropped", "P1_URL=https://git.example.com:8443/users/@zeynep"},
-		{"_URL with user:host@ only in its query dropped",
-			"P2_URL=https://host.example.com/login?next=mailto:zeynep@example.com"},
 		{"scp-style _URL without a password dropped", "MIRROR_URL=git@github.com:sungurerdim/aiwe.git"},
 		{"_URL with a port and no user info dropped", "CACHE_URL=redis://cache.example.com:6379/0"},
+		{"_URL with a user and no password dropped", "REMOTE_URL=https://zeynep@github.com/sungurerdim/aiwe.git"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
