@@ -1,0 +1,67 @@
+# Gate step lint (SPEC §12.2): the linters of SPEC §5.17, run by custom-gcl (.custom-gcl.yml).
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - bodyclose
+    - containedctx
+    - contextcheck
+    - errcheck
+    - errorlint
+    - exhaustive
+    - forbidigo
+    - gocognit
+    - gosec
+    - govet
+    - nilaway
+    - noctx
+    - staticcheck
+    - unused
+  settings:
+    gocognit:
+      min-complexity: 12
+    forbidigo:
+      analyze-types: true
+      forbid:
+        - pattern: ^os\.RemoveAll$
+          msg: recursive removal only in internal/core/remove.go (DR-25)
+        - pattern: ^os\.(Getenv|LookupEnv|Environ)$
+          msg: the environment is read only in internal/core/env.go (SPEC §5.4)
+        - pattern: ^panic$
+          msg: panic only through internal/core/assert.go (SPEC §5.3)
+        - pattern: ^context\.Background$
+          msg: context.Background only in cmd/aiwe and tests (SPEC §5.18)
+    custom:
+      nilaway:
+        type: module
+        description: nil pointer and nil map dereference (SPEC §5.17)
+        settings:
+          include-pkgs: github.com/sungurerdim/aiwe
+  exclusions:
+    rules:
+      # Q12 cognitive complexity applies to non-test functions only (owner decision on #130).
+      - path: _test\.go$
+        linters:
+          - gocognit
+      - path: ^internal/core/remove\.go$
+        linters:
+          - forbidigo
+        text: os\.RemoveAll
+      - path: ^internal/core/env\.go$
+        linters:
+          - forbidigo
+        text: os\.(Getenv|LookupEnv|Environ)
+      - path: ^internal/core/assert\.go$
+        linters:
+          - forbidigo
+        text: panic
+      - path: (^cmd/aiwe/|_test\.go$)
+        linters:
+          - forbidigo
+        text: context\.Background
+
+issues:
+  # Every finding is reported; the default caps hide findings past the first few.
+  max-issues-per-linter: 0
+  max-same-issues: 0
