@@ -63,13 +63,11 @@ func writeConfigState(t *testing.T, dir string, settings map[string]string) {
 func TestConfigShow(t *testing.T) {
 	base := t.TempDir()
 	stateDir := filepath.Join(base, "state-root")
-	cacheDir := filepath.Join(base, "cache-root")
 	writeConfigState(t, stateDir, map[string]string{"model": "state-model", "max_turns": "25",
 		"tracker": "gitlab", "db.url": "postgres://ada:hunter2-db@db.example.com/app",
 		"db.password": "s3cret-db-pass"})
 	getenv := configShowEnv(base, map[string]string{
 		envName("HOME"):      stateDir,
-		envName("CACHE"):     cacheDir,
 		envName("MODEL"):     "env-model",
 		envName("MAX_TURNS"): "30",
 		envName("API_TOKEN"): "ghp_Zq81LmN0pQrStUvWx",
@@ -86,7 +84,7 @@ func TestConfigShow(t *testing.T) {
 	}
 	want := []core.ConfigRow{
 		{Name: "root.state", Value: stateDir, Origin: core.ConfigOriginEnv},
-		{Name: "root.cache", Value: cacheDir, Origin: core.ConfigOriginEnv},
+		{Name: "root.cache", Origin: core.ConfigOriginDefault},
 		{Name: "root.temp", Origin: core.ConfigOriginDefault},
 		{Name: "model", Value: "flag-model", Origin: core.ConfigOriginFlag},
 		{Name: "max_turns", Value: "30", Origin: core.ConfigOriginEnv},
@@ -97,11 +95,11 @@ func TestConfigShow(t *testing.T) {
 		{Name: "db.url", Value: core.ConfigMasked, Origin: core.ConfigOriginState},
 		{Name: "db.password", Value: core.ConfigMasked, Origin: core.ConfigOriginState},
 	}
-	wantTemp, err := core.ResolveRoots(runtime.GOOS, getenv, base)
+	wantRoots, err := core.ResolveRoots(runtime.GOOS, getenv, base)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want[2].Value = wantTemp.Temp
+	want[1].Value, want[2].Value = wantRoots.Cache, wantRoots.Temp
 	t.Run("a setting left out or shown twice is caught", func(t *testing.T) {
 		if len(rows) != len(want) {
 			t.Fatalf("rows = %d %+v, want %d", len(rows), rows, len(want))
@@ -162,6 +160,15 @@ func TestConfigShowRefuses(t *testing.T) {
 }
 
 func TestConfigShowCommand(t *testing.T) {
+	base := t.TempDir()
+	want := []core.ConfigRow{
+		{Name: "root.state", Value: filepath.Join(base, "state-root"), Origin: core.ConfigOriginEnv},
+		{Name: "root.cache", Value: filepath.Join(base, "cache-root"), Origin: core.ConfigOriginEnv},
+		{Name: "root.temp", Value: filepath.Join(base, "temp-root"), Origin: core.ConfigOriginEnv},
+	}
+	for i, suffix := range []string{"HOME", "CACHE", "TMP"} {
+		t.Setenv(envName(suffix), want[i].Value)
+	}
 	var out bytes.Buffer
 	code := core.RunCLI(context.Background(), core.ConfigCommands(), []string{"config", "show", "--format", "json"}, &out)
 	if code != 0 {
@@ -173,9 +180,12 @@ func TestConfigShowCommand(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &env); err != nil {
 		t.Fatalf("decode %q: %v", out.String(), err)
 	}
-	for _, name := range []string{"root.state", "root.cache", "root.temp"} {
-		if !hasConfigRow(env.Data, name) {
-			t.Fatalf("config show left out %s: %+v", name, env.Data)
+	if len(env.Data) != len(want) {
+		t.Fatalf("rows = %+v, want %+v", env.Data, want)
+	}
+	for i, w := range want {
+		if env.Data[i] != w {
+			t.Fatalf("row %d = %+v, want %+v: a root shown with a wrong value or origin", i, env.Data[i], w)
 		}
 	}
 }
@@ -190,15 +200,6 @@ func rowAt(rows []core.ConfigRow, i int) any {
 func containsLine(text, line string) bool {
 	for _, l := range strings.Split(text, "\n") {
 		if l == line {
-			return true
-		}
-	}
-	return false
-}
-
-func hasConfigRow(rows []core.ConfigRow, name string) bool {
-	for _, r := range rows {
-		if r.Name == name && r.Origin != "" && r.Value != "" {
 			return true
 		}
 	}
