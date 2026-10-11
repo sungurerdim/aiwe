@@ -71,7 +71,7 @@ func TestStream(t *testing.T) {
 	def := Definition{FormatVersion: 1, Steps: []GateStep{step}}
 
 	start := time.Now()
-	report, err := (&Runner{Output: w}).Run(context.Background(), def, t.TempDir(), nil)
+	report, err := (&Runner{Output: w, Owner: rootsTestOwner(t)}).Run(context.Background(), def, t.TempDir(), nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
