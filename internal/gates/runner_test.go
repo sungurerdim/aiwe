@@ -2,7 +2,6 @@ package gates
 
 import (
 	"context"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -53,10 +52,10 @@ func runnerTestSteps(t *testing.T) (green1, green2, red, missing GateStep) {
 	return green1, green2, red, missing
 }
 
-// runnerTestRunner returns a Runner with a chosen worker count and a place to print it, so a gate
-// with a test step runs that step (DR-7).
+// runnerTestRunner returns a Runner with a chosen worker count, so a gate with a test step runs
+// that step (DR-7).
 func runnerTestRunner() *Runner {
-	return &Runner{Capacity: core.CapacityFor(core.Measured[int64]{Value: 4, Known: true}, 1), Out: io.Discard}
+	return &Runner{Capacity: core.CapacityFor(core.Measured[int64]{Value: 4, Known: true}, 1)}
 }
 
 // runnerTestIDs returns the step ids of a report in report order.

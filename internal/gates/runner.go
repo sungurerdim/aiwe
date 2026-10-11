@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"slices"
 	"time"
 
@@ -50,12 +49,10 @@ type GateReport struct {
 }
 
 // Runner runs the steps of a gate, one after another, each as a process tree (SPEC §5.20).
-// Capacity sets the test step's worker count and Out receives it printed (DR-7). The test step is
-// not_measured when either is missing; the green or red test step also carries the count as its
-// detail.
+// Capacity sets the test step's worker count (DR-7); without one the test step is not_measured.
+// A green or red test step prints the count with its inputs as its detail.
 type Runner struct {
 	Capacity core.Capacity
-	Out      io.Writer
 }
 
 // Run runs the steps of def in dir. A non-empty only names the steps to run; every other step is
@@ -134,9 +131,8 @@ func (r *Runner) runStep(ctx context.Context, step GateStep, dir string) StepRep
 }
 
 // command returns the argv a step runs and the note its report carries. The test step runs with
-// the worker count of DR-7, and the count is printed with its inputs; every other step runs as
-// declared. A test step with no chosen count, or nowhere to print it, cannot run: the count is
-// never assumed (DR-13) and is always printed (DR-7).
+// the worker count of DR-7, and the note prints the count with its inputs; every other step runs
+// as declared. A test step with no chosen count cannot run: the count is never assumed (DR-13).
 func (r *Runner) command(step GateStep) (argv []string, note string, err error) {
 	if step.ID != testStepID {
 		return step.Command, "", nil
@@ -144,14 +140,7 @@ func (r *Runner) command(step GateStep) (argv []string, note string, err error) 
 	if r.Capacity.Workers < 1 {
 		return nil, "", errors.New("no worker count was chosen for the test step")
 	}
-	if r.Out == nil {
-		return nil, "", errors.New("the worker count has nowhere to be printed")
-	}
-	note = r.Capacity.String()
-	if _, err := fmt.Fprintf(r.Out, "step %s: %s\n", step.ID, note); err != nil {
-		return nil, "", fmt.Errorf("the worker count could not be printed: %w", err)
-	}
-	return withParallelism(step.Command, r.Capacity.Workers), note, nil
+	return withParallelism(step.Command, r.Capacity.Workers), r.Capacity.String(), nil
 }
 
 // exitCode returns the exit code behind the error of Wait; ok is false when the child did not

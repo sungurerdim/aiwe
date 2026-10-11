@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"strings"
@@ -46,9 +45,7 @@ func runGate(ctx context.Context, in core.Input) (core.Result[any], error) {
 	// One gate run starts no other job on this path, and no admission count exists yet: jobs is 1.
 	capacity := core.CapacityFor(core.MeasureCores(), 1)
 	capacity.JobsFrom = "single-run"
-	// core.Input carries no writer and stdout holds the result, so the count reaches the output
-	// through the test step's detail.
-	r := Runner{Capacity: capacity, Out: io.Discard}
+	r := Runner{Capacity: capacity}
 	report, err := r.Run(ctx, def, repo, only)
 	if err != nil {
 		return core.Result[any]{}, err

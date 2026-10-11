@@ -227,3 +227,23 @@ func TestGatesCommand(t *testing.T) {
 		})
 	}
 }
+
+// TestGatesCommandWorkers catches `aiwe gates gate` running its test step without the measured
+// worker count in the report, or without the source of its concurrent job count (DR-7).
+func TestGatesCommandWorkers(t *testing.T) {
+	_, test, _, _ := runnerTestSteps(t)
+	repo := commandsTestRepo(t, []GateStep{test})
+	code, env, out := commandsTestRun(t, "--repo", repo)
+	if code != 0 || env.Data.Result != ResultGreen {
+		t.Fatalf("exit %d, gate %q, want 0 and green\n%s", code, env.Data.Result, out)
+	}
+	if len(env.Data.Steps) != 1 || env.Data.Steps[0].ID != test.ID {
+		t.Fatalf("steps = %+v, want the one test step", env.Data.Steps)
+	}
+	detail := env.Data.Steps[0].Detail
+	for _, want := range []string{"workers=", "jobs=1", "jobs_from=single-run"} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("test step detail %q does not contain %q", detail, want)
+		}
+	}
+}
