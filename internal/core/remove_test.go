@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -95,6 +94,10 @@ func removeTestCreate(t *testing.T, o *Owner, root OwnedRoot) OwnedDir {
 	return d
 }
 
+// JunctionForTest makes link a directory junction to the absolute dir target without passing a
+// path through cmd (#154). junction_windows_test.go sets it; it is nil on an OS without junctions.
+var JunctionForTest func(t *testing.T, target, link string)
+
 // removeTestLink makes link point at target: a symlink where the OS allows it, else (Windows
 // without the symlink privilege) a directory junction, which needs no privilege.
 func removeTestLink(t *testing.T, target, link string) {
@@ -103,13 +106,10 @@ func removeTestLink(t *testing.T, target, link string) {
 	if err == nil {
 		return
 	}
-	if runtime.GOOS != "windows" {
+	if JunctionForTest == nil {
 		t.Fatalf("symlink %s -> %s: %v", link, target, err)
 	}
-	out, jerr := exec.Command("cmd", "/c", "mklink", "/J", link, target).CombinedOutput()
-	if jerr != nil {
-		t.Fatalf("symlink %s -> %s: %v; junction: %v: %s", link, target, err, jerr, out)
-	}
+	JunctionForTest(t, target, link)
 }
 
 // TestOwnedRemove catches recursive removal of a directory the engine did not create, register
