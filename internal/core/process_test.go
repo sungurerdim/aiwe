@@ -21,11 +21,13 @@ import (
 
 // The test binary runs itself as the child and the grandchild of a process tree. The role is set
 // through the environment; init answers it before the test framework starts.
-const (
-	processRoleEnv       = "AIWE_PROCESS_TEST_ROLE"
-	processDirEnv        = "AIWE_PROCESS_TEST_DIR"
-	processIgnoreTermEnv = "AIWE_PROCESS_TEST_IGNORE_TERM"
+// processTestEnv returns the env variable name of suffix (ROLE, DIR, IGNORE_TERM), derived from
+// the product constant (DR-25).
+func processTestEnv(suffix string) string {
+	return strings.ToUpper(core.Product) + "_PROCESS_TEST_" + suffix
+}
 
+const (
 	// processHelperLifetime bounds every helper process, so a failed test cannot leave one
 	// running for longer than this.
 	processHelperLifetime = 30 * time.Second
@@ -44,7 +46,7 @@ const (
 )
 
 func init() {
-	role := os.Getenv(processRoleEnv)
+	role := os.Getenv(processTestEnv("ROLE"))
 	if role == "" {
 		return
 	}
@@ -59,14 +61,14 @@ func init() {
 // until SIGTERM, records it and exits 0; leaf records its pid and beats; argv records the arguments
 // it received.
 func runProcessHelper(role string) int {
-	dir := os.Getenv(processDirEnv)
-	if os.Getenv(processIgnoreTermEnv) == "1" {
+	dir := os.Getenv(processTestEnv("DIR"))
+	if os.Getenv(processTestEnv("IGNORE_TERM")) == "1" {
 		signal.Ignore(syscall.SIGTERM, os.Interrupt)
 	}
 	switch role {
 	case "tree":
-		leaf := exec.Command(os.Args[0])
-		leaf.Env = append(os.Environ(), processRoleEnv+"=leaf")
+		leaf := exec.CommandContext(context.Background(), os.Args[0])
+		leaf.Env = append(os.Environ(), processTestEnv("ROLE")+"=leaf")
 		if err := leaf.Start(); err != nil {
 			return 10
 		}
@@ -76,8 +78,8 @@ func runProcessHelper(role string) int {
 		}
 		beatProcessFile(filepath.Join(dir, "child.beat"))
 	case "orphan":
-		leaf := exec.Command(os.Args[0])
-		leaf.Env = append(os.Environ(), processRoleEnv+"=leaf")
+		leaf := exec.CommandContext(context.Background(), os.Args[0])
+		leaf.Env = append(os.Environ(), processTestEnv("ROLE")+"=leaf")
 		if err := leaf.Start(); err != nil {
 			return 10
 		}
@@ -275,9 +277,9 @@ func TestProcessTree(t *testing.T) {
 }
 
 func processEnv(dir, role string, ignoreTerm bool) []string {
-	env := append(os.Environ(), processRoleEnv+"="+role, processDirEnv+"="+dir)
+	env := append(os.Environ(), processTestEnv("ROLE")+"="+role, processTestEnv("DIR")+"="+dir)
 	if ignoreTerm {
-		env = append(env, processIgnoreTermEnv+"=1")
+		env = append(env, processTestEnv("IGNORE_TERM")+"=1")
 	}
 	return env
 }
@@ -473,7 +475,7 @@ func stopProcessTree(t *testing.T, child *core.Child, grace time.Duration) {
 	case <-time.After(grace + processBound):
 		t.Fatalf("StopTree(%v) did not return within %v", grace, grace+processBound)
 	}
-	waitProcessChild(t, child, processBound)
+	_ = waitProcessChild(t, child, processBound) // a stopped child ends with a kill status, not nil
 }
 
 // waitProcessChild returns the error of Wait, failing the test when Wait does not return in bound.
