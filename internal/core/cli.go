@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 )
 
@@ -29,8 +28,8 @@ type helpEntry struct {
 
 // RunCLI runs one command line against cmds and writes its one result envelope to out; it returns
 // the process exit code. When any --format json is given, every refusal is printed as JSON too. A
-// command's progress output streams to stderr (SPEC §5).
-func RunCLI(ctx context.Context, cmds []Command, args []string, out io.Writer) (code int) {
+// command's progress output streams to stream, which the binary sets to stderr (SPEC §5).
+func RunCLI(ctx context.Context, cmds []Command, args []string, out, stream io.Writer) (code int) {
 	c := split(args)
 	format, err := outputFormat(c.Flags)
 	defer func() {
@@ -52,7 +51,7 @@ func RunCLI(ctx context.Context, cmds []Command, args []string, out io.Writer) (
 	if err != nil {
 		return write(out, format, ErrorResult(err))
 	}
-	in.Stream = os.Stderr
+	in.Stream = stream
 	res, err := cmd.Run(ctx, in)
 	if err != nil {
 		res = ErrorResult(err)

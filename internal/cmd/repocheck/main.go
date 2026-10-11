@@ -27,7 +27,7 @@ const (
 )
 
 func main() {
-	os.Exit(core.RunCLI(context.Background(), commands(), os.Args[1:], os.Stdout))
+	os.Exit(core.RunCLI(context.Background(), commands(), os.Args[1:], os.Stdout, os.Stderr))
 }
 
 // check is one repository check: its name and how it finds the broken rules of a repository.
