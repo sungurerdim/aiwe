@@ -66,8 +66,9 @@ func CommitMessage(msg string) []Finding {
 // messageLines returns the lines git keeps of msg: no comment line and nothing from the scissors
 // line on; each keeps its line number in msg.
 func messageLines(msg string) []messageLine {
-	var kept []messageLine
-	for i, text := range strings.Split(strings.ReplaceAll(msg, "\r\n", "\n"), "\n") {
+	all := strings.Split(strings.ReplaceAll(msg, "\r\n", "\n"), "\n")
+	kept := make([]messageLine, 0, len(all))
+	for i, text := range all {
 		if strings.HasPrefix(text, scissorsLine) {
 			break
 		}
