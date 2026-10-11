@@ -18,7 +18,7 @@ func TestCommitMessage(t *testing.T) {
 		{"every type the release notes group", "ci: the static job restores the linter cache"},
 		{"body after one blank line and trailers",
 			"fix(core): the temp root is owner-only\n\nThe engine checked the mode after use.\n\n" +
-				"Refs sungurerdim/aiwe#153\nCo-Authored-By: Claude <noreply@anthropic.com>\n"},
+				"Refs octo-org/widget#153\nCo-Authored-By: Claude <noreply@anthropic.com>\n"},
 		{"breaking footer in upper case", "feat(core): one result envelope\n\nBREAKING CHANGE: the field is gone\n"},
 		{"breaking footer with a hyphen", "feat(core): one result envelope\n\nBREAKING-CHANGE: the field is gone\n"},
 		{"comment lines that git strips", "# Please enter the commit message\ntest(gates): the step times out\n# On branch main\n"},

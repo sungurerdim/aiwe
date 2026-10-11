@@ -4,7 +4,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -33,22 +35,36 @@ func main() {
 // check is one repository check: its name and how it finds the broken rules of a repository.
 type check struct {
 	name string
-	run  func(ctx context.Context, repo string) ([]repocheck.Finding, error)
+	run  func(ctx context.Context, repo string) (measured, error)
+}
+
+// measured is what one check found and the counts it reports beside its findings.
+type measured struct {
+	findings []repocheck.Finding
+	detail   string
+}
+
+// findingsOnly adapts a check that reports findings and no counts.
+func findingsOnly(
+	run func(context.Context, string) ([]repocheck.Finding, error),
+) func(context.Context, string) (measured, error) {
+	return func(ctx context.Context, repo string) (measured, error) {
+		found, err := run(ctx, repo)
+		return measured{findings: found}, err
+	}
 }
 
 // checks returns the checks `all` runs, in order (SPEC §12.2).
 func checks() []check {
 	return []check{
-		{"rules", func(_ context.Context, repo string) ([]repocheck.Finding, error) { return repocheck.Rules(repo) }},
-		{"size", runSize},
-		{"boundaries", runBoundaries},
-		{"source-rules", runSourceRules},
-		{"deps", runDeps},
+		{"rules", findingsOnly(runRules)},
+		{"size", findingsOnly(runSize)},
+		{"boundaries", findingsOnly(runBoundaries)},
+		{"source-rules", findingsOnly(runSourceRules)},
+		{"deps", findingsOnly(runDeps)},
+		{"ci-shape", runCIShape},
 	}
 }
-
-// unmeasured are the checks of §12.2 whose unit has not landed; `all` reports them not_measured.
-func unmeasured() []string { return []string{"ci-shape"} }
 
 // commands returns the one command list of this binary (SPEC §5.7).
 func commands() []core.Command {
@@ -58,6 +74,8 @@ func commands() []core.Command {
 			Purpose: "name each missing prerequisite with its install command", Run: runDoctor},
 		{Module: "repocheck", Object: "all", Params: params,
 			Purpose: "run every repository check and report each result", Run: runAll},
+		{Module: "repocheck", Object: "commit-msg", Params: []string{"format"},
+			Purpose: "check the commit message on stdin against Conventional Commits", Run: runCommitMsg},
 	}
 	for _, c := range checks() {
 		cmds = append(cmds, core.Command{Module: "repocheck", Object: c.name, Params: params,
@@ -99,7 +117,7 @@ func runOne(c check) func(context.Context, core.Input) (core.Result[any], error)
 	}
 }
 
-// runAll runs every check, then reports each check whose unit has not landed as not_measured.
+// runAll runs every check and reports each result.
 func runAll(ctx context.Context, in core.Input) (core.Result[any], error) {
 	repo, err := repoParam(in)
 	if err != nil {
@@ -109,23 +127,50 @@ func runAll(ctx context.Context, in core.Input) (core.Result[any], error) {
 	for _, c := range checks() {
 		results = append(results, runCheck(ctx, c, repo))
 	}
-	for _, name := range unmeasured() {
-		results = append(results, checkResult{Check: name, Result: resultNotMeasured,
-			Detail: "the check has not landed yet"})
-	}
 	return summarize(results), nil
 }
 
-// runCheck runs c on repo; an error is the result error, never green (DR-13).
+// runCheck runs c on repo; an absent input is not_measured and an error is the result error,
+// never green (DR-13).
 func runCheck(ctx context.Context, c check, repo string) checkResult {
-	found, err := c.run(ctx, repo)
+	m, err := c.run(ctx, repo)
 	switch {
+	case errors.Is(err, repocheck.ErrNoWorkflow):
+		return checkResult{Check: c.name, Result: resultNotMeasured, Detail: err.Error()}
 	case err != nil:
 		return checkResult{Check: c.name, Result: resultError, Detail: err.Error()}
-	case len(found) > 0:
-		return checkResult{Check: c.name, Result: resultRed, Findings: found}
+	case len(m.findings) > 0:
+		return checkResult{Check: c.name, Result: resultRed, Findings: m.findings, Detail: m.detail}
 	}
-	return checkResult{Check: c.name, Result: resultGreen}
+	return checkResult{Check: c.name, Result: resultGreen, Detail: m.detail}
+}
+
+// runCIShape checks the shape of the CI workflow of repo and reports its counts (DR-42).
+func runCIShape(_ context.Context, repo string) (measured, error) {
+	rep, err := repocheck.CIShape(os.DirFS(repo))
+	if err != nil {
+		return measured{}, err
+	}
+	return measured{findings: rep.Findings,
+		detail: fmt.Sprintf("%d workflows, %d jobs, %d steps", rep.Workflows, rep.Jobs, rep.Steps)}, nil
+}
+
+// runCommitMsg checks the commit message on stdin, as the commit-msg hook and the CI step pass it
+// (SPEC §4, §12.2); a message that is not UTF-8 is an error, never green.
+func runCommitMsg(_ context.Context, _ core.Input) (core.Result[any], error) {
+	body, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		return core.Result[any]{}, fmt.Errorf("commit-msg: read stdin: %w", err)
+	}
+	msg, err := core.ReadText(body)
+	if err != nil {
+		return core.Result[any]{}, fmt.Errorf("commit-msg: %w", err)
+	}
+	res := checkResult{Check: "commit-msg", Result: resultGreen}
+	if found := repocheck.CommitMessage(msg); len(found) > 0 {
+		res.Result, res.Findings = resultRed, found
+	}
+	return summarize([]checkResult{res}), nil
 }
 
 // summarize maps the results to one envelope: all green is ok, any red is red, and anything else
@@ -159,6 +204,11 @@ func describe(r checkResult) string {
 		line += fmt.Sprintf("\n  %s %s:%d", f.Rule, f.Path, f.Line)
 	}
 	return line
+}
+
+// runRules checks repo against the rules its spec states (SPEC §3, §12.1).
+func runRules(_ context.Context, repo string) ([]repocheck.Finding, error) {
+	return repocheck.Rules(repo)
 }
 
 // runSize checks the size of every Go file of repo (SPEC §5.9).

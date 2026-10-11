@@ -1,0 +1,4 @@
+#!/bin/sh
+# Checks the commit message against Conventional Commits (SPEC §4, §12.2). The rules live in
+# repocheck; this hook only passes it the message file git names in $1.
+exec go run ./internal/cmd/repocheck commit-msg <"$1"
