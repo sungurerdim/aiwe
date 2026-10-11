@@ -111,14 +111,25 @@ func TestRemoveDirEntryCloseError(t *testing.T) {
 	}
 }
 
-// TestSweepRemovalCloseError catches a failed close on the sweep removal path lost before the
-// caller of Sweep (§5.15): a close that fails while the directory of a dead owner goes, whether it
-// passed the ownership check or is an empty orphan, must be returned by Sweep.
+// TestSweepRemovalCloseError catches a failed close on the sweep path lost before the caller of
+// Sweep, or miscounted in its report (§5.15, DR-13). A close that fails while the directory of a dead
+// owner is checked or removed, whether it passed the ownership check or is an empty orphan, must be
+// returned by Sweep. The report follows one rule: a directory whose close failed is never counted
+// Removed, even when it is gone; it is counted once, as Refused. A close that fails during the
+// ownership check keeps the directory.
 func TestSweepRemovalCloseError(t *testing.T) {
 	for _, c := range []struct {
 		what  string
 		owned bool
-	}{{"held directory", true}, {"removal root", true}, {"held directory", false}} {
+		kept  bool
+	}{
+		{"owned root", true, true},
+		{"owned directory", true, true},
+		{"held directory", true, false},
+		{"removal root", true, false},
+		{"held directory", false, false},
+		{"sweep root", false, false},
+	} {
 		t.Run(fmt.Sprintf("%s, owned %v", c.what, c.owned), func(t *testing.T) {
 			r := sweepTestRoots(t)
 			d := sweepTestCreate(t, sweepTestOpen(t, r, sweepTestDeadProcess(t)), TempRoot)
@@ -131,6 +142,12 @@ func TestSweepRemovalCloseError(t *testing.T) {
 			rep, err := sweepTestOpen(t, r, sweepTestSelf(t)).Sweep(t.Context())
 			if !errors.Is(err, errTestClose) {
 				t.Errorf("Sweep with a failing close of the %s = %+v, %v; want %v", c.what, rep, err, errTestClose)
+			}
+			if want := (SweepReport{Refused: 1}); rep != want {
+				t.Errorf("Sweep report with a failing close of the %s = %+v, want %+v", c.what, rep, want)
+			}
+			if got := sweepTestExists(t, d.Path()); got != c.kept {
+				t.Errorf("after a failing close of the %s, %q exists = %v, want %v", c.what, d.Path(), got, c.kept)
 			}
 		})
 	}
