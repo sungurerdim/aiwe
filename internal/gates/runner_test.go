@@ -2,6 +2,7 @@ package gates
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -218,6 +219,46 @@ func TestRunnerNotRequired(t *testing.T) {
 	}
 	if stepResults["vuln"] != ResultRed || stepResults["lint"] != ResultNotMeasured {
 		t.Errorf("not required steps reported %v; want vuln red and lint not_measured", stepResults)
+	}
+}
+
+// TestRunnerNoRequiredStep catches a gate read green although no required step ran: a gate whose
+// steps are all not required, or whose required steps were all left out, has no evidence, so it is
+// not_measured with a detail that says why (DR-13, #186).
+func TestRunnerNoRequiredStep(t *testing.T) {
+	green1, _, red, _ := runnerTestSteps(t)
+	optionalGreen := green1
+	optionalGreen.Required = false
+	cases := []struct {
+		name  string
+		steps []GateStep
+		only  []string
+	}{
+		{"no step required", []GateStep{optionalGreen}, nil},
+		{"every required step left out", []GateStep{optionalGreen, red}, []string{"format"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			def := Definition{FormatVersion: 1, Steps: tc.steps}
+			report, err := (&Runner{Owner: rootsTestOwner(t)}).Run(context.Background(), def, t.TempDir(), tc.only)
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			if report.Result != ResultNotMeasured {
+				t.Errorf("gate result = %q, want not_measured; steps %+v", report.Result, report.Steps)
+			}
+			data, err := json.Marshal(report)
+			if err != nil {
+				t.Fatalf("marshal report: %v", err)
+			}
+			var fields map[string]any
+			if err := json.Unmarshal(data, &fields); err != nil {
+				t.Fatalf("unmarshal report: %v", err)
+			}
+			if detail, _ := fields["detail"].(string); !strings.Contains(detail, "no required step") {
+				t.Errorf("gate detail = %q, want it to say no required step ran", detail)
+			}
+		})
 	}
 }
 
