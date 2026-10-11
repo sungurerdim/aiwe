@@ -84,6 +84,9 @@ func OpenOwner(r OwnedRoots, self ProcessID) (*Owner, error) {
 		if err := checkRootSafe(namedPath{n + " root", paths[n]}, protected); err != nil {
 			return nil, err
 		}
+		if err := checkOwnerOnly(paths[n]); err != nil {
+			return nil, fmt.Errorf("%s root: %w", n, err)
+		}
 	}
 	key, err := loadOwnerKey(paths["state"])
 	if err != nil {
@@ -93,9 +96,10 @@ func OpenOwner(r OwnedRoots, self ProcessID) (*Owner, error) {
 }
 
 // resolveOwnedRoot returns the real path of the root n. A missing root is made owner-only
-// (mkdirOwnerOnly), and the state root is always passed to it, so a state link is refused;
-// loadOwnerKey checks the state root. A temp or cache root that is not owner-only, such as a shared
-// /tmp/aiwe another user made first, is refused (checkOwnerOnly).
+// (mkdirOwnerOnly), and the state root is always passed to it, so a state link is refused. An
+// existing temp or cache root, such as a shared /tmp/aiwe another user made first, is kept as it
+// is; OpenOwner checks it at its real path after checkRootSafe (checkOwnerOnly), and loadOwnerKey
+// checks the state root.
 func resolveOwnedRoot(n namedPath) (string, error) {
 	if n.path == "" || !filepath.IsAbs(n.path) {
 		return "", fmt.Errorf("%w: %s root %q is not an absolute path", ErrRootUnsafe, n.name, n.path)
@@ -105,17 +109,7 @@ func resolveOwnedRoot(n namedPath) (string, error) {
 			return "", fmt.Errorf("%s root: %w", n.name, err)
 		}
 	}
-	p, err := realDir(n)
-	if err != nil {
-		return "", err
-	}
-	if n.name == "state" {
-		return p, nil
-	}
-	if err := checkOwnerOnly(p); err != nil {
-		return "", fmt.Errorf("%s root: %w", n.name, err)
-	}
-	return p, nil
+	return realDir(n)
 }
 
 // protectedPaths returns the real paths a temp or cache root may be neither the same as nor an

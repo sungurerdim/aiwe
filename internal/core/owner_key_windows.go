@@ -26,6 +26,8 @@ const ownerOnlyMask = windows.FILE_READ_DATA | windows.FILE_WRITE_DATA | windows
 // DACL; the 0o600/0o700 modes do nothing on Windows. CREATOR OWNER counts as the user: it becomes
 // the creator of each entry made below p. A missing DACL grants everyone every right, and an ACE
 // type other than allow or deny cannot be proven safe, so both are refused (fail-closed).
+// OpenOwner passes the real path of a temp or cache root, so a root that is a junction or link is
+// checked at its target.
 func checkOwnerOnly(p string) error {
 	trusted, err := ownerOnlySIDs()
 	if err != nil {
@@ -74,9 +76,12 @@ func checkOwnerOnlyACE(p string, ace *windows.ACCESS_ALLOWED_ACE, trusted []*win
 		"Administrators may read or write it", ErrRootUnsafe, p, sid, uint32(ace.Mask))
 }
 
-// mkdirOwnerOnly makes the state root p, and any missing parent, when p is missing. p itself is made
-// in one step with a protected DACL that allows only the current user, SYSTEM and Administrators,
-// and that each entry below it inherits, such as the owner key; no ACE of an open parent reaches it.
+// mkdirOwnerOnly makes the root p, and any missing parent, when p is missing. OpenOwner passes it
+// the state root always and a temp or cache root only when missing, so a state root that is a
+// junction or link is refused, and a temp or cache root that is one is checked at its target. p
+// itself is made in one step with a protected DACL that allows only the current user, SYSTEM and
+// Administrators, and that each entry below it inherits, such as the owner key; no ACE of an open
+// parent reaches it.
 // A p that exists is left as it is: checkOwnerOnly refuses it when it is open. A p that is not a
 // plain directory, such as a junction, fails with ErrRootUnsafe before anything follows it.
 func mkdirOwnerOnly(p string) error {
