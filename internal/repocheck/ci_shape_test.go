@@ -112,6 +112,8 @@ func TestCIShape(t *testing.T) {
 		{"an expression without inner spaces",
 			"${{ github.event_name == 'pull_request' }}", "${{github.event_name == 'pull_request'}}"},
 		{"a double-quoted group", "group: ci-${{ github.ref }}", `group: "ci-${{ github.ref }}"`},
+		// A tab before `#` leaves a line with a comment and no node; it must not panic.
+		{"a tab-indented why comment line", "      # why: the gate reads the tree\n", "\t# why: the gate reads the tree\n"},
 	}
 	for _, tc := range accepted {
 		t.Run("accepts "+tc.name, func(t *testing.T) {
