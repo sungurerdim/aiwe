@@ -2,9 +2,7 @@ package gates
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -33,32 +31,13 @@ type checkRoots struct {
 	base  string
 }
 
-// freshRoots makes the fresh roots of one check. A Runner with no owner refuses: a check never
-// runs in roots no owner made.
-func (r *Runner) freshRoots(ctx context.Context) (*checkRoots, error) {
-	if r.Owner == nil {
-		return nil, &core.Error{Outcome: core.OutcomeError, Expected: "an engine owner of the check's roots",
-			Found: "a runner with no owner", Next: "open the engine owner under the resolved roots, then run the gate again"}
-	}
-	d, err := r.Owner.CreateOwned(ctx, core.TempRoot, "check")
-	if err != nil {
-		return nil, err
-	}
-	roots := &checkRoots{owner: r.Owner, owned: d, base: d.Path()}
-	for _, c := range rootCells() {
-		if err := os.Mkdir(filepath.Join(roots.base, c.dir), 0o700); err != nil {
-			return nil, errors.Join(err, roots.remove(ctx))
-		}
-	}
-	return roots, nil
-}
-
 // env returns the secret-free check environment of core.CleanEnv (DR-35, SPEC §6.5) with each root
 // override pointed at its directory in the fresh roots. A parent override never reaches the check.
 func (c *checkRoots) env() []string {
 	cells := rootCells()
-	parent := make([]string, 0, len(os.Environ()))
-	for _, kv := range os.Environ() {
+	environ := core.Environ()
+	parent := make([]string, 0, len(environ))
+	for _, kv := range environ {
 		name, _, _ := strings.Cut(kv, "=")
 		if !isRootVar(name, cells) {
 			parent = append(parent, kv)
@@ -80,21 +59,6 @@ func isRootVar(name string, cells []rootCell) bool {
 		}
 	}
 	return false
-}
-
-// leftovers returns each entry the check left in its roots, as "<root>/<name>".
-func (c *checkRoots) leftovers() ([]string, error) {
-	var left []string
-	for _, cell := range rootCells() {
-		entries, err := os.ReadDir(filepath.Join(c.base, cell.dir))
-		if err != nil {
-			return nil, err
-		}
-		for _, e := range entries {
-			left = append(left, cell.dir+"/"+e.Name())
-		}
-	}
-	return left, nil
 }
 
 // remove removes the fresh roots through their owner, the one owner of a recursive removal (DR-25).

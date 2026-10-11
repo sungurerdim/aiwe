@@ -17,10 +17,15 @@ import (
 // argument is a file it writes its environment to, one entry per line. A second argument names a
 // root override variable; the helper first writes one file into the directory it names. It exits
 // 0 and opens no window.
-const rootsHelperEnv = "AIWE_GATES_TEST_ROOTS"
+func rootsHelperEnv() string { return gatesTestEnv("ROOTS") }
+
+// gatesTestEnv is the name of a test variable of this package, derived from the product constant.
+func gatesTestEnv(suffix string) string {
+	return strings.ToUpper(core.Product) + "_GATES_TEST_" + suffix
+}
 
 func init() {
-	if os.Getenv(rootsHelperEnv) != "1" || len(os.Args) < 2 {
+	if os.Getenv(rootsHelperEnv()) != "1" || len(os.Args) < 2 {
 		return
 	}
 	if len(os.Args) == 3 {
@@ -104,7 +109,7 @@ func rootsTestSetup(t *testing.T) map[string]string {
 	for _, v := range []string{"TMPDIR", "TMP", "TEMP"} {
 		t.Setenv(v, tmp)
 	}
-	t.Setenv(rootsHelperEnv, "1")
+	t.Setenv(rootsHelperEnv(), "1")
 	return parent
 }
 
@@ -190,12 +195,13 @@ func TestRoots(t *testing.T) {
 // reaches it.
 func TestRootsEnv(t *testing.T) {
 	rootsTestSetup(t)
+	plain := gatesTestEnv("PLAIN")
 	secrets := map[string]string{
-		"GITHUB_TOKEN":          "ghp_exampleexampleexample",
-		"AIWE_DEPLOY_PASSWORD":  "hunter2-example",
-		"STRIPE_SECRET_KEY":     "sk_test_example",
-		"DATABASE_URL":          "postgres://app:s3cret@db.example.com:5432/app",
-		"AIWE_GATES_TEST_PLAIN": "visible",
+		"GITHUB_TOKEN": "ghp_exampleexampleexample",
+		strings.ToUpper(core.Product) + "_DEPLOY_PASSWORD": "hunter2-example",
+		"STRIPE_SECRET_KEY": "sk_test_example",
+		"DATABASE_URL":      "postgres://app:s3cret@db.example.com:5432/app",
+		plain:               "visible",
 	}
 	for k, v := range secrets {
 		t.Setenv(k, v)
@@ -211,12 +217,12 @@ func TestRootsEnv(t *testing.T) {
 	}
 	env := rootsTestEnv(t, rec)
 	for k := range secrets {
-		if _, ok := env[k]; ok && k != "AIWE_GATES_TEST_PLAIN" {
+		if _, ok := env[k]; ok && k != plain {
 			t.Errorf("catches a check process that inherits the secret-shaped variable %s", k)
 		}
 	}
-	if env["AIWE_GATES_TEST_PLAIN"] != "visible" {
-		t.Errorf("catches a check environment that drops a plain variable: got %q", env["AIWE_GATES_TEST_PLAIN"])
+	if env[plain] != "visible" {
+		t.Errorf("catches a check environment that drops a plain variable: got %q", env[plain])
 	}
 	if env["GIT_TERMINAL_PROMPT"] != "0" {
 		t.Errorf("catches a check environment without core.CleanEnv's git settings: GIT_TERMINAL_PROMPT=%q", env["GIT_TERMINAL_PROMPT"])
