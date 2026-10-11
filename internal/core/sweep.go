@@ -15,6 +15,7 @@ type SweepReport struct {
 	Removed int // temp directories of a dead owner, removed
 	Live    int // temp directories of a running owner, kept
 	Refused int // temp directories of a dead owner that fail the ownership checks and are not empty, kept
+	Failed  int // temp directories of a dead owner not removed cleanly: a close failed and its error is returned
 }
 
 // ownedTemp is an existing registered directory under the temp root and whether its owner runs.
@@ -50,6 +51,8 @@ func (o *Owner) Sweep(ctx context.Context) (SweepReport, error) {
 		}
 		removed, err := o.sweepDead(ctx, d.name, recs)
 		switch {
+		case errors.Is(err, errCloseFailed):
+			rep.Failed++
 		case removed:
 			rep.Removed++
 		case err == nil, errors.Is(err, ErrNotOwned):
@@ -65,9 +68,13 @@ func (o *Owner) Sweep(ctx context.Context) (SweepReport, error) {
 // sweepDead checks the temp directory name of a dead owner, then removes it, and reports whether
 // it was removed. A directory that fails the check is removed only when it is empty, with no
 // error. An approved directory is removed only while name is still the directory approved, else
-// it fails with ErrNotOwned and nothing is removed.
+// it fails with ErrNotOwned and nothing is removed. A close that fails during the check is returned
+// and the directory is kept.
 func (o *Owner) sweepDead(ctx context.Context, name string, recs []ownedRecord) (bool, error) {
 	e, err := o.checkOwned(filepath.Join(o.temp, name), recs)
+	if errors.Is(err, errCloseFailed) {
+		return false, err
+	}
 	if err != nil {
 		return removeEmptyDir(o.temp, name)
 	}
@@ -83,14 +90,18 @@ func (o *Owner) sweepDead(ctx context.Context, name string, recs []ownedRecord) 
 // removeEmptyDir removes name under rootPath when it is a directory, not a link, with no entries; it
 // reports whether name was removed. It works through an os.Root, which never leaves rootPath, and
 // removes only the directory its check saw (removeDirEntry); a file never goes. A name swapped after
-// the check fails with ErrNotOwned, and a failed close is returned (closeChecked); any other
-// failure, such as an entry in the directory, keeps it.
-func removeEmptyDir(rootPath, name string) (_ bool, err error) {
+// the check fails with ErrNotOwned, and a failed close is returned (closeChecked) with false; any
+// other failure, such as an entry in the directory, keeps it.
+func removeEmptyDir(rootPath, name string) (removed bool, err error) {
 	rt, err := os.OpenRoot(rootPath)
 	if err != nil {
 		return false, nil
 	}
-	defer func() { err = errors.Join(err, closeChecked("sweep root", rt.Close)) }()
+	defer func() {
+		if cerr := closeChecked("sweep root", rt.Close); cerr != nil {
+			removed, err = false, errors.Join(err, cerr)
+		}
+	}()
 	fi, err := rt.Lstat(name)
 	if err != nil || fi.Mode().Type() != fs.ModeDir {
 		return false, nil
