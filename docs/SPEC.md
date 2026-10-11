@@ -412,11 +412,11 @@ owner-only, is refused (`root_unsafe`), the same as the state root. A state, tem
 the owner key, that another user can read or write is refused (`root_unsafe`) with the fix as its
 next action: delete the path so the next run makes it owner-only, or remove that access. Deleting
 comes first: a key another user could read stays exposed after the access is removed. One owned by
-another user names: delete it, or give its ownership to the user that runs aiwe. The `owned_dir` record and
-the `.owner` marker carry an HMAC-SHA256 under a key in `<state>/owner.key`. This key is the
-engine's local state-ownership key, not a provider credential (DR-43). The key never enters a run
-environment (DR-35), so a run cannot forge a marker from what it is given. Below `os-sandbox` a run
-can still read the state root itself (§6.7). Benefit: a user directory cannot reach removal, by
+another user names: delete it, or give its ownership to the user that runs aiwe. The `owned_dir`
+record and the `.owner` marker carry an HMAC-SHA256 under a key in `<state>/owner.key`. This key is
+the engine's local state-ownership key, not a provider credential (DR-43). The key never enters a
+run environment (DR-35), so a run cannot forge a marker from what it is given. Below `os-sandbox` a
+run can still read the state root itself (§6.7). Benefit: a user directory cannot reach removal, by
 type and at run time. Enforced: DR-25.
 
 ### 5.16 Check key
