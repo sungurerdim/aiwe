@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os/exec"
 	"sync"
 	"time"
@@ -58,7 +59,7 @@ func Start(ctx context.Context, spec ChildSpec) (*Child, error) {
 	if len(spec.Argv) == 0 {
 		return nil, errors.New("start child: empty argv")
 	}
-	cmd := exec.CommandContext(ctx, spec.Argv[0], spec.Argv[1:]...)
+	cmd := exec.CommandContext(ctx, spec.Argv[0], spec.Argv[1:]...) //nolint:gosec // the single subprocess launcher (SPEC §5.20); argv is built by the engine, never by a shell
 	if cmd.Err != nil {
 		return nil, fmt.Errorf("start %s: %w", spec.Argv[0], cmd.Err)
 	}
@@ -184,4 +185,13 @@ func waitGone(bound time.Duration, gone func() (bool, error)) (bool, error) {
 		}
 		time.Sleep(treePollEvery)
 	}
+}
+
+// windowsPID converts pid to the DWORD the Windows API takes. A pid outside that range is
+// refused, so it is never truncated into the id of another process.
+func windowsPID(pid int) (uint32, error) {
+	if pid < 0 || uint64(pid) > math.MaxUint32 {
+		return 0, fmt.Errorf("process id %d is outside the range of a Windows process id", pid)
+	}
+	return uint32(pid), nil
 }
