@@ -19,6 +19,21 @@ func checkOwnerOnly(p string) error {
 	if err != nil {
 		return fmt.Errorf("%w: owner-only check of %q: %v", ErrRootUnsafe, p, err)
 	}
+	return checkOwnerOnlyInfo(p, fi)
+}
+
+// checkOwnerOnlyFile is checkOwnerOnly on the open file f, named p: the mode and owner are read
+// from the handle (fstat), so they belong to the file f reads, whatever p names later.
+func checkOwnerOnlyFile(f *os.File, p string) error {
+	fi, err := f.Stat()
+	if err != nil {
+		return fmt.Errorf("%w: owner-only check of %q: %v", ErrRootUnsafe, p, err)
+	}
+	return checkOwnerOnlyInfo(p, fi)
+}
+
+// checkOwnerOnlyInfo checks fi, the file info of p, for checkOwnerOnly.
+func checkOwnerOnlyInfo(p string, fi fs.FileInfo) error {
 	if fi.Mode().Perm()&0o077 != 0 || fi.Mode().Type()&os.ModeSymlink != 0 {
 		return fmt.Errorf("%w: %q has mode %v; want no access for group or others", ErrRootUnsafe, p, fi.Mode())
 	}

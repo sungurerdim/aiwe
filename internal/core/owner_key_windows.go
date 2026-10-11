@@ -28,12 +28,26 @@ const ownerOnlyMask = windows.FILE_READ_DATA | windows.FILE_WRITE_DATA | windows
 // type other than allow or deny cannot be proven safe, so both are refused (fail-closed). A root
 // that is a junction or link never reaches it: mkdirOwnerOnly refuses it first.
 func checkOwnerOnly(p string) error {
-	trusted, err := ownerOnlySIDs()
+	sd, err := windows.GetNamedSecurityInfo(p, windows.SE_FILE_OBJECT, ownerOnlyInfo)
+	return checkOwnerOnlySD(p, sd, err)
+}
+
+// checkOwnerOnlyFile is checkOwnerOnly on the open file f, named p: the security descriptor is read
+// from the handle, so it belongs to the file f reads, whatever p names later.
+func checkOwnerOnlyFile(f *os.File, p string) error {
+	sd, err := windows.GetSecurityInfo(windows.Handle(f.Fd()), windows.SE_FILE_OBJECT, ownerOnlyInfo)
+	return checkOwnerOnlySD(p, sd, err)
+}
+
+// ownerOnlyInfo is the part of a security descriptor that the owner-only check reads.
+const ownerOnlyInfo = windows.OWNER_SECURITY_INFORMATION | windows.DACL_SECURITY_INFORMATION
+
+// checkOwnerOnlySD checks sd, the security descriptor of p read with error err, for checkOwnerOnly.
+func checkOwnerOnlySD(p string, sd *windows.SECURITY_DESCRIPTOR, err error) error {
 	if err != nil {
 		return fmt.Errorf("%w: owner-only check of %q: %v", ErrRootUnsafe, p, err)
 	}
-	sd, err := windows.GetNamedSecurityInfo(p, windows.SE_FILE_OBJECT,
-		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+	trusted, err := ownerOnlySIDs()
 	if err != nil {
 		return fmt.Errorf("%w: owner-only check of %q: %v", ErrRootUnsafe, p, err)
 	}
