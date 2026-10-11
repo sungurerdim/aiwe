@@ -4,6 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -116,5 +121,66 @@ func TestParseFormat(t *testing.T) {
 				t.Errorf("aiwe %s printed %q, want a result envelope with status %q", strings.Join(tc.args, " "), out.String(), tc.status)
 			}
 		})
+	}
+}
+
+// cliTestStderr points os.Stderr at a file for the rest of the test and returns a function that
+// reads what was written to it.
+func cliTestStderr(t *testing.T) func() string {
+	t.Helper()
+	f, err := os.Create(filepath.Join(t.TempDir(), "stderr"))
+	if err != nil {
+		t.Fatalf("create the stderr file: %v", err)
+	}
+	saved := os.Stderr
+	os.Stderr = f
+	t.Cleanup(func() {
+		os.Stderr = saved
+		_ = f.Close()
+	})
+	return func() string {
+		data, err := os.ReadFile(f.Name())
+		if err != nil {
+			t.Fatalf("read the captured stderr: %v", err)
+		}
+		return string(data)
+	}
+}
+
+// TestRunCLIStream catches a command that gets no stream writer, and streamed output that reaches
+// stdout, where it breaks the --format json envelope, instead of stderr (SPEC §5).
+func TestRunCLIStream(t *testing.T) {
+	const line = "aiwe-cli-stream-line"
+	cmds := []core.Command{{Module: "gates", Object: "gates", Verb: "gate", Params: []string{"format"},
+		Purpose: "stream one line, then report ok",
+		Run: func(_ context.Context, in core.Input) (core.Result[any], error) {
+			if in.Stream == nil {
+				return core.Result[any]{}, errors.New("the command got no stream writer")
+			}
+			if _, err := fmt.Fprintln(in.Stream, line); err != nil {
+				return core.Result[any]{}, err
+			}
+			return core.Result[any]{Status: core.StatusOK, Outcome: core.OutcomeOK, Detail: "streamed"}, nil
+		}}}
+	stderr := cliTestStderr(t)
+	var out bytes.Buffer
+	code := core.RunCLI(context.Background(), cmds, []string{"gates", "gate", "--format", "json"}, &out)
+	raw := out.String()
+	if code != 0 {
+		t.Fatalf("exit %d, want 0\n%s", code, raw)
+	}
+	dec := json.NewDecoder(strings.NewReader(raw))
+	var env map[string]any
+	if err := dec.Decode(&env); err != nil {
+		t.Fatalf("stdout is not a JSON envelope: %v\n%s", err, raw)
+	}
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		t.Errorf("stdout holds more than the one JSON envelope: %q", raw)
+	}
+	if strings.Contains(raw, line) {
+		t.Errorf("streamed output reached stdout, mixed into the envelope: %q", raw)
+	}
+	if got := stderr(); !strings.Contains(got, line) {
+		t.Errorf("streamed output did not reach stderr: %q", got)
 	}
 }

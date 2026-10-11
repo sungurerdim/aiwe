@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -39,19 +41,58 @@ func commandsTestRepo(t *testing.T, steps []GateStep) string {
 	return dir
 }
 
+// commandsTestRoots are the state, cache and temp root overrides of one test (SPEC §6.4).
+type commandsTestRoots struct{ state, cache, temp string }
+
+// commandsTestSetRoots points the root overrides at new directories under the test's temp
+// directory, so the engine owner and its owner.key never land in the user's real roots.
+func commandsTestSetRoots(t *testing.T) commandsTestRoots {
+	t.Helper()
+	base := t.TempDir()
+	r := commandsTestRoots{state: filepath.Join(base, "state"), cache: filepath.Join(base, "cache"),
+		temp: filepath.Join(base, "temp")}
+	p := strings.ToUpper(core.Product)
+	t.Setenv(p+"_HOME", r.state)
+	t.Setenv(p+"_CACHE", r.cache)
+	t.Setenv(p+"_TMP", r.temp)
+	return r
+}
+
 // commandsTestRun runs `aiwe gates gate` through the one command registry and the CLI front, as
 // the binary does (SPEC §5.7), and returns the exit code and the decoded envelope.
 func commandsTestRun(t *testing.T, args ...string) (int, commandsTestEnvelope, string) {
 	t.Helper()
+	code, env, out, _ := commandsTestRunStreams(t, args...)
+	return code, env, out
+}
+
+// commandsTestRunStreams is commandsTestRun that also returns what the command wrote to stderr.
+// Stdout must be exactly one JSON envelope.
+func commandsTestRunStreams(t *testing.T, args ...string) (int, commandsTestEnvelope, string, string) {
+	t.Helper()
+	f, err := os.Create(filepath.Join(t.TempDir(), "stderr"))
+	if err != nil {
+		t.Fatalf("create the stderr file: %v", err)
+	}
+	saved := os.Stderr
+	os.Stderr = f
 	var out bytes.Buffer
 	argv := append([]string{"gates", "gate"}, args...)
 	argv = append(argv, "--format", "json")
 	code := core.RunCLI(context.Background(), Commands(), argv, &out)
+	os.Stderr = saved
+	if err := f.Close(); err != nil {
+		t.Fatalf("close the stderr file: %v", err)
+	}
+	stderr, err := os.ReadFile(f.Name())
+	if err != nil {
+		t.Fatalf("read the captured stderr: %v", err)
+	}
 	var env commandsTestEnvelope
 	if err := json.Unmarshal(out.Bytes(), &env); err != nil {
 		t.Fatalf("aiwe %s printed no JSON envelope: %v\n%s", strings.Join(argv, " "), err, out.String())
 	}
-	return code, env, out.String()
+	return code, env, out.String(), string(stderr)
 }
 
 // commandsTestWithoutRepo returns detail with every form of the repo path removed: as given, with
@@ -78,6 +119,7 @@ func commandsTestRow(o core.Outcome) (core.OutcomeRow, bool) {
 // of <repo>/gate.json, and maps each gate result to one named outcome of the table: a red or
 // incomplete gate never exits 0 (BC-1, DR-10).
 func TestGatesCommand(t *testing.T) {
+	commandsTestSetRoots(t)
 	green1, green2, red, missing := runnerTestSteps(t)
 
 	t.Run("a command whose repo or step param is not in the dictionary is refused at every call", func(t *testing.T) {
@@ -231,6 +273,7 @@ func TestGatesCommand(t *testing.T) {
 // TestGatesCommandWorkers catches `aiwe gates gate` running its test step without the measured
 // worker count in the report, or without the source of its concurrent job count (DR-7).
 func TestGatesCommandWorkers(t *testing.T) {
+	commandsTestSetRoots(t)
 	_, test, _, _ := runnerTestSteps(t)
 	repo := commandsTestRepo(t, []GateStep{test})
 	code, env, out := commandsTestRun(t, "--repo", repo)
@@ -245,5 +288,91 @@ func TestGatesCommandWorkers(t *testing.T) {
 		if !strings.Contains(detail, want) {
 			t.Errorf("test step detail %q does not contain %q", detail, want)
 		}
+	}
+}
+
+// TestGateCommandStream catches step output missing from stderr, streamed without its
+// `--- step <id>` header, or mixed into the JSON envelope on stdout (SPEC §5, DR-38).
+func TestGateCommandStream(t *testing.T) {
+	commandsTestSetRoots(t)
+	release := filepath.Join(t.TempDir(), "release")
+	if err := os.WriteFile(release, nil, 0o600); err != nil {
+		t.Fatalf("write the release file: %v", err)
+	}
+	t.Setenv(streamHelperEnv, release)
+	step := GateStep{ID: "stream", Command: []string{os.Args[0]}, Required: true}
+	code, env, out, stderr := commandsTestRunStreams(t, "--repo", commandsTestRepo(t, []GateStep{step}))
+	if code != 0 || env.Data.Result != ResultGreen {
+		t.Fatalf("exit %d, gate %q, want 0 and green\n%s\nstderr:\n%s", code, env.Data.Result, out, stderr)
+	}
+	for _, line := range []string{streamOutLine, streamErrLine} {
+		if strings.Contains(out, line) {
+			t.Errorf("step output %q reached stdout, mixed into the envelope:\n%s", line, out)
+		}
+		_, after, found := strings.Cut(stderr, "--- step "+step.ID+"\n")
+		if !found || !strings.Contains(after, line) {
+			t.Errorf("stderr does not hold step output %q after its --- step %s header:\n%s", line, step.ID, stderr)
+		}
+	}
+}
+
+// TestGateCommandOwner catches a command run that creates owner.key outside its root overrides,
+// or runs a check in roots that are not owned directories under the temp root (SPEC §6.4, §7.8).
+// The OS conventions point at a test directory, so a key made by convention is seen there.
+func TestGateCommandOwner(t *testing.T) {
+	roots := commandsTestSetRoots(t)
+	convention := t.TempDir()
+	for _, v := range []string{"HOME", "USERPROFILE", "LOCALAPPDATA", "XDG_STATE_HOME", "XDG_CACHE_HOME"} {
+		t.Setenv(v, convention)
+	}
+	t.Setenv(rootsHelperEnv, "1")
+	step, record := rootsTestStep(t.TempDir(), "owned", "")
+	code, env, out := commandsTestRun(t, "--repo", commandsTestRepo(t, []GateStep{step}))
+	if code != 0 || env.Data.Result != ResultGreen {
+		t.Fatalf("exit %d, gate %q, want 0 and green\n%s", code, env.Data.Result, out)
+	}
+	if _, err := os.Stat(filepath.Join(roots.state, "owner.key")); err != nil {
+		t.Errorf("catches a gate run that opened no engine owner under the state root override: %v", err)
+	}
+	err := filepath.WalkDir(convention, func(path string, d fs.DirEntry, err error) error {
+		if err == nil && d.Name() == "owner.key" {
+			t.Errorf("catches a gate run that created owner.key outside its root overrides: %s", path)
+		}
+		return err
+	})
+	if err != nil {
+		t.Fatalf("walk the convention directory: %v", err)
+	}
+	temp, err := filepath.EvalSymlinks(roots.temp)
+	if err != nil {
+		t.Fatalf("resolve the temp root override: %v", err)
+	}
+	checkTemp := rootsTestEnv(t, record)[strings.ToUpper(core.Product)+"_TMP"]
+	if rel, err := filepath.Rel(temp, checkTemp); err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+		t.Errorf("catches a check whose roots are not an owned directory under the temp root %q: %q", temp, checkTemp)
+	}
+}
+
+// TestGateCommandNoOwner catches a gate that runs its checks outside owned roots when no engine
+// owner opens: the command refuses with a named outcome and runs no step (SPEC §6.4, §7.8).
+func TestGateCommandNoOwner(t *testing.T) {
+	commandsTestSetRoots(t)
+	t.Setenv(rootsHelperEnv, "1")
+	step, record := rootsTestStep(t.TempDir(), "unowned", "")
+	repo := commandsTestRepo(t, []GateStep{step})
+	// A temp root that is the repository itself is unsafe, so no owner opens.
+	t.Setenv(strings.ToUpper(core.Product)+"_TMP", repo)
+	code, env, out := commandsTestRun(t, "--repo", repo)
+	if env.Outcome != "root_unsafe" || env.Status != core.StatusError || code != core.StatusError.ExitCode() {
+		t.Fatalf("outcome %q status %q exit %d, want the named refusal root_unsafe\n%s", env.Outcome, env.Status, code, out)
+	}
+	if row, ok := commandsTestRow(env.Outcome); !ok || row.Next == "" {
+		t.Errorf("outcome %q is not a table row with a next action (BC-1)\n%s", env.Outcome, out)
+	}
+	if _, err := os.Stat(record); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("catches a step run with no engine owner: stat %q: %v", record, err)
+	}
+	if len(env.Data.Steps) != 0 {
+		t.Errorf("catches a refused gate that reports steps: %+v", env.Data.Steps)
 	}
 }
