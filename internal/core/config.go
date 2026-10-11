@@ -4,9 +4,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
+	"strings"
 )
 
 // ErrConfigInvalid is returned when a state file cannot be read as settings (SPEC §5.12).
@@ -71,20 +72,29 @@ func resolveSetting(s ConfigSetting, flags map[string]string, getenv func(string
 	return ConfigValue{Name: s.Name, Value: s.Default, Origin: ConfigOriginDefault}
 }
 
-// readConfigState merges every <dir>/*.json file into one name → value map. A missing directory
-// holds no settings.
+// readConfigState merges every file of dir whose name ends in the lower-case ".json" into one
+// name → value map, in file name order. An empty dir or a missing directory holds no settings; a
+// relative dir is a usage error, since the working directory is never used (SPEC §5.12).
 func readConfigState(dir string) (map[string]string, error) {
 	state := map[string]string{}
 	if dir == "" {
 		return state, nil
 	}
-	paths, err := filepath.Glob(filepath.Join(filepath.Clean(dir), "*.json"))
-	if err != nil {
-		return nil, configInvalid("a state directory pattern", err.Error())
+	if !filepath.IsAbs(dir) {
+		return nil, &Error{Outcome: OutcomeUsage, Expected: "an absolute state directory", Found: dir}
 	}
-	sort.Strings(paths)
-	for _, p := range paths {
-		if err := mergeConfigFile(state, p); err != nil {
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return state, nil
+	}
+	if err != nil {
+		return nil, configInvalid("a readable state directory", err.Error())
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		if err := mergeConfigFile(state, filepath.Join(dir, e.Name())); err != nil {
 			return nil, err
 		}
 	}
