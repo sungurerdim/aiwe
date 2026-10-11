@@ -341,7 +341,8 @@ One JSON object per line on stderr through `log/slog`'s JSON handler: `{ts, leve
 event, detail}`. No colour codes. Benefit: logs are machine-read. Enforced: test `core/log_test.go`.
 
 ### 5.12 Config precedence
-flags > environment variables > state files (`<state>/*.json`) > built-in defaults.
+flags > environment variables > settings files > built-in defaults. Settings files are
+`<state>/settings.json` and `<state>/settings.*.json`; other state files are not settings.
 `aiwe config show` prints each value and its origin. Every path parameter resolves against `--repo`;
 a relative path without `--repo` is a `usage` error; the process working directory is never used.
 The one exception is `--repo` itself: a relative `--repo` resolves once, at the CLI boundary,
