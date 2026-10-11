@@ -83,8 +83,10 @@ func rootRows(roots Roots, getenv func(string) string) []ConfigRow {
 
 // shownValue returns value, or ConfigMasked when the setting's name or env variable is
 // secret-shaped or the value is a URL that may carry a password (DR-35); an empty value stays empty.
+// A dotted name is checked in its env form, so db.url reads as DB_URL.
 func shownValue(s ConfigSetting, value string) string {
-	name, env := strings.ToUpper(s.Name), strings.ToUpper(s.Env)
+	name := strings.ToUpper(strings.ReplaceAll(s.Name, ".", "_"))
+	env := strings.ToUpper(s.Env)
 	if value != "" && (secretName(name) || secretName(env) || urlWithPassword(name, value) || urlWithPassword(env, value)) {
 		return ConfigMasked
 	}
