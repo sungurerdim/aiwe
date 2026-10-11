@@ -43,6 +43,8 @@ func Outcomes() []OutcomeRow {
 			Next: "close the process that holds a file in the directory the detail names; the next sweep retries"},
 		{Outcome: "footprint_exceeded", Status: StatusError, Err: ErrFootprintExceeded,
 			Next: "free space under the footprint the detail names, or raise its ceiling"},
+		{Outcome: "config_invalid", Status: StatusError, Err: ErrConfigInvalid,
+			Next: "correct the state file the detail names to one JSON object of string values"},
 	}
 }
 
