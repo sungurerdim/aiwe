@@ -25,7 +25,7 @@ func TestParseProcStat(t *testing.T) {
 	cases := []struct {
 		name string
 		data string
-		want uint64
+		want int64
 	}{
 		{"real line", procTestStatLine, 98765},
 		{"running state R", procTestState("R"), 98765},
@@ -112,7 +112,7 @@ func TestParseProcStatSelf(t *testing.T) {
 		t.Errorf("parseProcStat(/proc/self/stat %q) running = false, want true", data)
 	}
 	id := procTestLinuxID(t, os.Getpid())
-	if want := id[strings.LastIndexByte(id, '/')+1:]; want != strconv.FormatUint(ticks, 10) {
+	if want := id[strings.LastIndexByte(id, '/')+1:]; want != strconv.FormatInt(ticks, 10) {
 		t.Errorf("parseProcStat(/proc/self/stat) = %d, want %s", ticks, want)
 	}
 }
