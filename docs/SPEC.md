@@ -132,7 +132,7 @@ Non-goals (permanent):
   aiwe's own release stays in aiwe's CI (§12.3).
 - A web UI, desktop or mobile app, terminal session manager, or chat bridges.
 - A proxy or gateway for model traffic, or the use of one (DR-43); model choice by a learned router.
-- Budget ceilings and quota forecasts: sources get shares only (§8.1).
+- Quota forecasts, and budget ceilings beyond the optional per-source spend cap (§8.1).
 - General pull-request review: the auditor judges only a unit's done criteria.
 - A network transport for MCP: the server speaks stdio only, so it opens no listener.
 - Storing credentials (§10.1).
@@ -851,6 +851,10 @@ the ref stays (DR-16).
 3. `[M]` The run returns to the queue and does not count as an attempt.
 4. `[M]` Reactivation per class; a probe uses the adapter's cheapest health call.
 5. No active source can serve a role → the unit waits with `no_capacity`; other roles continue.
+6. `[M]` A source whose provider publishes a balance or usage endpoint has it read by the adapter
+   with the source's own env key (provider data, §10.2). A read balance of zero sets class
+   `balance`; `sources show` prints the read value. A source without such an endpoint reads
+   `unknown`; its quota is learned from the errors below.
 
 P = probe interval, 30 min (default).
 
@@ -968,11 +972,26 @@ Serves S1, S2.
 { "formatVersion": 1, "window": 100,
   "sources": [
     { "id": "sub-a", "adapter": "claude-code", "kind": "subscription", "share": 50, "models": ["<model-id>"] },
-    { "id": "api-b", "adapter": "openai-chat", "kind": "api", "credentialEnv": "B_API_KEY",
-      "baseUrlEnv": "B_BASE_URL", "models": ["<model-id>"] },
-    { "id": "api-c", "adapter": "openai-chat", "kind": "api", "credentialEnv": "C_API_KEY", "models": ["<model-id>"] } ] }
+    { "id": "api-b", "adapter": "openai-chat", "provider": "<provider-id>", "kind": "api",
+      "credentialEnv": "B_API_KEY", "baseUrlEnv": "B_BASE_URL", "models": ["<model-id>"],
+      "spendCap": { "usd": 50, "since": "<date>" } },
+    { "id": "api-c", "adapter": "openai-chat", "kind": "api", "credentialEnv": "C_API_KEY", "models": ["<model-id>"] } ],
+  "roleModels": { "engineer": [ { "source": "api-b", "model": "<model-id>" },
+                                { "source": "sub-a", "model": "<model-id>" } ] } }
 ```
 - `kind` is `subscription` or `api`. No kind has priority; order comes only from shares.
+- **External agents** are the agents of outside subscriptions (for example opencode go, Cursor) and
+  of outside API accounts (for example Fireworks AI, DeepSeek, other OpenAI-compatible APIs). Each
+  is one source row. Their quotas, credits and models are used in parallel by routing.
+- `provider` names the provider data file of the row (§10.2); absent = the adapter's defaults.
+- **Model table** `roleModels`: the owner edits it. Each role maps to an ordered list of (source,
+  model). A run of that role takes the first entry whose source is active and below its ceiling;
+  an exhausted, restricted or capped source moves the run down the list. A role without an entry
+  is routed by shares and takes the source's first model. No learned router chooses a model (§2).
+- **Spend cap** `spendCap {usd, since}`, optional per source. When it is set, the ledger's `CostUSD`
+  of that source since `since` is compared with `usd`; at the cap the source becomes `capped` and
+  receives no run. When it is unset, the source has no spend limit. A cap on a source whose cost is
+  `unknown` (`no_price` or `subscription`) is refused (DR-13).
 - `credentialEnv` may not name `GH_TOKEN`, `GITHUB_TOKEN` or another tracker token variable
   (§10.1); such a row is refused, so a tracker token never reaches a run (DR-18).
 - `opsTrusted: true` marks a source the user trusts with operation units (§7.9); absent = false.
@@ -991,16 +1010,18 @@ Serves S1, S2.
   E gains `share ÷ (sum of shares in E)`. For a judging role, E first narrows to the sources of the most
   independent level available (DR-9). Among E minus sources excluded for this unit by a hard
   constraint, the largest credit wins (tie → lowest `id`) and pays 1.
-- Effects: an idle source (passive, restricted, or without the capability) gains nothing, so its
-  share passes to the others in proportion. A source skipped only by a hard constraint keeps its
+- Effects: an idle source (passive, restricted, capped, or without the capability) gains nothing,
+  so its share passes to the others in proportion. A source skipped only by a hard constraint keeps its
   gain and is repaid on later runs. Over any stretch with a fixed E, each source stays within 2 runs
   of its target (default bound; a simulation in this revision measured at most 1.04 runs over 2 000
   random share sets × 500 runs). Test `engine/routing_test.go` asserts the bound.
-- Runtime state (`sources.state.json`): `active | passive | restricted`, quota class (§7.6),
-  `resetAt` or `unknown`, `passiveSince`, `lastProbe`, `credit`, `ceiling`, `cleanRuns`.
+- Runtime state (`sources.state.json`): `active | passive | restricted | capped`, quota class
+  (§7.6), `resetAt` or `unknown`, `passiveSince`, `lastProbe`, `credit`, `ceiling`, `cleanRuns`,
+  `balance` (read value or `unknown`, §7.6).
 - `aiwe sources show` prints the window (default 100 runs, all projects), target and observed
-  shares, credits and restricted sources. Unit 1.15 registers `sources show`, `sources discover`
-  and the terminal-only `sources enable` (§5.7).
+  shares, credits and restricted sources. Per source it also prints kind, models, spend from the
+  ledger, state, reset time and read balance (unit 1.42); an unread value prints `unknown`. Unit
+  1.15 registers `sources show`, `sources discover` and the terminal-only `sources enable` (§5.7).
 - `aiwe sources discover` lists detected harnesses and env-configured APIs and writes candidate
   entries without shares. Any subset works: one subscription, API only, many.
 
@@ -1031,6 +1052,10 @@ type StackProfile struct {
 | unknown | — | — | `not_measured` → ladder rung 2 (§7.7) | `not_measured` | `not_measured` | `not_measured` |
 
 - These rows describe managed projects; this repository's own gate is §12.2.
+- Phase 1 (unit 1.1) ships the full Go row and the Detect cell of the other six stacks. A stack
+  detected without its other cells reads them `not_measured` and takes the adaptation ladder
+  (§7.7), as `unknown` does. The Detect cells keep `multi_stack` exact. Phase 2 units fill the
+  other cells (§14).
 - `NoTests` is the runner's zero-test signal (§7.8). Go: the suffix `[no tests to run]` (§17);
   other stacks: proved per repository at onboarding (U6).
 - Mutation tool (Phase 3): Node → Stryker; Python → mutmut; other stacks → `none` (§15).
@@ -1335,6 +1360,9 @@ Method per role (the card body):
 the last entry. A source without an effort list records effort `unknown` (DR-21). Test
 `engine/routing_test.go` asserts the tier per role.
 
+**Model per role**: the owner's model table `roleModels` (§8.1) names the source and model of a
+role, in order. Cards name no model.
+
 Card format: `id, purpose, trigger, needs, output, tier, may, may_not[{text, gate}]` + a body
 without shell commands. Every `may_not` names a gate (a D-id, a DR or a run-environment
 restriction); no `gate_owed`. Cards name no harness, model, tool name or path. Cards are
@@ -1463,9 +1491,19 @@ type Provider interface {
   and run the profile's syntax or lint check after each edit where one exists. Misuse guidance
   lives in the refusal text, not in the tool description. Context is condensed only when a
   recorded comparison shows a lower cost per run at the same verify result.
+- **Provider data** `adapters/providers/<provider>.json` (embedded, one file per provider,
+  `formatVersion`, fail-closed like §8). It holds the provider-specific fields, so a new
+  OpenAI-compatible API or a known CLI harness is one data file and one source row (DR-6):
+  `id`; `adapter`; `reasoning {request, carry}` (request parameters, and reply fields returned
+  between turns); `errors [{status, code, class}]` (maps a structured error to a §7.6 class);
+  `balance {path, field, currency}` or absent (the endpoint of §7.6 item 6); for a CLI harness
+  `cli {binary, flags, loginEnv, limitText}` (non-interactive flags, the login-keeping variable of
+  U28, and the usage-limit result that sets `subscription_window`). Each value cites its §17 fact.
 - Phase 1 adapters: `claude-code`, `opencode`, `cursor` (CLI) and `openai-chat` (API; fact: all
-  six old API specs use the `openai-chat` wire format).
-- Deferred: API adapters with other wire formats, remote cloud agents (§15).
+  six old API specs use the `openai-chat` wire format). Phase 1 provider data: Fireworks AI and
+  DeepSeek on `openai-chat` (unit 1.39).
+- Deferred: API adapters with other wire formats, remote cloud agents, the `codex` and `gemini`
+  CLI adapters (§15).
 
 ---
 
@@ -1681,12 +1719,12 @@ lines; 117 test files.
 | gates: checks, test-shape (2) | 1 070 | rewrite (reference: these files) | `gates` · 1.5 | `gates/checks.test.ts`: each D-check's red case on known-bad input |
 | gates: definition, runner (2) | 781 | rewrite (reference: these files) | `gates` · 0.7, 1.2, 1.3 | `gates/definition`, `runner`, `runner-commit` tests; `scripts/gate-single-source.test.ts` (the gate is declared once) |
 | gates: exec (1) | 335 | rewrite (reference: `gates/exec.ts`) | `core/process*.go` · 0.6 | `gates/exec.test.ts` (launchers, exit codes, kill) |
-| engine: acceptance, capacity, continuation, declared-coverage, gate-copy, git, lock, quarantine, queue, runs, temp-dir (11) | ~2 470 | rewrite (reference: these files) | `engine`, `core` · 0.5, 0.8, 1.3, 1.16, 1.19, 1.20, 2.8–2.10 | the eleven `engine/*.test.ts` of these files |
-| engine: admission (1) | 394 | rewrite (reference: `engine/admission.ts`) | `engine`, `gates` · 2.11 | `engine/admission.test.ts`, `scripts/gate-admission.test.ts` |
+| engine: acceptance, capacity, continuation, declared-coverage, gate-copy, git, lock, quarantine, queue, runs, temp-dir (11) | ~2 470 | rewrite (reference: these files) | `engine`, `core` · 0.5, 0.8, 1.3, 1.16, 1.19, 1.20, 1.31–1.33 | the eleven `engine/*.test.ts` of these files |
+| engine: admission (1) | 394 | rewrite (reference: `engine/admission.ts`) | `engine`, `gates` · 1.34 | `engine/admission.test.ts`, `scripts/gate-admission.test.ts` |
 | engine: claim, residue (2) | 945 | rewrite (reference: these files) | `engine` · 1.16 | `claim`, `residue` tests; `slot-rescue.test.ts` cases where committed work must survive a dead run |
 | engine: closeout (1) | 359 | rewrite (reference: `engine/closeout.ts`) | `engine` · 1.20 | `closeout.test.ts` |
 | engine: contract (1) | 83 | rewrite (reference: `engine/contract.ts`) | `engine` · 1.17 | `contract.test.ts`; `providers/prompt-floor.test.ts` (fixed per-turn prompt cost) |
-| engine: detach (1) | 367 | rewrite (reference: `engine/detach.ts`) | `engine` · 2.9 | `detach.test.ts`, `status-foreground.test.ts` |
+| engine: detach (1) | 367 | rewrite (reference: `engine/detach.ts`) | `engine` · 1.32 | `detach.test.ts`, `status-foreground.test.ts` |
 | engine: integrate (1) | 647 | rewrite (reference: `engine/integrate.ts`) | `engine` · 1.20 | `integrate.test.ts`, `integrate-land.test.ts` |
 | engine: judge (1) | 170 | rewrite (reference: `engine/judge.ts`) | `engine` · 1.19 | `judge.test.ts` |
 | engine: ledger (1) | 714 | rewrite (reference: `engine/ledger.ts`) | `ledger` · 1.10 | `engine/ledger.test.ts` merged with `efficiency/ledger.test.ts` into one schema |
@@ -1694,7 +1732,7 @@ lines; 117 test files.
 | engine: board, commands, dispatch, gh, routing, work, index, testing/fake-gh (8) | ~6 700 | rewrite (reference: these files) | `engine`, `tracker` · 1.7, 1.9, 1.15, 1.19, 1.21 | `board.test.ts` parser cases and `board-full-gate.test.ts` (a unit whose verify runs the full gate) → 1.9; `dispatch.test.ts` lifecycle scenarios → 1.19; `gh.test.ts` call kinds → REST in 1.7; `routing.test.ts` capability and separation cases → 1.15; `commands.test.ts`, `work.test.ts` → 1.21 |
 | engine: archive, form, race (3) | 1 151 | not rewritten | — (§7.3 step 17; §15) | none |
 | efficiency: contract, index, lines, testing/append-worker (4) | ~325 | rewrite (reference: these files) | `ledger` · 1.10 | `efficiency/contract.test.ts`, `lines.test.ts` (concurrent appends keep whole lines) |
-| efficiency: ledger, report (2) | 459 | rewrite (reference: these files) | `ledger` · 1.10, 1.24 | `efficiency/ledger`, `report` tests |
+| efficiency: ledger, report (2) | 459 | rewrite (reference: these files) | `ledger` · 1.10, 2.17 | `efficiency/ledger`, `report` tests |
 | efficiency: usage (1) | 395 | not rewritten | — (§15) | none |
 | mcp: budget, build, call, index, resources, schema, server, supervise, surface (9) | 1 492 | rewrite (reference: these files; `build` has no Go counterpart) | `mcp` · 1.22, 1.23 | `budget`, `call`, `resources`, `stdio`, `supervise`, `surface` tests |
 | bin (2), smoke (1) | 201 | rewrite (reference: these files) | `cmd/aiwe`, `e2e` · 0.1, 1.25 | the smoke scenario |
@@ -1710,7 +1748,7 @@ lines; 117 test files.
 | providers: specs/* (9) | 1 116 | rewrite (reference: these files) | `adapters` · 1.13, 1.14 | `specs/specs.test.ts` |
 | providers: commands, defaults, registry, index (4) | 1 222 | rewrite (reference: these files) | `adapters`, `engine` · 1.11, 1.15 | `registry.test.ts`; `commands.test.ts` discovery cases |
 | providers: recommend, shipped-defaults (2) | 731 | not rewritten | — (routing replaces recommend; shipped defaults name one harness, DR-6) | none |
-| scripts: boundaries, check-boundaries, check-commit-message, commit-message, commit-scope, gate-admission, tracked-files (7) | ~700 | rewrite (reference: these files) | `repocheck` · 0.9, 0.10; `gates` · 2.11 | `boundaries.test.ts` (0.9); commit tests (row core: commit-rules) |
+| scripts: boundaries, check-boundaries, check-commit-message, commit-message, commit-scope, gate-admission, tracked-files (7) | ~700 | rewrite (reference: these files) | `repocheck` · 0.9, 0.10; `gates` · 1.34 | `boundaries.test.ts` (0.9); commit tests (row core: commit-rules) |
 | scripts: affected-tests (1) | 303 | not rewritten | — (Go's test cache reruns only changed packages, §17) | none |
 | scripts: check-tests, gate-workers (2) | 926 | rewrite (reference: these files) | `gates`, `core` · 0.8 | `check-tests`, `gate-workers`, `gate-workers-deadline` tests (the limit is never divided by workers) |
 | scripts: source-rules, check-source-rules (2) | 415 | rewrite (reference: these files) | `repocheck` · 0.4, 0.9 | `source-rules.test.ts` |
@@ -1758,17 +1796,17 @@ table-driven case in the named Go test, and the unit that owns the test file cit
 | BC-25 | A ref name is built for a run, claim or batch | two spellings of one ref, or an invalid segment accepted | `engine/git_test.go` · 1.20 |
 | BC-26 | A reply over the structured budget holds a long nested list | `data` dropped whole instead of the longest list cut and named in `truncation.field` | `mcp/budget_test.go` · 1.23 |
 | BC-27 | A tool call ends red or `no_change` | a completed call reported to the client with `isError` | `mcp/call_test.go` · 1.23 |
-| BC-28 | Metrics read an empty or missing ledger | a cost or rate printed as `0` (DR-21) | `ledger/metrics_test.go` · 1.24 |
+| BC-28 | Metrics read an empty or missing ledger | a cost or rate printed as `0` (DR-21) | `ledger/metrics_test.go` · 2.17 |
 | BC-29 | A streaming source sends a long reply | a live reply killed as stalled (§10.2) | `adapters/sse_test.go` · 1.28 |
-| BC-30 | The engine restarts with a run record open | a run shown as running forever (§7.5) | `engine/runs_test.go` · 2.9 |
-| BC-31 | A run starts in the foreground | a live run missing from `runs list` and status | `engine/runs_test.go` · 2.9 |
-| BC-32 | A run is killed from outside | a record closed with 0 ms or without its tip (§7.4) | `engine/runs_test.go` · 2.9 |
-| BC-33 | A detached child starts | a child reading other input than its parent; a missing `--input` that is not a usage error | `engine/detach_test.go` · 2.9 |
-| BC-34 | A claim ref outlives its run | a unit blocked forever by a stale claim | `engine/continuation_test.go` · 2.9 |
-| BC-35 | A unit fails three times | a unit claimed again without end | `engine/quarantine_test.go` · 2.10 |
-| BC-36 | A red comes from the machine, not the agent | a fix round charged to the agent | `engine/quarantine_test.go` · 2.10 |
-| BC-37 | More runs are offered than the measured cores carry | an overloaded machine that slows gates and turns them red (DR-7) | `engine/admission_test.go` · 2.11 |
-| BC-38 | A source is at its concurrent-run ceiling | another run started on it (§8.1) | `engine/routing_test.go` · 2.14 |
+| BC-30 | The engine restarts with a run record open | a run shown as running forever (§7.5) | `engine/runs_test.go` · 1.32 |
+| BC-31 | A run starts in the foreground | a live run missing from `runs list` and status | `engine/runs_test.go` · 1.32 |
+| BC-32 | A run is killed from outside | a record closed with 0 ms or without its tip (§7.4) | `engine/runs_test.go` · 1.32 |
+| BC-33 | A detached child starts | a child reading other input than its parent; a missing `--input` that is not a usage error | `engine/detach_test.go` · 1.32 |
+| BC-34 | A claim ref outlives its run | a unit blocked forever by a stale claim | `engine/continuation_test.go` · 1.32 |
+| BC-35 | A unit fails three times | a unit claimed again without end | `engine/quarantine_test.go` · 1.33 |
+| BC-36 | A red comes from the machine, not the agent | a fix round charged to the agent | `engine/quarantine_test.go` · 1.33 |
+| BC-37 | More runs are offered than the measured cores carry | an overloaded machine that slows gates and turns them red (DR-7) | `engine/admission_test.go` · 1.34 |
+| BC-38 | A source is at its concurrent-run ceiling | another run started on it (§8.1) | `engine/routing_test.go` · 1.35 |
 | BC-39 | `main` CI turns red after a squash merge | a direct push to `main` instead of a revert pull request, or a red revert pull request CI that does not end in `revert_red` (§7.3 step 16, §7.4) | `engine/ci_test.go` · 1.20 |
 
 ### 13.2 Reference code per group
@@ -1786,9 +1824,10 @@ unit's own command. A phase gate is `aiwe gates gate --repo .` green in CI (§12
 criterion. Each phase is one milestone (§8.4). Each issue body is generated from these tables in the
 unit template (§8.4).
 
-**Test items** (DR-45): the 71 behaviour units carry 179 `— test:` items; an item cites the §13.1
-contract rows its test covers. Ten units are `test-exempt` (documents, configuration or an owner
-approval only): 0.16, 0.13, 0.14, 0.11, 1.18, 1.27, 3.9, 3.10, 3.6, 4.5.
+**Test items** (DR-45): the 78 behaviour units carry `— test:` items; an item cites the §13.1
+contract rows its test covers. The first 71 behaviour units carry 179 items; each later unit
+states its items in its issue body. Twelve units are `test-exempt` (documents, configuration or an
+owner approval only): 0.16, 0.13, 0.14, 0.11, 1.18, 1.27, 1.36, 1.40, 3.9, 3.10, 3.6, 4.5.
 
 **Dependencies**, derived mechanically into each `## Depends on`, inside one phase (across phases
 the milestone order holds): (1) a unit that changes a file another unit creates depends on it;
@@ -1805,9 +1844,11 @@ creates each file the check reads (`rules`: `gate.json`; `ci-shape`: `.github/wo
 (early diff checks), 1.8 on 1.5 (payload scan), 1.13 on 1.12 (harness runs), 1.19 on 1.3, 1.8,
 1.9, 1.15, 1.16, 1.26 and 1.30 (gate clone, status, unit parser, routing, clones, roles, sandbox),
 1.20 on 1.19, 1.21 on 1.2, 1.7, 1.19 and 1.20 (gate derivation, GitHub adapter, lifecycle,
-integration), 4.4 on 4.3 (masked secrets). An edge implied by another path is left out. The graph
-has no cycle. Measured critical path, in units: Phase 0 7, Phase 1 12, Phase 2 2, Phase 3 7,
-Phase 4 3.
+integration), 1.13 on 1.40 and 1.41 (measured CLI facts, provider data), 1.28, 1.38 and 1.39 on
+1.41 (provider data), 1.31 on 1.40 and 1.41 (limit messages, error classes), 1.42 on 1.38 (read
+balance), 4.4 on 4.3 (masked secrets). An edge implied by another path is left out. The graph
+has no cycle. Critical path, in units, computed by rules 1, 2, 4, 5 and 6 (rule 3 not counted):
+Phase 0 7, Phase 1 11 (10 up to 1.25), Phase 2 2, Phase 3 7, Phase 4 3.
 
 **Reach**: every new source file is called. It is an entry point under `cmd/`, or its own unit or a
 unit that depends on it changes a file of the same module, or of a module that may import it
@@ -1815,9 +1856,9 @@ unit that depends on it changes a file of the same module, or of a module that m
 brings it. `cmd/aiwe/main.go`: 0.1 (`version`), 0.7 (`gates`), 0.19 (`config show`), 1.4 (the
 engine registry `engine/commands.go`), 1.11 (`adapters`) and 1.22 (`mcp`, `mcp snippet`). `--help`:
 0.2 (`core/cli.go`). The engine registry: 1.9 (`unit check`, `unit template`), 1.15
-(`sources show`, `sources discover`, `sources enable`), 1.21 (`work`, `plan`, `onboard`,
-`unit approve-breaking`), 1.24 (`metrics`), 2.7 (`artefact submit`), 2.9 (`runs list`,
-`runs stop`) and 4.2 (`ops approve`). `internal/cmd/repocheck/main.go`: 0.9, 0.10, 0.12 and 1.29.
+(`sources show`, `sources discover`, `sources enable`), 1.32 (`runs list`, `runs stop`), 1.21
+(`work`, `plan`, `onboard`, `unit approve-breaking`), 2.7 (`artefact submit`), 2.17 (`metrics`)
+and 4.2 (`ops approve`). `internal/cmd/repocheck/main.go`: 0.9, 0.10, 0.12 and 1.29.
 
 **Self-hosting** (DR-46). At each hand-over unit aiwe takes over one step; the unit's Done list says
 so. From the self-hosting point on, every unit is dispatched through aiwe.
@@ -1882,12 +1923,12 @@ green on three OS (Q20).
 
 ### Phase 1 — One sandbox repository end to end
 
-Serves S1–S7, M1–M7. Target: the sandbox repository of Q18. Unit 1.25 fills it with a fixture
-project of one §8.2 stack with GitHub Actions CI.
+Serves S1–S7, M1–M7. Target: the sandbox repository of Q18. Unit 1.25 fills it with a Go fixture
+project with GitHub Actions CI. Phase 1 ships the Go stack row only (§8.2).
 
 | Unit | Goal | Files | Verify |
 |---|---|---|---|
-| 1.1 | Stack profiles are data rows, and detection names every outcome. | `stacks/profiles.go`, `stacks/profiles/` (one JSON row per stack of §8.2), `stacks/detect.go`, `stacks/stacks.go` | `go test ./internal/stacks/` |
+| 1.1 | Stack profiles are data rows, and detection names every outcome. | `stacks/profiles.go`, `stacks/profiles/go.json`, `stacks/profiles/` (the Detect cell of each other stack of §8.2), `stacks/detect.go`, `stacks/stacks.go` | `go test ./internal/stacks/` |
 | 1.2 | The gate is derived from the profile with inputs and measured limits. | `stacks/derive.go`, `gates/definition.go` | `go test ./internal/stacks/ ./internal/gates/` |
 | 1.3 | The runner proves the gate on a clean clone and explains every kill. | `gates/runner.go`, `gates/failures.go`, `gates/evidence.go`, `engine/gate_clone.go` | `go test -run 'Runner|Failures|Evidence|GateClone' ./internal/gates/ ./internal/engine/` |
 | 1.4 | Each check runs once per key, and agents request it via `aiwe verify`. | `gates/cache.go`, `gates/key.go`, `engine/verify.go`, `engine/commands.go`, `cmd/aiwe/main.go` | `go test -run 'Cache|Key|Verify' ./internal/gates/ ./internal/engine/` |
@@ -1899,29 +1940,44 @@ project of one §8.2 stack with GitHub Actions CI.
 | 1.10 | The ledger keeps one append-only schema of measured or unknown values. | `ledger/record.go`, `ledger/store.go`, `ledger/rotate.go` | `go test ./internal/ledger/` |
 | 1.11 | Adapters register in one list and pass the provider contract suite. | `adapters/provider.go`, `adapters/all.go`, `adapters/commands.go`, `adapters/providertest/contract.go`, `cmd/aiwe/main.go` | `go test ./internal/adapters/...` |
 | 1.12 | Harnesses run in a clean environment with liveness and exit evidence. | `adapters/cli.go`, `adapters/env.go`, `adapters/home.go`, `adapters/sessions.go`, `adapters/activity.go` | `go test ./internal/adapters/...` |
+| 1.40 | The Cursor and opencode CLIs are measured on each OS before their adapters use them. | `docs/SPEC.md` (§10.2, §17) | `go run ./internal/cmd/repocheck rules --repo .` |
+| 1.41 | A new source is added as data, through the provider data format of §10.2. | `adapters/providers.go` | `go test -run Providers ./internal/adapters/` |
 | 1.13 | The CLI adapters run their harness and record the observed model. | `adapters/claude_code.go`, `adapters/opencode.go`, `adapters/cursor.go`, `adapters/effort.go`, `adapters/all.go` | `go test ./internal/adapters/...` |
 | 1.14 | The API adapter runs a confined agent loop over the chat wire format. | `adapters/api_loop.go`, `adapters/tools.go`, `adapters/api_errors.go`, `adapters/condense.go`, `adapters/openai_chat.go` | `go test ./internal/adapters/...` |
+| 1.39 | Fireworks AI and DeepSeek are provider data rows with measured error and limit behaviour. | `adapters/providers/fireworks.json`, `adapters/providers/deepseek.json`, `docs/SPEC.md` (§17) | `go test -run Providers ./internal/adapters/` |
+| 1.38 | A source's balance or usage is read where its provider publishes an endpoint. | `adapters/balance.go`, `adapters/provider.go` | `go test -run Balance ./internal/adapters/` |
 | 1.15 | Routing spreads runs over the sources by their shares. | `engine/sources.go`, `engine/routing.go`, `engine/commands.go` | `go test -run 'Sources|Routing' ./internal/engine/` |
+| 1.37 | Each role uses the (source, model) entries of the owner's model table, in order. | `engine/role_models.go`, `engine/routing.go` | `go test -run 'RoleModels|Routing' ./internal/engine/` |
+| 1.31 | Quota and restriction errors move a source to passive or restricted. | `engine/sources.go`, `adapters/api_errors.go`, `engine/queue.go` | `go test -run 'Sources|Queue|APIErrors' ./internal/engine/ ./internal/adapters/` |
+| 1.43 | A source with a spend cap receives no run once its ledger spend reaches the cap. | `engine/spend_cap.go`, `engine/sources.go` | `go test -run 'SpendCap|Sources' ./internal/engine/` |
+| 1.42 | `aiwe sources show` prints each source's spend, state, reset time and read balance. | `engine/sources_show.go`, `engine/sources.go` | `go test -run 'SourcesShow|Sources' ./internal/engine/` |
 | 1.16 | Each run works in its own clone, collected before the clone goes. | `engine/clone.go`, `engine/residue.go`, `engine/claim.go`, `engine/lock.go`, `engine/coverage.go` | `go test -run 'Clone|Residue|Claim|Lock|Coverage' ./internal/engine/` |
 | 1.30 | Every run starts through a sandbox adapter that records its level. | `core/sandbox.go`, `ledger/record.go`, `engine/clone.go` | `go test -run Sandbox ./internal/core/ ./internal/engine/` |
 | 1.17 | The engine builds the prompt contract from role cards within its cap. | `roles/schema.go`, `roles/cards.go`, `roles/roles.go`, `engine/contract.go` | `go test -run 'Schema|Contract' ./internal/roles/ ./internal/engine/` |
 | 1.18 | The five base role cards state each role's method and limits. | `roles/cards/architect.md`, `roles/cards/test-author.md`, `roles/cards/engineer.md`, `roles/cards/auditor.md`, `roles/cards/scout.md` | `go test ./internal/roles/` |
+| 1.36 | The security-reviewer card states how a change is attacked and each finding proved. | `roles/cards/security-reviewer.md` | `go test ./internal/roles/` |
 | 1.26 | Each unit resolves to its roles, or stops with `role_unresolved`. | `engine/role.go`, `engine/unit.go`, `stacks/profiles.go` | `go test -run 'Role|Unit|Detect|Profile|Derive' ./internal/engine/ ./internal/stacks/` |
 | 1.19 | A unit moves from intake through audit and fix rounds (steps 1–13). | `engine/lifecycle.go`, `engine/dispatch.go`, `engine/judge.go`, `engine/acceptance.go`, `engine/continuation.go` | `go test -run 'Lifecycle|Dispatch|Judge|Acceptance|Continuation' ./internal/engine/` |
+| 1.32 | Lost, killed, timed-out and stalled runs end with a named outcome. | `engine/detach.go`, `engine/runs.go`, `engine/continuation.go`, `engine/commands.go` | `go test -run 'Detach|Runs|Continuation' ./internal/engine/` |
+| 1.33 | Environment faults are told from agent faults, and failing units stop. | `engine/lifecycle.go`, `gates/failures.go`, `engine/brief.go`, `engine/quarantine.go` | `go test -run 'Lifecycle|Failures|Brief|Quarantine' ./internal/engine/ ./internal/gates/` |
 | 1.20 | An audited unit's pull request passes CI, is squash-merged and closed. | `engine/integrate.go`, `engine/ci.go`, `engine/closeout.go`, `engine/git.go` | `go test -run 'Integrate|CI|Closeout|Git' ./internal/engine/` |
 | 1.21 | Onboarding is automatic, and `aiwe plan` writes audited units once. | `engine/onboard.go`, `engine/plan.go`, `engine/commands.go` | `go test -run 'Onboard|Plan|Commands' ./internal/engine/` |
+| 1.34 | All layers together never start more workers than the measured cores. | `core/capacity.go`, `engine/admission.go`, `gates/admission.go`, `engine/routing.go`, `gates/runner.go` | `go test -run 'Capacity|Admission' ./internal/core/ ./internal/engine/ ./internal/gates/` |
+| 1.35 | No source runs more concurrent runs than its measured ceiling. | `engine/sources.go`, `engine/routing.go` | `go test -run 'Routing|Ceiling' ./internal/engine/` |
 | 1.22 | The MCP server describes the tool to any connected session. | `mcp/server.go`, `mcp/surface.go`, `mcp/resources.go`, `mcp/prompts.go`, `cmd/aiwe/main.go` | `go test ./internal/mcp/ ./cmd/aiwe/` |
 | 1.23 | MCP calls follow the command schema, payload budget and supervision. | `mcp/call.go`, `mcp/schema.go`, `mcp/budget.go`, `mcp/supervise.go`, `mcp/server.go` | `go test ./internal/mcp/` |
-| 1.24 | `aiwe metrics` prints M1–M7, by goal or by model when asked. | `ledger/metrics.go`, `ledger/report.go`, `engine/commands.go` | `go test -run 'Metrics|Report' ./internal/ledger/` |
 | 1.27 | The doc-writer card states how documents are written and checked. | `roles/cards/doc-writer.md` | `go test ./internal/roles/` |
 | 1.28 | API runs stream, keep reasoning state and name cut answers. | `adapters/sse.go`, `adapters/openai_chat.go`, `adapters/api_loop.go`, `adapters/all.go` | `go test -run 'SSE|Reasoning|Truncated' ./internal/adapters/` |
 | 1.25 | One goal on the sandbox repository ends the job with zero owner actions. | `e2e/external_test.go` (build tag `smoke`), `e2e/testdata/sandbox/`, `README.md`, `.github/workflows/ci.yml` | `go test -tags smoke -run External ./internal/e2e/` |
 | 1.29 | CI turns red on a unit commit to `main` without a `Run-Id` trailer. | `repocheck/run_id.go`, `.github/workflows/ci.yml`, `internal/cmd/repocheck/main.go` | `go test -run RunID ./internal/repocheck/` |
 
 Gate 1 (usable): on the sandbox repository one goal issue becomes ≥ 3 units; each unit ends the job
-(§2) with zero owner actions; `metrics` prints every metric of §1.5; the run also completes with one
-subscription only and with API only; no temp directory is left (M7); `clean-os-smoke` also runs
-`aiwe mcp snippet` and onboarding. At Gate 1 the repository becomes public (Q16).
+(§2) with zero owner actions; the run also completes with one subscription only and with API only;
+each role runs on the first available entry of its model table row; a fixture per quota class
+moves a source to passive and back; a restricted fixture receives zero further requests; a source
+at its ceiling or its spend cap receives no further run; no temp directory is left (M7);
+`clean-os-smoke` also runs `aiwe mcp snippet` and onboarding. At Gate 1 the repository becomes
+public (Q16).
 
 ### Phase 2 — Every stack, every source subset, every failure path
 
@@ -1936,19 +1992,16 @@ Serves S1, S2, S3.
 | 2.5 | The Rust profile proves green on its fixture repository. | `stacks/profiles/rust.json`, `stacks/testdata/rust/` | `go test -run TestProfileRust ./internal/stacks/` |
 | 2.6 | The JVM profile proves green on its fixture repository. | `stacks/profiles/jvm.json`, `stacks/testdata/jvm/` | `go test -run TestProfileJVM ./internal/stacks/` |
 | 2.7 | An unknown need is met through the adaptation ladder and stored. | `engine/synthesis.go`, `engine/commands.go`, `ledger/record.go` | `go test -run Synthesis ./internal/engine/` |
-| 2.8 | Quota and restriction errors move a source to passive or restricted. | `engine/sources.go`, `adapters/api_errors.go`, `engine/queue.go` | `go test -run 'Sources|Queue|APIErrors' ./internal/engine/ ./internal/adapters/` |
-| 2.9 | Lost, killed, timed-out and stalled runs end with a named outcome. | `engine/detach.go`, `engine/runs.go`, `engine/continuation.go`, `engine/commands.go` | `go test -run 'Detach|Runs|Continuation' ./internal/engine/` |
-| 2.10 | Environment faults are told from agent faults, and failing units stop. | `engine/lifecycle.go`, `gates/failures.go`, `engine/brief.go`, `engine/quarantine.go` | `go test -run 'Lifecycle|Failures|Brief|Quarantine' ./internal/engine/ ./internal/gates/` |
-| 2.11 | All layers together never start more workers than the measured cores. | `core/capacity.go`, `engine/admission.go`, `gates/admission.go`, `engine/routing.go`, `gates/runner.go` | `go test -run 'Capacity|Admission' ./internal/core/ ./internal/engine/ ./internal/gates/` |
 | 2.12 | The disk contract holds on Windows, macOS and Linux. | `core/platform.go`, `core/remove.go`, `core/testdata/disk/` | `go test -run DiskContract ./internal/core/` |
 | 2.13 | A repeated red calls the debugger, whose experiments are new keys. | `roles/cards/debugger.md`, `engine/debug.go`, `gates/key.go`, `engine/lifecycle.go` | `go test -run 'Debug|Key' ./internal/engine/ ./internal/gates/` |
-| 2.14 | No source runs more concurrent runs than its measured ceiling. | `engine/sources.go`, `engine/routing.go` | `go test -run 'Routing|Ceiling' ./internal/engine/` |
+| 2.17 | `aiwe metrics` prints M1–M7, by goal or by model when asked. | `ledger/metrics.go`, `ledger/report.go`, `engine/commands.go` | `go test -run 'Metrics|Report' ./internal/ledger/` |
+| 2.18 | The Node profile proves green on its fixture repository. | `stacks/profiles/node.json`, `stacks/testdata/node/` | `go test -run TestProfileNode ./internal/stacks/` |
+
+Units 2.1–2.3, 2.5, 2.6 and 2.18 fill the cells of their stack row beyond Detect (§8.2).
 
 Gate 2: each of the seven profiles proves green on a fixture repo in CI; an unknown-stack fixture
-completes through ladder rung 2; a fixture per quota class moves a source to passive and back; a
-restricted fixture receives zero further requests; the disk contract tests are green on three OS; a
-repeated-red fixture calls the debugger once and reruns no check key; a source at its ceiling
-receives no further run.
+completes through ladder rung 2; `metrics` prints every metric of §1.5; the disk contract tests
+are green on three OS; a repeated-red fixture calls the debugger once and reruns no check key.
 
 ### Phase 3 — Trust hardening and first release
 
@@ -1961,7 +2014,7 @@ Serves M3, M6, M7.
 | 3.3 | Mutation results on changed lines become evidence. | `gates/mutation.go`, `stacks/profiles.go` | `go test -run Mutation ./internal/gates/` |
 | 3.4 | D17 flags a new dependency that its registry lacks or deprecates. | `gates/dependency.go`, `stacks/profiles.go` | `go test -run Dependency ./internal/gates/` |
 | 3.5 | D18 flags a changed function whose cognitive complexity exceeds 12. | `gates/complexity.go`, `stacks/profiles.go` | `go test -run Complexity ./internal/gates/` |
-| 3.7 | The security-reviewer's findings are reproduced by the engine. | `roles/cards/security-reviewer.md`, `engine/review.go`, `engine/repro.go`, `stacks/profiles.go`, `engine/lifecycle.go` | `go test -run 'Review|Repro|Detect|Profile|Derive' ./internal/engine/ ./internal/stacks/` |
+| 3.7 | The security-reviewer's findings are reproduced by the engine. | `engine/review.go`, `engine/repro.go`, `stacks/profiles.go`, `engine/lifecycle.go` | `go test -run 'Review|Repro|Detect|Profile|Derive' ./internal/engine/ ./internal/stacks/` |
 | 3.8 | The ux-reviewer judges screens captured by the project's UI runner. | `roles/cards/ux-reviewer.md`, `engine/screens.go`, `stacks/profiles.go`, `adapters/provider.go`, `engine/lifecycle.go` | `go test ./internal/engine/ ./internal/stacks/ ./internal/adapters/` |
 | 3.9 | The release job publishes the MCP Registry entry for every target. | `server.json`, `.github/workflows/ci.yml` | `go run ./internal/cmd/repocheck ci-shape --repo .` |
 | 3.10 | The owner approves the 1.0.0 release once Gate 3, Q7 and U19 hold. | `docs/SPEC.md` | `aiwe metrics --repo .` |
@@ -2000,7 +2053,8 @@ value appears 0 times in prompt, ledger, evidence and status comment; a red afte
 the rollback and the second measurement equals the before-state. The first live operation follows
 Gate 4, on a resource the owner names, and needs sandbox level `os-sandbox` (§6.7).
 
-Totals: 5 phases, 79 units.
+Totals: 5 phases, 90 units (Phase 0 21, Phase 1 42, Phase 2 11, Phase 3 10, Phase 4 6). The
+chain to the self-hosting point is 10 units, counting 1.25; 41 units lead to it, counting 1.25.
 
 ---
 
@@ -2031,6 +2085,7 @@ Totals: 5 phases, 79 units.
 | Harness-shaped card export | A harness needs its own card file to run. |
 | Non-GitHub tracker adapters | A user asks, with a repository to test on. |
 | Remote cloud agent adapters | The provider documents dispatch, repo hosting and concurrency. |
+| `codex` and `gemini` CLI adapters | After the self-hosting point (1.25), when the owner names a subscription to use through one. |
 | Latency budget | A measured slow command or MCP call. |
 | API token budget per turn | M4 doubles over 50 units. |
 | Rule contradiction hunt (old norms layer 3) | Rules exceed 60 entries. |
@@ -2324,7 +2379,7 @@ the facts above.
 - U15 Which harnesses report the model they ran and accept a command restriction. Measured by unit
   1.13.
 - U16 Memory use of a run's process tree per OS. No measurement needed: M7 prints `unknown` where
-  the OS reports none (DR-21); unit 1.24 tests it.
+  the OS reports none (DR-21); unit 2.17 tests it.
 - U17 Clone and removal times on macOS, Linux and repositories with ≥ 10 000 files. Measured by unit
   2.12 on three OS; the free-disk rule uses each machine's own measured clone size (§6.4).
 - U18 nilaway as a golangci-lint module plugin: build time of `custom-gcl`, its cache, and its
@@ -2344,7 +2399,7 @@ the facts above.
   Scoop, Homebrew tap); the Apple Developer Program fee; a macOS signing and notarization tool that
   runs in the release job. Measured for unit 3.10, where the owner decides Q7.
 - U25 Which providers return a structured code for a suspended or deactivated account. Measured by
-  unit 2.8.
+  unit 1.31.
 - U26 How the engine captures screens at fixed widths with a project's own browser automation tool,
   without adding a dependency. Measured by unit 3.8.
 - U27 Whether argv survives as separate arguments through an access method such as a remote shell
@@ -2362,3 +2417,7 @@ the facts above.
   2026-10-10. Measured by unit 0.12.
 - U31 The Windows `OpenProcess` access-denied branch of the process start read
   (`core/procstart_windows.go`, unit 0.21) has no test: no test can reach it without a seam.
+- U32 Fireworks AI and DeepSeek: the error shapes for rate limit, quota, exhausted credit and
+  auth, the reasoning parameters, and a balance or usage endpoint. Measured by unit 1.39.
+- U33 Cursor and opencode CLIs on each OS: binary name, non-interactive flags, how the login is
+  kept (U28), limit and quota messages, exit codes. Measured by unit 1.40.
