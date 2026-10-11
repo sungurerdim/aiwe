@@ -24,6 +24,8 @@ func configShowSettings() []core.ConfigSetting {
 		{Name: "log_level", Env: envName("LOG_LEVEL"), Default: "info"},
 		{Name: "api_token", Env: envName("API_TOKEN"), Default: ""},
 		{Name: "proxy", Env: envName("PROXY_URL"), Default: ""},
+		{Name: "db.url", Default: ""},
+		{Name: "db.password", Default: ""},
 	}
 }
 
@@ -63,7 +65,8 @@ func TestConfigShow(t *testing.T) {
 	stateDir := filepath.Join(base, "state-root")
 	cacheDir := filepath.Join(base, "cache-root")
 	writeConfigState(t, stateDir, map[string]string{"model": "state-model", "max_turns": "25",
-		"tracker": "gitlab"})
+		"tracker": "gitlab", "db.url": "postgres://ada:hunter2-db@db.example.com/app",
+		"db.password": "s3cret-db-pass"})
 	getenv := configShowEnv(base, map[string]string{
 		envName("HOME"):      stateDir,
 		envName("CACHE"):     cacheDir,
@@ -91,6 +94,8 @@ func TestConfigShow(t *testing.T) {
 		{Name: "log_level", Value: "info", Origin: core.ConfigOriginDefault},
 		{Name: "api_token", Value: core.ConfigMasked, Origin: core.ConfigOriginEnv},
 		{Name: "proxy", Value: core.ConfigMasked, Origin: core.ConfigOriginEnv},
+		{Name: "db.url", Value: core.ConfigMasked, Origin: core.ConfigOriginState},
+		{Name: "db.password", Value: core.ConfigMasked, Origin: core.ConfigOriginState},
 	}
 	wantTemp, err := core.ResolveRoots(runtime.GOOS, getenv, base)
 	if err != nil {
@@ -118,7 +123,8 @@ func TestConfigShow(t *testing.T) {
 		if err := core.WriteResult(&out, core.FormatJSON, res); err != nil {
 			t.Fatal(err)
 		}
-		for _, secret := range []string{"ghp_Zq81LmN0pQrStUvWx", "hunter2-proxy"} {
+		for _, secret := range []string{"ghp_Zq81LmN0pQrStUvWx", "hunter2-proxy", "hunter2-db",
+			"s3cret-db-pass"} {
 			if strings.Contains(out.String(), secret) || strings.Contains(res.Detail, secret) {
 				t.Fatalf("secret %q printed in clear:\n%s", secret, out.String())
 			}
