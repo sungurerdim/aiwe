@@ -263,3 +263,71 @@ func TestOwnedCauseWrapped(t *testing.T) {
 		}
 	}
 }
+
+// errTestClose is the error closeFailHook adds at the close a test names.
+var errTestClose = errors.New("close failed (test)")
+
+// testFailClose makes the close named what on the removal path fail with errTestClose until the
+// test ends.
+func testFailClose(t *testing.T, what string) {
+	t.Helper()
+	closeFailHook = func(w string) error {
+		if w == what {
+			return errTestClose
+		}
+		return nil
+	}
+	t.Cleanup(func() { closeFailHook = nil })
+}
+
+// TestOwnedRemoveCloseError catches a failed close on the removal path lost before the caller
+// (§5.15). A close that fails during the ownership check refuses the removal and keeps the
+// directory; one that fails after the removal is reported with the directory gone.
+func TestOwnedRemoveCloseError(t *testing.T) {
+	for _, c := range []struct {
+		what string
+		kept bool
+	}{{"owned root", true}, {"owned directory", true}, {"removal root", false}} {
+		t.Run(c.what, func(t *testing.T) {
+			o := removeTestOpen(t, removeTestRoots(t, t.TempDir()))
+			d := removeTestCreate(t, o, TempRoot)
+			testFailClose(t, c.what)
+			if err := o.RemoveOwned(t.Context(), d); !errors.Is(err, errTestClose) {
+				t.Errorf("RemoveOwned with a failing close of the %s = %v, want %v", c.what, err, errTestClose)
+			}
+			if got := removeTestExists(t, d.Path()); got != c.kept {
+				t.Errorf("after a failing close of the %s, %q exists = %v, want %v", c.what, d.Path(), got, c.kept)
+			}
+		})
+	}
+}
+
+// TestRemoveDirEntryCloseError catches a failed close of the held directory lost before the caller
+// of removeDirEntry (§5.15); the empty directory still goes.
+func TestRemoveDirEntryCloseError(t *testing.T) {
+	root := t.TempDir()
+	name := "run-20261012-0002"
+	if err := os.Mkdir(filepath.Join(root, name), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	rt, err := os.OpenRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := rt.Close(); err != nil {
+			t.Errorf("close root: %v", err)
+		}
+	})
+	fi, err := rt.Lstat(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	testFailClose(t, "held directory")
+	if err := removeDirEntry(rt, name, fi); !errors.Is(err, errTestClose) {
+		t.Errorf("removeDirEntry with a failing close of the held directory = %v, want %v", err, errTestClose)
+	}
+	if _, err := os.Lstat(filepath.Join(root, name)); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("empty dir %q left after removeDirEntry: %v", name, err)
+	}
+}
