@@ -390,6 +390,15 @@ func TestCleanEnvSecretsDropped(t *testing.T) {
 			"AMQP_URL=amqps://svc:EXAMPLE%40mqPw@mq.example.com/vhost"},
 		{"git remote URL with a token as password kept",
 			"UPSTREAM_URL=https://zeynep:ghp_EXAMPLE2tokenInUrlAbCdEfGhIjKlMnOp@github.com/sungurerdim/aiwe.git"},
+		{"DATABASE_URL with a raw / in its password kept", "DATABASE_URL=postgres://app:pa/ss@db.example.com/app"},
+		{"DATABASE_URL with a raw # in its password kept", "DATABASE_URL=postgres://app:pa#ss@db.example.com/app"},
+		{"DATABASE_URL with a raw ? in its password kept", "DATABASE_URL=postgres://app:pa?ss@db.example.com/app"},
+		{"space-separated _URL list with a password in its second URL kept",
+			"PIP_EXTRA_INDEX_URL=https://pypi.org/simple https://ci:tok3n@pypi.example.com/simple"},
+		{"space-separated _URL list whose first URL has no path, with a password in its second URL kept",
+			"PIP_EXTRA_INDEX_URL=https://pypi.org https://ci:tok3n@pypi.example.com/simple"},
+		{"comma-separated _URL list with a password in its second URL kept",
+			"PIP_EXTRA_INDEX_URL=https://pypi.org/simple,https://ci:tok3n@pypi.example.com/simple"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
