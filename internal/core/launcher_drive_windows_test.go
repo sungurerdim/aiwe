@@ -21,8 +21,9 @@ func TestLauncherBestFitBackslash(t *testing.T) {
 	// §5.20). In the middle of a word only text follows them, so the word passes intact.
 	t.Run("a best-fit form of a backslash at the end of an argument is refused", func(t *testing.T) {
 		launcher := writeProcessLauncher(t, t.TempDir())
-		// A path of this machine, so the case holds no host path literal.
-		work := filepath.Join(t.TempDir(), "work")
+		// A fixed relative path: no host path literal, and no TMP value (a % in it is refused for
+		// another reason) decides the outcome.
+		const work = `work\notes`
 		chars := []struct{ name, r string }{
 			{"fullwidth reverse solidus U+FF3C", "\uff3c"},
 			{"set minus U+2216", "\u2216"},
@@ -53,6 +54,10 @@ func TestLauncherBestFitBackslash(t *testing.T) {
 						}
 						if _, statErr := os.Stat(filepath.Join(dir, "argv.json")); statErr == nil {
 							t.Errorf("Start refused %q with %v, but the launcher ran", pos.arg, err)
+						}
+						// Any other refusal would pass with the best-fit backslash check gone.
+						if want := "before the closing quote reads as \\ in an ANSI program"; !strings.Contains(err.Error(), want) {
+							t.Errorf("Start refused %q with %v; want the refusal %q", pos.arg, err, want)
 						}
 						return
 					}
