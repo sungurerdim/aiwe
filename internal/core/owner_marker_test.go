@@ -348,18 +348,19 @@ func TestOwnerMarkerGrownInPlace(t *testing.T) {
 	}
 }
 
-// TestOwnerMarkerTornRead catches a marker read that takes more bytes than the size checked on
-// its handle (#172, step 2: read at most the size it checked). The marker keeps its inode and
-// cycles in a tight loop: short and ending in " x", which matches no record; then grown past 4096
-// bytes; then its first bytes turned into the valid marker and spaces; then " x" again; then
-// shrunk. No state is a valid marker of at most 4096 bytes. A read checked at the short size that
-// takes bytes of the grown file and then hits the shrunk end sees the valid marker and spaces;
-// such a read is longer than the size checked and must be refused, so no call may succeed.
+// TestOwnerMarkerTornRead catches a marker accepted without its content authenticating as this
+// owner's (#172, lead decision on the torn read). Linux gives no point-in-time read of a file that
+// is being written, so a read may join bytes of two states of the marker. The marker here is a
+// forged one: the owner's marker with its HMAC changed, same length. It keeps its inode and cycles
+// in a tight loop: short and ending in " x"; then grown past 4096 bytes; then its first bytes turned
+// into the forged marker and spaces; then " x" again; then shrunk. A torn read can see the forged
+// marker and spaces within 4096 bytes, so only the HMAC check can refuse it; no call may succeed.
 func TestOwnerMarkerTornRead(t *testing.T) {
 	o, d, marker := markerTestOwned(t)
 	p := filepath.Join(d.Path(), markerFile)
-	l := int64(len(marker))
-	removeTestWrite(t, p, string(marker)+" x")
+	forged := removeTestFlipHex(t, "marker", string(marker))
+	l := int64(len(forged))
+	removeTestWrite(t, p, forged+" x")
 	f, err := os.OpenFile(p, os.O_RDWR, 0)
 	if err != nil {
 		t.Fatalf("open the marker to grow it: %v", err)
@@ -409,6 +410,6 @@ func TestOwnerMarkerTornRead(t *testing.T) {
 		t.Fatalf("the marker grew and shrank %d times in %v; the race never ran", n, markerTestRaceFor)
 	}
 	if accepted {
-		t.Errorf("RemoveOwned accepted a marker read past the size checked on its handle while it grew and shrank (call %d); want ErrNotOwned every time", calls+1)
+		t.Errorf("RemoveOwned accepted a forged marker, HMAC changed, torn in while it grew and shrank (call %d); want ErrNotOwned every time", calls+1)
 	}
 }
