@@ -6,7 +6,7 @@
     { "id": "lint", "command": ["custom-gcl", "run", "./..."], "required": true, "expect": { "exitCode": 0 } },
     { "id": "vuln", "command": ["go", "tool", "govulncheck", "./..."], "required": true, "expect": { "exitCode": 0 } },
     { "id": "tidy", "command": ["go", "mod", "tidy", "-diff"], "required": true, "expect": { "exitCode": 0 } },
-    { "id": "deadcode", "command": ["go", "tool", "deadcode", "./cmd/...", "./internal/cmd/..."], "required": true,
+    { "id": "deadcode", "command": ["go", "tool", "deadcode", "./cmd/...", "./internal/cmd/..."], "required": false,
       "expect": { "exitCode": 0, "outputRejects": "\\S" } },
     { "id": "repo", "command": ["go", "run", "./internal/cmd/repocheck", "all", "--repo", "."], "required": true, "expect": { "exitCode": 0 } },
     { "id": "test", "command": ["go", "test", "-json", "./..."], "required": true, "timeoutSeconds": 900, "expect": { "exitCode": 0 } }

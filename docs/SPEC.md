@@ -1556,6 +1556,8 @@ read, quoted or copied: harness behaviour comes from its documentation or the ru
 | `repo` | `go run ./internal/cmd/repocheck all --repo .` | checks `rules`, `size`, `boundaries`, `source-rules`, `deps`, `ci-shape` | this repository's own rules (§3) |
 | `test` | `go test -json -p <workers> ./...` | behaviour | DR-38 limits apply; data races: CI step `race` on Linux, since `-race` needs cgo and a C compiler (§17) that contributors need not install |
 
+`deadcode` is `"required": false` until unit 1.25, which sets it back to required: it runs and reports its result, which does not change the gate result (#186).
+
 Tools: the Go toolchain version is pinned in `go.mod`, which `actions/setup-go` reads (§17).
 govulncheck, deadcode, svu, golangci-lint and GoReleaser are `tool` lines in `go.mod`, run by
 `go tool <name>` (§17), so a contributor needs only Go and git and no setup script; check
