@@ -206,8 +206,9 @@ func (c *sourceChecker) checkLiteral(lit *ast.BasicLit, rules []literalRule) {
 	}
 }
 
-// checkRemovals flags every use of os.RemoveAll, called or taken as a value, outside removeFile;
-// with `import . "os"` a bare RemoveAll counts too.
+// checkRemovals flags every RemoveAll selector outside removeFile, whatever its receiver, called or
+// taken as a value; with `import . "os"` a bare RemoveAll counts too. Without type information an
+// *os.Root receiver cannot be told apart, so the rule fails closed (DR-25).
 func (c *sourceChecker) checkRemovals(file *ast.File) {
 	if c.path == removeFile {
 		return
@@ -215,12 +216,12 @@ func (c *sourceChecker) checkRemovals(file *ast.File) {
 	ast.Inspect(file, c.visitRemoval)
 }
 
-// visitRemoval flags n when it names os.RemoveAll; the selected name of a selector is never a
-// bare identifier, so x.RemoveAll of another package stays unflagged.
+// visitRemoval flags n when it is a RemoveAll selector or, under a dot import of os, a bare
+// RemoveAll; the selected name of a selector is never visited as a bare identifier.
 func (c *sourceChecker) visitRemoval(n ast.Node) bool {
 	switch n := n.(type) {
 	case *ast.SelectorExpr:
-		if c.isPkgSel(n, "os", "RemoveAll") {
+		if n.Sel.Name == "RemoveAll" {
 			c.add(ruleRecursiveRemoval, n.Pos())
 		}
 		ast.Inspect(n.X, c.visitRemoval)
