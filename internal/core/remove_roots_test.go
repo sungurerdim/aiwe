@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -78,18 +77,7 @@ func removeTestRootLink(t *testing.T, target, link string) {
 		}
 		return
 	}
-	// cmd splits an unquoted argument at a comma, semicolon or equals sign, and exec quotes an
-	// argument only for a space. Run mklink in the link's dir with a base name and a relative
-	// target, so no part of the test's temp path reaches cmd; mklink /J stores the full target.
-	rel, err := filepath.Rel(filepath.Dir(link), target)
-	if err != nil {
-		t.Fatalf("junction target %s relative to %s: %v", target, filepath.Dir(link), err)
-	}
-	cmd := exec.Command("cmd", "/c", "mklink", "/J", filepath.Base(link), rel)
-	cmd.Dir = filepath.Dir(link)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("junction %s -> %s: %v: %s", link, target, err, out)
-	}
+	JunctionForTest(t, target, link)
 }
 
 // removeTestNames returns the sorted entry names of dir.

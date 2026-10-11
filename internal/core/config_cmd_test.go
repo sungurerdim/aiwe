@@ -137,7 +137,7 @@ func TestConfigShowRefuses(t *testing.T) {
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(stateDir, "broken.json"), []byte("{"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(stateDir, "settings.json"), []byte("{"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	cases := []struct {

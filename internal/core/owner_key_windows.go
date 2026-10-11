@@ -21,19 +21,45 @@ const ownerOnlyMask = windows.FILE_READ_DATA | windows.FILE_WRITE_DATA | windows
 	fileDeleteChild | windows.DELETE | windows.WRITE_DAC | windows.WRITE_OWNER |
 	windows.GENERIC_READ | windows.GENERIC_WRITE | windows.GENERIC_ALL
 
-// checkOwnerOnly refuses p, the state, temp or cache root or the owner key, when a principal other
+// checkOwnerOnly refuses p, the temp or cache root, when a principal other
 // than the current user, SYSTEM or Administrators owns it or can read or write it through its
 // DACL; the 0o600/0o700 modes do nothing on Windows. CREATOR OWNER counts as the user: it becomes
 // the creator of each entry made below p. A missing DACL grants everyone every right, and an ACE
 // type other than allow or deny cannot be proven safe, so both are refused (fail-closed). A root
-// that is a junction or link never reaches it: mkdirOwnerOnly refuses it first.
+// that is a junction or link never reaches it: mkdirOwnerOnly refuses it first. The state root and
+// the owner key are checked on their open handles (checkOwnerOnlyFile).
 func checkOwnerOnly(p string) error {
-	trusted, err := ownerOnlySIDs()
+	sd, err := windows.GetNamedSecurityInfo(p, windows.SE_FILE_OBJECT, ownerOnlyInfo)
+	return checkOwnerOnlySD(p, sd, err)
+}
+
+// ownerKeyOpenFlag opens the owner key; an open on Windows does not wait for a writer.
+const ownerKeyOpenFlag = os.O_RDONLY
+
+// checkOwnerOnlyFile is checkOwnerOnly on the open file f, named p: the type and the security
+// descriptor are read from the handle, so they belong to the file f reads, whatever p names later.
+// Only a plain file or a directory passes.
+func checkOwnerOnlyFile(f *os.File, p string) error {
+	fi, err := f.Stat()
+	if err == nil && fi.Mode().Type()&^fs.ModeDir != 0 {
+		err = fmt.Errorf("a %v is not a plain file or directory", fi.Mode().Type())
+	}
 	if err != nil {
 		return fmt.Errorf("%w: owner-only check of %q: %v", ErrRootUnsafe, p, err)
 	}
-	sd, err := windows.GetNamedSecurityInfo(p, windows.SE_FILE_OBJECT,
-		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+	sd, err := windows.GetSecurityInfo(windows.Handle(f.Fd()), windows.SE_FILE_OBJECT, ownerOnlyInfo)
+	return checkOwnerOnlySD(p, sd, err)
+}
+
+// ownerOnlyInfo is the part of a security descriptor that the owner-only check reads.
+const ownerOnlyInfo = windows.OWNER_SECURITY_INFORMATION | windows.DACL_SECURITY_INFORMATION
+
+// checkOwnerOnlySD checks sd, the security descriptor of p read with error err, for checkOwnerOnly.
+func checkOwnerOnlySD(p string, sd *windows.SECURITY_DESCRIPTOR, err error) error {
+	if err != nil {
+		return fmt.Errorf("%w: owner-only check of %q: %v", ErrRootUnsafe, p, err)
+	}
+	trusted, err := ownerOnlySIDs()
 	if err != nil {
 		return fmt.Errorf("%w: owner-only check of %q: %v", ErrRootUnsafe, p, err)
 	}

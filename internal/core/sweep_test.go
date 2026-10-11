@@ -308,23 +308,6 @@ func TestSweepStartTick(t *testing.T) {
 	}
 }
 
-// sweepTestLink makes link point at target: a symlink where the OS allows it, else (Windows
-// without the symlink privilege) a directory junction.
-func sweepTestLink(t *testing.T, target, link string) {
-	t.Helper()
-	err := os.Symlink(target, link)
-	if err == nil {
-		return
-	}
-	if runtime.GOOS != "windows" {
-		t.Fatalf("symlink %s -> %s: %v", link, target, err)
-	}
-	out, jerr := exec.Command("cmd", "/c", "mklink", "/J", link, target).CombinedOutput()
-	if jerr != nil {
-		t.Fatalf("symlink %s -> %s: %v; junction: %v: %s", link, target, err, jerr, out)
-	}
-}
-
 // sweepTestField returns the int field name of rep, or fails the test when SweepReport has none.
 func sweepTestField(t *testing.T, rep SweepReport, name string) int {
 	t.Helper()
@@ -355,7 +338,7 @@ func TestSweepUnownedOrphan(t *testing.T) {
 	if err := os.MkdirAll(gone, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	sweepTestLink(t, gone, filepath.Join(dangling.Path(), "cache-link"))
+	removeTestLink(t, gone, filepath.Join(dangling.Path(), "cache-link"))
 	if err := os.Remove(gone); err != nil {
 		t.Fatal(err)
 	}
@@ -367,7 +350,7 @@ func TestSweepUnownedOrphan(t *testing.T) {
 	if err := os.WriteFile(keep, []byte("user data"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	sweepTestLink(t, filepath.Dir(keep), filepath.Join(escaping.Path(), "documents"))
+	removeTestLink(t, filepath.Dir(keep), filepath.Join(escaping.Path(), "documents"))
 
 	rep, err := sweepTestOpen(t, r, self).Sweep(ctx)
 	if err != nil {
@@ -475,9 +458,7 @@ func TestOwnerStateJunction(t *testing.T) {
 	if err := mkdirOwnerOnly(target); err != nil {
 		t.Fatalf("make owner-only target %s: %v", target, err)
 	}
-	if out, err := exec.Command("cmd", "/c", "mklink", "/J", r.State, target).CombinedOutput(); err != nil {
-		t.Fatalf("junction %s -> %s: %v: %s", r.State, target, err, out)
-	}
+	JunctionForTest(t, target, r.State)
 	self, err := CurrentProcess()
 	if err != nil {
 		t.Fatalf("CurrentProcess: %v", err)

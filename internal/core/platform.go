@@ -29,7 +29,7 @@ func productEnv(suffix string) string {
 
 // UserRoots resolves the disk roots of this process on the host OS (DR-37).
 func UserRoots() (Roots, error) {
-	return ResolveRoots(runtime.GOOS, processGetenv, processHome())
+	return ResolveRoots(runtime.GOOS, LookupEnv, processHome())
 }
 
 // ResolveRoots resolves the disk roots for goos from getenv and the user's home directory. Per

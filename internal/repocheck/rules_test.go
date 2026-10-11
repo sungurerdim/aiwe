@@ -3,6 +3,7 @@ package repocheck_test
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -40,6 +41,13 @@ func rulesSpec() string {
 		"",
 		"### 12.2 Gate, tool chain and CI",
 		"",
+		"**Gate** — `gate.json`, run by `zentra gates gate --repo .`.",
+		"",
+		"| Step | Command | Catches | Why |",
+		"|---|---|---|---|",
+		"| `format` | `gofmt -l .` (empty output) | unformatted files | one style |",
+		"| `test` | `go test -json ./...` | behaviour | DR-38 limits apply |",
+		"",
 		"## 14. Delivery plan",
 		"",
 		"### Phase 0 — Go skeleton",
@@ -57,6 +65,13 @@ func rulesSpec() string {
 	}, "\n")
 }
 
+// rulesGate is a gate.json that holds every §12.2 step of rulesSpec.
+const rulesGate = `{"formatVersion": 1, "steps": [
+  {"id": "format", "command": ["gofmt", "-l", "."], "required": true, "expect": {"exitCode": 0}},
+  {"id": "test", "command": ["go", "test", "./..."], "required": true, "expect": {"exitCode": 0}}
+]}
+`
+
 // rulesRepoFiles are the §12.1 files of rulesSpec.
 func rulesRepoFiles() []string {
 	return []string{
@@ -68,7 +83,7 @@ func rulesRepoFiles() []string {
 }
 
 // rulesRepo writes a repository with rulesSpec as docs/SPEC.md, every §12.1 file except those in
-// skip, and the given extra files, each with a one-line body.
+// skip, and the given extra files, each with a one-line body; gate.json is rulesGate.
 func rulesRepo(t *testing.T, skip map[string]bool, extra ...string) string {
 	t.Helper()
 	return rulesRepoSpec(t, rulesSpec(), skip, extra...)
@@ -98,25 +113,53 @@ func rulesSpecWith(t *testing.T, from, to string, body ...string) string {
 func rulesRepoSpec(t *testing.T, spec string, skip map[string]bool, extra ...string) string {
 	t.Helper()
 	dir := t.TempDir()
-	write := func(rel, body string) {
-		p := filepath.Join(dir, filepath.FromSlash(rel))
-		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
-			t.Fatalf("mkdir for %s: %v", rel, err)
-		}
-		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
-			t.Fatalf("write %s: %v", rel, err)
-		}
-	}
-	write("docs/SPEC.md", spec)
+	writeRulesFile(t, dir, "docs/SPEC.md", spec)
 	for _, f := range rulesRepoFiles() {
-		if !skip[f] {
-			write(f, "fixture\n")
+		switch {
+		case skip[f]:
+		case f == "gate.json":
+			writeRulesFile(t, dir, f, rulesGate)
+		default:
+			writeRulesFile(t, dir, f, "fixture\n")
 		}
 	}
 	for _, f := range extra {
-		write(f, "package fixture\n")
+		writeRulesFile(t, dir, f, "package fixture\n")
 	}
 	return dir
+}
+
+// writeRulesFile writes body to the slash-separated, repository-relative file rel of dir.
+func writeRulesFile(t *testing.T, dir, rel, body string) {
+	t.Helper()
+	p := filepath.Join(dir, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		t.Fatalf("mkdir for %s: %v", rel, err)
+	}
+	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+		t.Fatalf("write %s: %v", rel, err)
+	}
+}
+
+// specLine returns the 1-based line of spec that starts with prefix.
+func specLine(t *testing.T, spec, prefix string) int {
+	t.Helper()
+	for i, line := range strings.Split(spec, "\n") {
+		if strings.HasPrefix(line, prefix) {
+			return i + 1
+		}
+	}
+	t.Fatalf("spec has no line starting with %q", prefix)
+	return 0
+}
+
+// presentRepo is a repository with spec as docs/SPEC.md in which every named test and its
+// source exist.
+func presentRepo(t *testing.T, spec string, skip map[string]bool) string {
+	t.Helper()
+	return rulesRepoSpec(t, spec, skip,
+		"internal/engine/lifecycle.go", "internal/engine/lifecycle_test.go",
+		"internal/core/text.go", "internal/core/text_test.go")
 }
 
 // rulesFindings runs Rules on repo and keeps the findings of one rule.
@@ -190,6 +233,66 @@ func TestRules(t *testing.T) {
 		}
 	})
 
+	t.Run("an empty Serves cell", func(t *testing.T) {
+		// Guards against a rule that serves nothing (DR-33): a blank Serves cell is a finding at
+		// its spec line, and a filled one is not.
+		spec := strings.Replace(rulesSpec(), "| Records are append-only. | M1 |", "| Records are append-only. |   |", 1)
+		got := rulesFindings(t, presentRepo(t, spec, nil), "empty_serves")
+		want := repocheck.Finding{Rule: "empty_serves", Path: "docs/SPEC.md", Line: specLine(t, spec, "| DR-2 |")}
+		if len(got) != 1 || got[0] != want {
+			t.Fatalf("Rules empty_serves = %+v, want only %+v", got, want)
+		}
+	})
+
+	t.Run("every Serves cell filled", func(t *testing.T) {
+		// Guards against reading the header or separator row as a rule row.
+		if got := rulesFindings(t, presentRepo(t, rulesSpec(), nil), "empty_serves"); len(got) != 0 {
+			t.Fatalf("Rules empty_serves = %+v, want no finding", got)
+		}
+	})
+
+	t.Run("a §12.2 gate step absent from gate.json", func(t *testing.T) {
+		// Guards against a gate that silently drops a step the spec requires (§12.2): the finding
+		// sits at the step's spec row, and a step gate.json holds is not reported.
+		spec := rulesSpec()
+		repo := presentRepo(t, spec, nil)
+		writeRulesFile(t, repo, "gate.json", `{"formatVersion": 1, "steps": [
+  {"id": "format", "command": ["gofmt", "-l", "."], "required": true, "expect": {"exitCode": 0}}]}`)
+		got := rulesFindings(t, repo, "missing_gate_step")
+		want := repocheck.Finding{Rule: "missing_gate_step", Path: "docs/SPEC.md", Line: specLine(t, spec, "| `test` |")}
+		if len(got) != 1 || got[0] != want {
+			t.Fatalf("Rules missing_gate_step = %+v, want only %+v", got, want)
+		}
+	})
+
+	t.Run("every §12.2 gate step in gate.json", func(t *testing.T) {
+		// Guards against reading the Command column, whose backticked commands are not steps.
+		if got := rulesFindings(t, presentRepo(t, rulesSpec(), nil), "missing_gate_step"); len(got) != 0 {
+			t.Fatalf("Rules missing_gate_step = %+v, want no finding", got)
+		}
+	})
+
+	t.Run("no gate.json lacks every §12.2 step", func(t *testing.T) {
+		// Guards against absence read as a pass (DR-13): without gate.json no step is declared.
+		spec := rulesSpec()
+		got := rulesFindings(t, presentRepo(t, spec, map[string]bool{"gate.json": true}), "missing_gate_step")
+		for _, step := range []string{"| `format` |", "| `test` |"} {
+			want := repocheck.Finding{Rule: "missing_gate_step", Path: "docs/SPEC.md", Line: specLine(t, spec, step)}
+			if !slices.Contains(got, want) {
+				t.Errorf("Rules missing_gate_step = %+v, want %+v", got, want)
+			}
+		}
+	})
+
+	t.Run("an unreadable gate.json is an error, not a pass", func(t *testing.T) {
+		// Guards against absence read as evidence (DR-13): steps that cannot be read were not checked.
+		repo := presentRepo(t, rulesSpec(), nil)
+		writeRulesFile(t, repo, "gate.json", "fixture\n")
+		if got, err := repocheck.Rules(repo); err == nil {
+			t.Fatalf("Rules(unreadable gate.json) = %+v, nil error; want an error", got)
+		}
+	})
+
 	t.Run("a spec section that is missing or names nothing is an error, not a pass", func(t *testing.T) {
 		// Guards against absence read as evidence (DR-13): a section Rules cannot find, or one that
 		// yields no test or file name, means that rule was not checked.
@@ -206,13 +309,23 @@ func TestRules(t *testing.T) {
 				"### 12.1 Repository files (industry standard only)", "", "Industry standard files only.")},
 			{"§14 lists no file", rulesSpecWith(t, "## 14. Delivery plan", "",
 				"## 14. Delivery plan", "", "No unit is planned yet.")},
+			{"§3 has no Serves column", rulesSpecWith(t, "## 3. Design rules", "## 12. Repository",
+				"## 3. Design rules", "",
+				"| # | Rule | Purpose | Enforcement |", "|---|---|---|---|",
+				"| DR-1 | The engine runs unattended. | M2 | test `engine/lifecycle_test.go` |")},
+			{"§3 Serves table has no row", rulesSpecWith(t, "## 3. Design rules", "## 12. Repository",
+				// Guards against the separator row counted as a rule row.
+				"## 3. Design rules", "",
+				"| # | Rule | Serves | Enforcement |", "|---|---|---|---|", "",
+				"| # | Test |", "|---|---|",
+				"| DR-1 | `engine/lifecycle_test.go` |")},
+			{"no §12.2", rulesSpecWith(t, "### 12.2", "## 14. Delivery plan")},
+			{"§12.2 names no step", rulesSpecWith(t, "### 12.2", "## 14. Delivery plan",
+				"### 12.2 Gate, tool chain and CI", "", "The gate is gate.json.")},
 		}
 		for _, tc := range broken {
 			t.Run(tc.name, func(t *testing.T) {
-				repo := rulesRepoSpec(t, tc.spec, nil,
-					"internal/engine/lifecycle.go", "internal/engine/lifecycle_test.go",
-					"internal/core/text.go", "internal/core/text_test.go")
-				got, err := repocheck.Rules(repo)
+				got, err := repocheck.Rules(presentRepo(t, tc.spec, nil))
 				if err == nil {
 					t.Fatalf("Rules(%s) = %+v, nil error; want an error", tc.name, got)
 				}

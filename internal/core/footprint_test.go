@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -265,13 +264,10 @@ func footprintTestLink(t *testing.T, target, link string) {
 	if err == nil {
 		return
 	}
-	if runtime.GOOS != "windows" {
+	if core.JunctionForTest == nil {
 		t.Fatalf("symlink %s -> %s: %v", link, target, err)
 	}
-	out, jerr := exec.Command("cmd", "/c", "mklink", "/J", link, target).CombinedOutput()
-	if jerr != nil {
-		t.Fatalf("symlink %s -> %s: %v; junction: %v: %s", link, target, err, jerr, out)
-	}
+	core.JunctionForTest(t, target, link)
 }
 
 // TestFootprintUnownedOrphan catches a registered temp dir of a dead owner that fails the

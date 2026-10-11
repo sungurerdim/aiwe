@@ -22,8 +22,10 @@ Windows, macOS and Linux, with zero configuration.
 ## Supported providers
 
 `aiwe adapters list` prints the compiled adapter list. aiwe reaches a provider only through its
-official interface: the provider's own CLI, logged in by you, or an API key. It never reads, stores,
-proxies or rewrites subscription credentials or OAuth traffic.
+official interface: the provider's own CLI, logged in by you, or an API key in an environment
+variable. aiwe holds no credential: it never stores, caches, encrypts, prompts for or manages a
+credential, API key, token or secret. It never reads, proxies or rewrites subscription credentials
+or OAuth traffic.
 
 ## Risk
 
