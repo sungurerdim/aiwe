@@ -310,70 +310,74 @@ func TestOwnedRemove(t *testing.T) {
 
 // TestOwnedRoot catches a temp or cache root that is, or contains, the user's home, the state
 // root, a canonical repository or a file-system root and is accepted instead of root_unsafe
-// (§5.15).
+// (§5.15). Each unsafe case names the refusal it needs, so another check cannot hide a gap.
 func TestOwnedRoot(t *testing.T) {
 	self, err := CurrentProcess()
 	if err != nil {
 		t.Fatalf("CurrentProcess: %v", err)
 	}
+	home, state, repo := "is or contains the home", "is or contains the state root", "is or contains the canonical repository"
 	cases := []struct {
 		name   string
 		adjust func(t *testing.T, base string, r *OwnedRoots)
-		unsafe bool
+		refuse string // the refusal text; empty for safe roots
 	}{
-		{"separate roots", func(t *testing.T, base string, r *OwnedRoots) {}, false},
+		{"separate roots", func(t *testing.T, base string, r *OwnedRoots) {}, ""},
 		{"cache inside the home", func(t *testing.T, base string, r *OwnedRoots) {
 			r.Cache = filepath.Join(r.Home, ".cache", "engine")
-		}, false},
+		}, ""},
 		{"temp inside the home", func(t *testing.T, base string, r *OwnedRoots) {
 			r.Temp = filepath.Join(r.Home, "AppData", "Local", "Temp", "engine")
-		}, false},
-		{"temp is the home", func(t *testing.T, base string, r *OwnedRoots) { r.Temp = r.Home }, true},
-		{"cache is the home", func(t *testing.T, base string, r *OwnedRoots) { r.Cache = r.Home }, true},
+		}, ""},
+		{"temp is the home", func(t *testing.T, base string, r *OwnedRoots) { r.Temp = r.Home }, home},
+		{"cache is the home", func(t *testing.T, base string, r *OwnedRoots) { r.Cache = r.Home }, home},
 		{"temp contains the home", func(t *testing.T, base string, r *OwnedRoots) {
 			r.Home = filepath.Join(r.Temp, "users", "ayşe")
-		}, true},
+		}, home},
 		{"cache contains the home", func(t *testing.T, base string, r *OwnedRoots) {
 			r.Home = filepath.Join(r.Cache, "users", "ayşe")
-		}, true},
-		{"temp is the state root", func(t *testing.T, base string, r *OwnedRoots) { r.Temp = r.State }, true},
+		}, home},
+		{"temp is the state root", func(t *testing.T, base string, r *OwnedRoots) { r.Temp = r.State }, state},
 		{"temp contains the state root", func(t *testing.T, base string, r *OwnedRoots) {
 			r.State = filepath.Join(r.Temp, "state")
-		}, true},
+		}, state},
 		{"cache contains the state root", func(t *testing.T, base string, r *OwnedRoots) {
 			r.State = filepath.Join(r.Cache, "state")
-		}, true},
+		}, state},
 		{"temp is a canonical repository", func(t *testing.T, base string, r *OwnedRoots) {
 			r.Temp = r.Canonical[0]
-		}, true},
+		}, repo},
 		{"cache contains a canonical repository", func(t *testing.T, base string, r *OwnedRoots) {
 			r.Canonical = append(r.Canonical, filepath.Join(r.Cache, "src", "app"))
-		}, true},
+		}, repo},
 		{"temp is a file-system root", func(t *testing.T, base string, r *OwnedRoots) {
 			r.Temp = filepath.VolumeName(base) + string(filepath.Separator)
-		}, true},
+		}, "is a file-system root"},
 		{"cache is a file-system root", func(t *testing.T, base string, r *OwnedRoots) {
 			r.Cache = filepath.VolumeName(base) + string(filepath.Separator)
-		}, true},
+		}, "is a file-system root"},
 		{"temp climbs to the home through ..", func(t *testing.T, base string, r *OwnedRoots) {
 			removeTestMkdir(t, filepath.Join(r.Temp, "x"))
 			r.Temp = filepath.Join(r.Temp, "x") + string(filepath.Separator) + ".." +
 				string(filepath.Separator) + ".." + string(filepath.Separator) + "home"
-		}, true},
+		}, home},
 		{"temp is a link to the home's parent", func(t *testing.T, base string, r *OwnedRoots) {
 			link := filepath.Join(base, "link-to-base")
 			removeTestLink(t, base, link)
 			r.Temp = link
-		}, true},
+		}, "is not a plain directory"},
+		{"temp is the home's parent", func(t *testing.T, base string, r *OwnedRoots) {
+			r.Home, r.Temp = filepath.Join(base, "users", "home"), filepath.Join(base, "users")
+		}, home},
 	}
 	if runtime.GOOS == "windows" {
 		cases = append(cases, struct {
 			name   string
 			adjust func(t *testing.T, base string, r *OwnedRoots)
-			unsafe bool
+			refuse string
 		}{"temp is the home in other letter case", func(t *testing.T, base string, r *OwnedRoots) {
 			r.Temp = strings.ToUpper(r.Home)
-		}, true})
+		}, home})
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -384,9 +388,9 @@ func TestOwnedRoot(t *testing.T) {
 				removeTestRootDir(t, d)
 			}
 			_, err := OpenOwner(r, self)
-			if tc.unsafe {
-				if !errors.Is(err, ErrRootUnsafe) {
-					t.Fatalf("OpenOwner(%+v) = %v, want %v", r, err, ErrRootUnsafe)
+			if tc.refuse != "" {
+				if !errors.Is(err, ErrRootUnsafe) || !strings.Contains(err.Error(), tc.refuse) {
+					t.Fatalf("OpenOwner(%+v) = %v, want %v that %s", r, err, ErrRootUnsafe, tc.refuse)
 				}
 				return
 			}
