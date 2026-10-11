@@ -89,12 +89,12 @@ func loadOwnerKey(state string) ([]byte, error) {
 	}
 	defer rt.Close()
 	p := filepath.Join(state, ownerKeyFile)
-	f, err := rt.Open(ownerKeyFile)
+	f, err := rt.OpenFile(ownerKeyFile, ownerKeyOpenFlag, 0)
 	if errors.Is(err, fs.ErrNotExist) {
 		if err := createOwnerKey(rt); err != nil {
 			return nil, err
 		}
-		f, err = rt.Open(ownerKeyFile)
+		f, err = rt.OpenFile(ownerKeyFile, ownerKeyOpenFlag, 0)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("owner key: %w", err)

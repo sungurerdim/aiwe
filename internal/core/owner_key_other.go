@@ -10,10 +10,14 @@ import (
 	"syscall"
 )
 
-// checkOwnerOnly refuses p, the state, temp or cache root or the owner key, when its mode gives
-// group or others any access, or when the effective user does not own it. p is not followed, so a
-// link, whose mode is 0777, is refused too; a root that is a link is refused first by
-// mkdirOwnerOnly. aiwe makes each root 0o700 and the key 0o600.
+// ownerKeyOpenFlag opens the owner key without blocking, so a FIFO under its name cannot hang the
+// open; checkOwnerOnlyFile then refuses it on the handle, as it is not a plain file.
+const ownerKeyOpenFlag = os.O_RDONLY | syscall.O_NONBLOCK
+
+// checkOwnerOnly refuses p, the temp or cache root, when it is neither a plain file nor a
+// directory, when its mode gives group or others any access, or when the effective user does not
+// own it. p is not followed, so a link is refused. aiwe makes each root 0o700 and the key 0o600;
+// the state root and the key are checked on their open handles (checkOwnerOnlyFile).
 func checkOwnerOnly(p string) error {
 	fi, err := os.Lstat(p)
 	if err != nil {
@@ -32,9 +36,13 @@ func checkOwnerOnlyFile(f *os.File, p string) error {
 	return checkOwnerOnlyInfo(p, fi)
 }
 
-// checkOwnerOnlyInfo checks fi, the file info of p, for checkOwnerOnly.
+// checkOwnerOnlyInfo checks fi, the file info of p, for checkOwnerOnly. A link, FIFO, device or
+// socket is refused: only a plain file or a directory is read.
 func checkOwnerOnlyInfo(p string, fi fs.FileInfo) error {
-	if fi.Mode().Perm()&0o077 != 0 || fi.Mode().Type()&os.ModeSymlink != 0 {
+	if t := fi.Mode().Type(); t != 0 && t != fs.ModeDir {
+		return fmt.Errorf("%w: %q is a %v, not a plain file or directory", ErrRootUnsafe, p, t)
+	}
+	if fi.Mode().Perm()&0o077 != 0 {
 		return fmt.Errorf("%w: %q has mode %v; want no access for group or others", ErrRootUnsafe, p, fi.Mode())
 	}
 	st, ok := fi.Sys().(*syscall.Stat_t)
