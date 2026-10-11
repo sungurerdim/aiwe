@@ -160,18 +160,29 @@ func elementType(t ast.Expr) ast.Expr {
 	return nil
 }
 
-// isConfigType reports whether t is ConfigSetting inside core, or <core import>.ConfigSetting,
-// with or without a pointer.
+// isConfigType reports whether t is ConfigSetting inside core or under a dot import of core, or
+// <core import>.ConfigSetting, with or without a pointer.
 func (c *sourceChecker) isConfigType(t ast.Expr) bool {
 	if s, ok := t.(*ast.StarExpr); ok {
 		t = s.X
 	}
 	switch t := t.(type) {
 	case *ast.Ident:
-		return t.Name == "ConfigSetting" && path.Dir(c.path) == "internal/core"
+		return t.Name == "ConfigSetting" && (path.Dir(c.path) == "internal/core" || c.dotImportsCore())
 	case *ast.SelectorExpr:
 		x, ok := t.X.(*ast.Ident)
 		return ok && t.Sel.Name == "ConfigSetting" && strings.HasSuffix(c.imports[x.Name], "/internal/core")
+	}
+	return false
+}
+
+// dotImportsCore reports whether the file has `import . "<module>/internal/core"`; a dot import
+// is keyed "." + path in c.imports.
+func (c *sourceChecker) dotImportsCore() bool {
+	for name := range c.imports {
+		if strings.HasPrefix(name, ".") && strings.HasSuffix(name, "/internal/core") {
+			return true
+		}
 	}
 	return false
 }

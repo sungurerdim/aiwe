@@ -376,6 +376,9 @@ func TestSourceRules(t *testing.T) {
 				`	return ConfigSetting{Name: "logLevel", Env: "LOG_LEVEL", Default: "info"}`,
 				"}"),
 			"config_in_code", 3},
+		{"configuration default through a dot import of core", sourceRulesFile("internal/engine/workers.go",
+			"package engine", `import . "github.com/example/zentra/internal/core"`,
+			`var workers = ConfigSetting{Name: "workers", Env: "WORKERS", Default: "4"}`), "config_in_code", 3},
 	}
 	for _, tc := range bad {
 		t.Run(tc.name, func(t *testing.T) {
