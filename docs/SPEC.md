@@ -344,6 +344,9 @@ event, detail}`. No colour codes. Benefit: logs are machine-read. Enforced: test
 flags > environment variables > state files (`<state>/*.json`) > built-in defaults.
 `aiwe config show` prints each value and its origin. Every path parameter resolves against `--repo`;
 a relative path without `--repo` is a `usage` error; the process working directory is never used.
+The one exception is `--repo` itself: a relative `--repo` resolves once, at the CLI boundary,
+against the working directory, so `aiwe gates gate --repo .` works; an empty `--repo` is a `usage`
+error.
 Enforced: tests `core/config_test.go`, `core/args_test.go`.
 
 ### 5.13 Test structure
@@ -628,7 +631,12 @@ Serves DR-35, DR-16.
   commit (method: U10). No worktree, no persistent pool.
 - **Scratch**: `<run dir>/tmp`; `TEMP`, `TMP` and `TMPDIR` point there.
 - **Environment**: the parent environment minus every secret-shaped variable (every source's
-  `credentialEnv`, tracker tokens, names that contain `TOKEN`, `SECRET`, `KEY` or `PASSWORD`). The
+  `credentialEnv`, tracker tokens, names that contain `TOKEN`, `SECRET`, `KEY` or `PASSWORD`, names
+  that end in `_PAT` or `_PASS`, `NPM_CONFIG__AUTH`, `GOOGLE_APPLICATION_CREDENTIALS`, and a `_URL`
+  variable whose value may carry a password; names compare without case). A `_URL` variable is
+  dropped when its value has a `:` after a `://` and an `@` after that `:`; the check is
+  fail-closed and drops such a value even without a password. A value without `://`, such as an
+  scp-style git address, is not checked. The
   adapter adds back only its own source's credential. It also drops the parent shell's identity
   variables (listed in the adapter) and starts the harness with user-level rules, memory, hooks and
   plugins off, through the harness's documented flag or an isolated config home that keeps the

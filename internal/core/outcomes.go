@@ -26,6 +26,8 @@ func Outcomes() []OutcomeRow {
 			Next: "fix the condition the detail names, then run the command again"},
 		{Outcome: OutcomeUsage, Status: StatusUsage, Next: "run aiwe --help and correct the call"},
 		{Outcome: "red", Status: StatusRed, Next: "fix the failing step, then run the gate again"},
+		{Outcome: "incomplete", Status: StatusError,
+			Next: "run every gate step, and fix each step the report marks not_measured, then run the gate again"},
 		{Outcome: "no_change", Status: StatusNoChange, Next: "nothing to do: the target already holds"},
 		{Outcome: "param_duplicate", Status: StatusError, Err: ErrParamDuplicate,
 			Next: "remove the second definition of the parameter from the dictionary"},

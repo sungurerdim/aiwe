@@ -38,6 +38,8 @@ type Command struct {
 func Dictionary() []ParamDef {
 	return []ParamDef{
 		{Name: "format", Meaning: "output format of the result envelope: text or json"},
+		{Name: "repo", Meaning: "repository root; a relative value resolves once against the working directory"},
+		{Name: "step", Meaning: "comma-separated gate step ids to run; every other step is reported not_measured"},
 	}
 }
 
