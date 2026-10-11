@@ -44,10 +44,12 @@ type StepReport struct {
 }
 
 // GateReport is the result of a gate: one report per declared step, in declared order. Partial
-// reports that the run left a declared step out on purpose.
+// reports that the run left a declared step out on purpose. Detail says why the gate has no
+// result of its own steps, when it has none.
 type GateReport struct {
 	Result  Result       `json:"result"`
 	Partial bool         `json:"partial"`
+	Detail  string       `json:"detail,omitempty"`
 	Steps   []StepReport `json:"steps"`
 }
 
@@ -71,7 +73,8 @@ type Runner struct {
 // reported not_measured and the gate is at best incomplete (DR-10, SPEC §7.8). Any red required
 // step makes the gate red; otherwise any required step that is not green makes it incomplete. A
 // step that is not required runs and reports its own result, which leaves the gate result as it
-// is; its detail says it is not required. Run returns an error
+// is; its detail says it is not required. A gate in which no required step ran has no evidence and
+// is not_measured (DR-13). Run returns an error
 // only when it cannot decide: an empty gate or an unknown step name in only.
 func (r *Runner) Run(ctx context.Context, def Definition, dir string, only []string) (GateReport, error) {
 	if len(def.Steps) == 0 {
@@ -81,6 +84,7 @@ func (r *Runner) Run(ctx context.Context, def Definition, dir string, only []str
 		return GateReport{}, err
 	}
 	report := GateReport{Steps: make([]StepReport, 0, len(def.Steps))}
+	ranRequired := false
 	for _, step := range def.Steps {
 		if len(only) > 0 && !slices.Contains(only, step.ID) {
 			report.Partial = true
@@ -88,8 +92,12 @@ func (r *Runner) Run(ctx context.Context, def Definition, dir string, only []str
 			continue
 		}
 		report.Steps = append(report.Steps, r.runStep(ctx, step, dir, def.Proof))
+		ranRequired = ranRequired || step.Required
 	}
 	report.Result = gateResult(def.Steps, report.Steps)
+	if !ranRequired {
+		report.Result, report.Detail = ResultNotMeasured, "no required step ran, so the gate has no evidence"
+	}
 	for i, step := range def.Steps {
 		if !step.Required {
 			report.Steps[i].Detail = joinDetail("not required", report.Steps[i].Detail)
