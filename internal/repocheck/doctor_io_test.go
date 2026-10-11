@@ -3,7 +3,10 @@ package repocheck_test
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/sungurerdim/aiwe/internal/repocheck"
@@ -32,6 +35,37 @@ func TestDoctorGoFilesStaysInRoot(t *testing.T) {
 	}
 	if err == nil {
 		t.Fatalf("GoFiles = %d files, nil error; want an error for the link out of the root", len(files))
+	}
+}
+
+// TestDoctorGoFilesJunctionStaysInRoot catches the same escape on Windows through a directory
+// junction, which needs no symlink privilege, so the case runs where the symlink case skips.
+func TestDoctorGoFilesJunctionStaysInRoot(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("a directory junction exists only on Windows; the symlink case covers this OS")
+	}
+	marker := []byte("package outside // read outside the walked root")
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "x.go"), marker, 0o600); err != nil {
+		t.Fatalf("write outside file: %v", err)
+	}
+	repo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repo, "main.go"), []byte("package main\n"), 0o600); err != nil {
+		t.Fatalf("write repo file: %v", err)
+	}
+	link := filepath.Join(repo, "j.go")
+	if out, err := exec.CommandContext(t.Context(), "cmd", "/c", "mklink", "/J", link, outside).CombinedOutput(); err != nil {
+		t.Fatalf("mklink /J %s %s: %v: %s", link, outside, err, out)
+	}
+	files, err := repocheck.GoFiles(repo)
+	for _, f := range files {
+		if bytes.Equal(f.Body, marker) {
+			t.Fatalf("GoFiles read a file outside the repository root through the junction %s", f.Path)
+		}
+	}
+	// The root refuses the junction itself; a plain "is a directory" error would not prove that.
+	if err == nil || !strings.Contains(err.Error(), "path escapes from parent") {
+		t.Fatalf("GoFiles = %d files, error %v; want the root to refuse j.go as a path that escapes", len(files), err)
 	}
 }
 
