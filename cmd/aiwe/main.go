@@ -14,7 +14,7 @@ import (
 var version string
 
 func main() {
-	os.Exit(core.RunCLI(context.Background(), registry(), os.Args[1:], os.Stdout))
+	os.Exit(core.RunCLI(context.Background(), registry(), os.Args[1:], os.Stdout, os.Stderr))
 }
 
 // registry returns the commands this binary serves.

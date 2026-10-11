@@ -43,10 +43,10 @@ func commandsTestRepo(t *testing.T, steps []GateStep) string {
 // the binary does (SPEC §5.7), and returns the exit code and the decoded envelope.
 func commandsTestRun(t *testing.T, args ...string) (int, commandsTestEnvelope, string) {
 	t.Helper()
-	var out bytes.Buffer
+	var out, stream bytes.Buffer
 	argv := append([]string{"gates", "gate"}, args...)
 	argv = append(argv, "--format", "json")
-	code := core.RunCLI(context.Background(), Commands(), argv, &out)
+	code := core.RunCLI(context.Background(), Commands(), argv, &out, &stream)
 	var env commandsTestEnvelope
 	if err := json.Unmarshal(out.Bytes(), &env); err != nil {
 		t.Fatalf("aiwe %s printed no JSON envelope: %v\n%s", strings.Join(argv, " "), err, out.String())
