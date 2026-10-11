@@ -204,6 +204,9 @@ func TestConfig(t *testing.T) {
 			{name: "number value accepted as a string", state: map[string]string{"settings.json": `{"logLevel": 3}`}},
 			{name: "one broken file hidden by a valid one", state: map[string]string{
 				"a.json": `{"gateTimeout": "45m"}`, "b.json": `{"logLevel":`}},
+			{name: "JSON null accepted as an empty settings object", state: map[string]string{"settings.json": `null`}},
+			{name: "one setting in two state files resolved by file order", state: map[string]string{
+				"a.json": `{"logLevel": "warn"}`, "b.json": `{"logLevel": "error"}`}},
 		}
 		for _, tc := range tests {
 			t.Run(tc.name, func(t *testing.T) {
@@ -213,6 +216,45 @@ func TestConfig(t *testing.T) {
 					t.Fatalf("ResolveConfig = %+v, %v; want an error that is core.ErrConfigInvalid", got, err)
 				}
 			})
+		}
+	})
+
+	t.Run("state directory with glob characters read as a pattern", func(t *testing.T) {
+		dir := filepath.Join(t.TempDir(), "work[a]", "state")
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatalf("make state directory: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{"logLevel": "error"}`), 0o600); err != nil {
+			t.Fatalf("write state file: %v", err)
+		}
+		got, err := core.ResolveConfig(configTestSettings(), nil, configTestGetenv(nil), dir)
+		if err != nil {
+			t.Fatalf("ResolveConfig: %v", err)
+		}
+		if v := configTestFind(t, got, "logLevel"); v.Value != "error" || v.Origin != core.ConfigOriginState {
+			t.Errorf("logLevel = %q from %q, want %q from %q", v.Value, v.Origin, "error", core.ConfigOriginState)
+		}
+	})
+
+	t.Run("upper-case .JSON suffix read as a state file", func(t *testing.T) {
+		// SPEC §5.12 names <state>/*.json; only the lower-case suffix is a state file.
+		dir := configTestWriteState(t, map[string]string{"SETTINGS.JSON": `{"logLevel": "error"}`})
+		got, err := core.ResolveConfig(configTestSettings(), nil, configTestGetenv(nil), dir)
+		if err != nil {
+			t.Fatalf("ResolveConfig: %v", err)
+		}
+		if v := configTestFind(t, got, "logLevel"); v.Value != "info" || v.Origin != core.ConfigOriginDefault {
+			t.Errorf("logLevel = %q from %q, want %q from %q", v.Value, v.Origin, "info", core.ConfigOriginDefault)
+		}
+	})
+
+	t.Run("relative state directory resolved against the working directory", func(t *testing.T) {
+		// SPEC §5.12: a relative path without --repo is a usage error; the working directory is
+		// never used.
+		got, err := core.ResolveConfig(configTestSettings(), nil, configTestGetenv(nil), filepath.Join("work", "state"))
+		var cerr *core.Error
+		if !errors.As(err, &cerr) || cerr.Outcome != core.OutcomeUsage {
+			t.Fatalf("ResolveConfig = %+v, %v; want a *core.Error with outcome %q", got, err, core.OutcomeUsage)
 		}
 	})
 
