@@ -22,13 +22,13 @@ type heldDir struct {
 // with delete access and without delete sharing; a name that is not a directory fails. An open
 // handle with delete access, held by anyone, makes it fail. The caller checks the identity. A failed
 // close of the parent handle is returned (closeChecked) and the held directory is closed again.
-func openHeldDir(rt *os.Root, name string) (held *heldDir, err error) {
+func (hk removalHooks) openHeldDir(rt *os.Root, name string) (held *heldDir, err error) {
 	parent, err := rt.Open(".")
 	if err != nil {
 		return nil, err
 	}
 	defer func() {
-		if cerr := closeChecked("held parent", parent.Close); cerr != nil {
+		if cerr := hk.closeChecked("held parent", parent.Close); cerr != nil {
 			if held != nil {
 				cerr = errors.Join(cerr, held.f.Close())
 			}

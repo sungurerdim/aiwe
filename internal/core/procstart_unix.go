@@ -54,12 +54,11 @@ func processStart(pid int) (time.Time, bool, error) {
 
 // bootTime reads the boot time from the btime line of /proc/stat.
 func bootTime() (time.Time, error) {
-	f, err := os.Open("/proc/stat")
+	b, err := os.ReadFile("/proc/stat")
 	if err != nil {
 		return time.Time{}, fmt.Errorf("boot time: %w", err)
 	}
-	defer f.Close()
-	sc := bufio.NewScanner(f)
+	sc := bufio.NewScanner(bytes.NewReader(b))
 	for sc.Scan() {
 		if v, ok := strings.CutPrefix(sc.Text(), "btime "); ok {
 			sec, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)

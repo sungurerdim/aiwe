@@ -20,7 +20,7 @@ type heldDir struct {
 
 // openHeldDir opens name under rt as a directory, without following a link; a name that is not a
 // directory fails. The caller checks the identity of the handle.
-func openHeldDir(rt *os.Root, name string) (*heldDir, error) {
+func (removalHooks) openHeldDir(rt *os.Root, name string) (*heldDir, error) {
 	parent, err := rt.Open(".")
 	if err != nil {
 		return nil, err

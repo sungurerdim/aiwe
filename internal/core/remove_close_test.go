@@ -43,20 +43,18 @@ func TestOwnedCauseWrapped(t *testing.T) {
 	}
 }
 
-// errTestClose is the error closeFailHook adds at the close a test names.
+// errTestClose is the error the closeFail hook adds at the close a test names.
 var errTestClose = errors.New("close failed (test)")
 
-// testFailClose makes the close named what on the removal path fail with errTestClose until the
-// test ends.
-func testFailClose(t *testing.T, what string) {
-	t.Helper()
-	closeFailHook = func(w string) error {
+// testFailClose returns a closeFail hook that makes the close named what on the removal path fail
+// with errTestClose.
+func testFailClose(what string) func(string) error {
+	return func(w string) error {
 		if w == what {
 			return errTestClose
 		}
 		return nil
 	}
-	t.Cleanup(func() { closeFailHook = nil })
 }
 
 // TestOwnedRemoveCloseError catches a failed close on the removal path lost before the caller
@@ -70,7 +68,7 @@ func TestOwnedRemoveCloseError(t *testing.T) {
 		t.Run(c.what, func(t *testing.T) {
 			o := removeTestOpen(t, removeTestRoots(t, t.TempDir()))
 			d := removeTestCreate(t, o, TempRoot)
-			testFailClose(t, c.what)
+			o.hooks.closeFail = testFailClose(c.what)
 			if err := o.RemoveOwned(t.Context(), d); !errors.Is(err, errTestClose) {
 				t.Errorf("RemoveOwned with a failing close of the %s = %v, want %v", c.what, err, errTestClose)
 			}
@@ -102,8 +100,8 @@ func TestRemoveDirEntryCloseError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	testFailClose(t, "held directory")
-	if err := removeDirEntry(rt, name, fi); !errors.Is(err, errTestClose) {
+	h := removalHooks{closeFail: testFailClose("held directory")}
+	if err := h.removeDirEntry(rt, name, fi); !errors.Is(err, errTestClose) {
 		t.Errorf("removeDirEntry with a failing close of the held directory = %v, want %v", err, errTestClose)
 	}
 	if _, err := os.Lstat(filepath.Join(root, name)); !errors.Is(err, fs.ErrNotExist) {
@@ -138,8 +136,9 @@ func TestSweepRemovalCloseError(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			testFailClose(t, c.what)
-			rep, err := sweepTestOpen(t, r, sweepTestSelf(t)).Sweep(t.Context())
+			sw := sweepTestOpen(t, r, sweepTestSelf(t))
+			sw.hooks.closeFail = testFailClose(c.what)
+			rep, err := sw.Sweep(t.Context())
 			if !errors.Is(err, errTestClose) {
 				t.Errorf("Sweep with a failing close of the %s = %+v, %v; want %v", c.what, rep, err, errTestClose)
 			}

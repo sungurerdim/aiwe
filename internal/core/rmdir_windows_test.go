@@ -80,7 +80,7 @@ func rmdirTestMarkPending(path string) (windows.Handle, error) {
 }
 
 // TestRemoveOwnedDeletePendingBeforeRmdir catches a removal that reads delete-pending as proof
-// that the approved dir is gone (#144). In rmdirCheckedHook another handle marks the approved dir
+// that the approved dir is gone (#144). In hooks.rmdirChecked another handle marks the approved dir
 // delete-pending, under its name ("same name") or after a rename that puts an unowned empty dir
 // under the name ("moved"), and clears the mark after the removal returns. The removal must
 // return nil only when the approved dir is gone, and must keep the unowned dir.
@@ -94,7 +94,7 @@ func TestRemoveOwnedDeletePendingBeforeRmdir(t *testing.T) {
 			moved := filepath.Join(o.temp, "moved-away")
 			var pending windows.Handle
 			ran, interposed := false, false
-			rmdirCheckedHook = func(string) {
+			o.hooks.rmdirChecked = func(string) {
 				if ran {
 					return
 				}
@@ -111,7 +111,6 @@ func TestRemoveOwnedDeletePendingBeforeRmdir(t *testing.T) {
 					pending = h
 				}
 			}
-			t.Cleanup(func() { rmdirCheckedHook = nil })
 
 			err := o.RemoveOwned(context.Background(), d)
 			if pending != 0 {
@@ -123,7 +122,7 @@ func TestRemoveOwnedDeletePendingBeforeRmdir(t *testing.T) {
 				}
 			}
 			if !ran {
-				t.Fatalf("rmdirCheckedHook never ran for %s", d.Path())
+				t.Fatalf("hooks.rmdirChecked never ran for %s", d.Path())
 			}
 			rmdirTestOutcome(t, err, approved, d.Path(), moved)
 			if interposed && !removeTestExists(t, d.Path()) {
@@ -134,7 +133,7 @@ func TestRemoveOwnedDeletePendingBeforeRmdir(t *testing.T) {
 }
 
 // TestRemoveOwnedJunctionBeforeRmdir catches a removal by name that deletes a junction swapped in
-// under the name (#144): in rmdirCheckedHook the approved dir moves away and a junction to a dir
+// under the name (#144): in hooks.rmdirChecked the approved dir moves away and a junction to a dir
 // with a file takes its name. The junction and the file behind it must stay, and the result must
 // match what happened to the approved dir.
 func TestRemoveOwnedJunctionBeforeRmdir(t *testing.T) {
@@ -149,7 +148,7 @@ func TestRemoveOwnedJunctionBeforeRmdir(t *testing.T) {
 	approved := rmdirTestIdentity(t, d.Path())
 	moved := filepath.Join(o.temp, "moved-away")
 	ran, linked := false, false
-	rmdirCheckedHook = func(string) {
+	o.hooks.rmdirChecked = func(string) {
 		if ran {
 			return
 		}
@@ -160,11 +159,10 @@ func TestRemoveOwnedJunctionBeforeRmdir(t *testing.T) {
 		JunctionForTest(t, victim, d.Path())
 		linked = true
 	}
-	t.Cleanup(func() { rmdirCheckedHook = nil })
 
 	err := o.RemoveOwned(context.Background(), d)
 	if !ran {
-		t.Fatalf("rmdirCheckedHook never ran for %s", d.Path())
+		t.Fatalf("hooks.rmdirChecked never ran for %s", d.Path())
 	}
 	rmdirTestOutcome(t, err, approved, d.Path(), moved)
 	if fi, lerr := os.Lstat(d.Path()); linked && (lerr != nil || fi.Mode().Type() == fs.ModeDir) {
@@ -197,8 +195,8 @@ func TestRemoveDirEntryParentCloseError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	testFailClose(t, "held parent")
-	if err := removeDirEntry(rt, name, fi); !errors.Is(err, errCloseFailed) || !errors.Is(err, errTestClose) {
+	h := removalHooks{closeFail: testFailClose("held parent")}
+	if err := h.removeDirEntry(rt, name, fi); !errors.Is(err, errCloseFailed) || !errors.Is(err, errTestClose) {
 		t.Errorf("removeDirEntry with a failing close of the held parent = %v, want %v from %v", err, errCloseFailed, errTestClose)
 	}
 	if !removeTestExists(t, filepath.Join(root, name)) {

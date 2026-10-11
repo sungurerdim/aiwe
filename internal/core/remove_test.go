@@ -479,7 +479,7 @@ func TestRemoveTreeNilApproved(t *testing.T) {
 	keep := filepath.Join(root, name, "keep.txt")
 	removeTestWrite(t, keep, "inside the temp root, never approved")
 
-	err := removeTree(context.Background(), root, name, nil)
+	err := removalHooks{}.removeTree(context.Background(), root, name, nil)
 	if !errors.Is(err, ErrNotOwned) {
 		t.Errorf("removeTree(%q, nil approved) = %v, want %v", name, err, ErrNotOwned)
 	}
