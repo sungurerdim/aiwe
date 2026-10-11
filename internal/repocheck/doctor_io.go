@@ -37,7 +37,7 @@ func MachineDoctorEnv(ctx context.Context, repo string) DoctorEnv {
 func RunGo(ctx context.Context, dir string, args ...string) ([]byte, error) {
 	var stdout, stderr bytes.Buffer
 	child, err := core.Start(ctx, core.ChildSpec{Argv: append([]string{"go"}, args...), Dir: dir,
-		Env: os.Environ(), Stdout: &stdout, Stderr: &stderr})
+		Env: core.Environ(), Stdout: &stdout, Stderr: &stderr})
 	if err != nil {
 		return nil, err
 	}

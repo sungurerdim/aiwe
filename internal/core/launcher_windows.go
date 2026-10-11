@@ -40,7 +40,7 @@ func resolveLauncher(program, dir string) (string, error) {
 // outside PATHEXT through its file association. An entry with no name, such as ".", accepts no
 // extension: a path whose extension is empty or "." names no program type.
 func checkPathExt(path string) error {
-	exts := os.Getenv("PATHEXT")
+	exts := LookupEnv("PATHEXT")
 	if exts == "" {
 		exts = ".com;.exe;.bat;.cmd" // the list Start uses when PATHEXT is unset
 	}

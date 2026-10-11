@@ -106,6 +106,12 @@ func LookupEnv(name string) string {
 	return os.Getenv(name)
 }
 
+// Environ returns a copy of the whole process environment as "name=value" pairs; with LookupEnv it
+// keeps this file the only reader (SPEC §5.4).
+func Environ() []string {
+	return os.Environ()
+}
+
 // processHome returns the user's home directory of this process, or "" when it is unknown.
 func processHome() string {
 	home, err := os.UserHomeDir()
