@@ -24,12 +24,15 @@ const (
 	guardPollEvery = 100 * time.Millisecond
 )
 
-// ChildSpec describes one child process: its argv, working directory, environment and input.
+// ChildSpec describes one child process: its argv, working directory, environment, input and
+// output. A nil Stdout or Stderr sends that stream to the null device.
 type ChildSpec struct {
-	Argv  []string
-	Dir   string
-	Env   []string
-	Stdin io.Reader
+	Argv   []string
+	Dir    string
+	Env    []string
+	Stdin  io.Reader
+	Stdout io.Writer
+	Stderr io.Writer
 }
 
 // Child is a started child process together with every process it starts: its tree. The tree is
@@ -62,6 +65,8 @@ func Start(ctx context.Context, spec ChildSpec) (*Child, error) {
 	cmd.Dir = spec.Dir
 	cmd.Env = spec.Env
 	cmd.Stdin = spec.Stdin
+	cmd.Stdout = spec.Stdout
+	cmd.Stderr = spec.Stderr
 	cmd.WaitDelay = waitDelay
 	c := &Child{cmd: cmd, ended: make(chan struct{}), done: make(chan struct{})}
 	cmd.Cancel = func() error { return c.StopTree(cancelGrace) }
