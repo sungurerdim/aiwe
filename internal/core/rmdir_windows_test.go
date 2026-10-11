@@ -168,3 +168,34 @@ func TestRemoveOwnedJunctionBeforeRmdir(t *testing.T) {
 		t.Errorf("file behind the junction: content %q, error %v; want it kept", b, rerr)
 	}
 }
+
+// TestRemoveDirEntryParentCloseError catches a failed close of the parent handle that openHeldDir
+// opens on Windows, lost before the caller of removeDirEntry (§5.15): the error is returned and
+// the empty directory stays, so the next sweep retries it.
+func TestRemoveDirEntryParentCloseError(t *testing.T) {
+	root := t.TempDir()
+	name := "run-20261012-0003"
+	if err := os.Mkdir(filepath.Join(root, name), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	rt, err := os.OpenRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := rt.Close(); err != nil {
+			t.Errorf("close root: %v", err)
+		}
+	})
+	fi, err := rt.Lstat(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	testFailClose(t, "held parent")
+	if err := removeDirEntry(rt, name, fi); !errors.Is(err, errCloseFailed) || !errors.Is(err, errTestClose) {
+		t.Errorf("removeDirEntry with a failing close of the held parent = %v, want %v from %v", err, errCloseFailed, errTestClose)
+	}
+	if !removeTestExists(t, filepath.Join(root, name)) {
+		t.Errorf("empty dir %q removed although the close of its held parent failed", name)
+	}
+}
