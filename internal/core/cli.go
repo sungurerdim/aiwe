@@ -122,7 +122,7 @@ func bind(cmds []Command, c call) (Command, Input, error) {
 		switch _, seen := in.Params[f.Name]; {
 		case !contains(cmd.Params, f.Name):
 			return Command{}, Input{}, &Error{Outcome: OutcomeUsage, Expected: "a parameter of " + name(cmd),
-				Found: "--" + f.Name, Next: "run aiwe --help and pass only its parameters"}
+				Found: "--" + f.Name, Next: "run " + Product + " --help and pass only its parameters"}
 		case !f.HasValue:
 			return Command{}, Input{}, &Error{Outcome: OutcomeUsage, Expected: "a value for --" + f.Name,
 				Found: "none", Next: "pass --" + f.Name + " <value>"}
@@ -143,7 +143,7 @@ func bind(cmds []Command, c call) (Command, Input, error) {
 func find(cmds []Command, words []string) (Command, []string, error) {
 	if len(words) == 0 {
 		return Command{}, nil, &Error{Outcome: OutcomeUsage, Expected: "a command name", Found: "nothing",
-			Next: "run aiwe --help"}
+			Next: "run " + Product + " --help"}
 	}
 	for _, cmd := range cmds {
 		if cmd.Object != words[0] {
@@ -157,14 +157,14 @@ func find(cmds []Command, words []string) (Command, []string, error) {
 		}
 	}
 	return Command{}, nil, &Error{Outcome: OutcomeUsage, Expected: "a registered command",
-		Found: fmt.Sprintf("%q", strings.Join(words, " ")), Next: "run aiwe --help"}
+		Found: fmt.Sprintf("%q", strings.Join(words, " ")), Next: "run " + Product + " --help"}
 }
 
 // help lists every registered command with its one-line purpose (DR-23).
 func help(cmds []Command) Result[any] {
 	entries := make([]helpEntry, 0, len(cmds))
 	var b strings.Builder
-	b.WriteString("usage: aiwe <command> [--name value]...\n")
+	b.WriteString("usage: " + Product + " <command> [--name value]...\n")
 	for _, cmd := range cmds {
 		entries = append(entries, helpEntry{Command: name(cmd), Purpose: cmd.Purpose})
 		fmt.Fprintf(&b, "  %s  %s\n", name(cmd), cmd.Purpose)
