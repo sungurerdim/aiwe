@@ -91,15 +91,32 @@ func readConfigState(dir string) (map[string]string, error) {
 	if err != nil {
 		return nil, configInvalid("a readable state directory", err.Error())
 	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, configInvalid("a readable state directory", err.Error())
+	}
+	err = mergeConfigFiles(state, root, dir, entries)
+	if cerr := root.Close(); err == nil && cerr != nil {
+		err = configInvalid("a readable state directory", cerr.Error())
+	}
+	if err != nil {
+		return nil, err
+	}
+	return state, nil
+}
+
+// mergeConfigFiles adds the settings of every settings file among entries of dir to state, in
+// entry order.
+func mergeConfigFiles(state map[string]string, root *os.Root, dir string, entries []fs.DirEntry) error {
 	for _, e := range entries {
 		if e.IsDir() || !isSettingsFile(e.Name()) {
 			continue
 		}
-		if err := mergeConfigFile(state, filepath.Join(dir, e.Name())); err != nil {
-			return nil, err
+		if err := mergeConfigFile(state, root, dir, e.Name()); err != nil {
+			return err
 		}
 	}
-	return state, nil
+	return nil
 }
 
 // isSettingsFile reports whether name is settings.json or settings.<part>.json with a non-empty
@@ -112,9 +129,11 @@ func isSettingsFile(name string) bool {
 	return ok && len(part) > len(".json") && strings.HasSuffix(part, ".json")
 }
 
-// mergeConfigFile adds the settings of the state file at path to state.
-func mergeConfigFile(state map[string]string, path string) error {
-	b, err := os.ReadFile(path)
+// mergeConfigFile adds the settings of the state file name of the state directory dir to state.
+// The file is read through root, so a link out of dir is refused, never followed.
+func mergeConfigFile(state map[string]string, root *os.Root, dir, name string) error {
+	path := filepath.Join(dir, name)
+	b, err := root.ReadFile(name)
 	if err != nil {
 		return configInvalid("a readable state file", fmt.Sprintf("%s: %v", path, err))
 	}

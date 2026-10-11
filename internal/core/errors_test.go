@@ -37,7 +37,7 @@ func TestErrors(t *testing.T) {
 			},
 			{
 				name:    "a core.Error wrapped with context is not found by errors.As",
-				err:     fmt.Errorf("clone %s: %w", "sungurerdim/aiwe", &core.Error{Outcome: "usage", Expected: "a repository path", Found: "an empty value", Next: "pass --repo"}),
+				err:     fmt.Errorf("clone %s: %w", "sungurerdim/"+core.Product, &core.Error{Outcome: "usage", Expected: "a repository path", Found: "an empty value", Next: "pass --repo"}),
 				outcome: "usage",
 			},
 		}
@@ -57,7 +57,7 @@ func TestErrors(t *testing.T) {
 		if !errors.Is(wrapped, core.ErrParamDuplicate) {
 			t.Error("errors.Is(wrapped core.Error, ErrParamDuplicate) = false: Unwrap does not return Err")
 		}
-		if got := errors.Unwrap(e); got != core.ErrParamDuplicate {
+		if got := errors.Unwrap(e); !errors.Is(got, core.ErrParamDuplicate) || errors.Unwrap(got) != nil {
 			t.Errorf("(*core.Error).Unwrap() = %v, want ErrParamDuplicate", got)
 		}
 		var target *core.Error

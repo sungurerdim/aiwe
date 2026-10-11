@@ -121,7 +121,7 @@ func TestOutcomes(t *testing.T) {
 			},
 			{
 				name:    "core.Error with a usage outcome exits other than 2",
-				err:     &core.Error{Outcome: "usage", Expected: "a command name", Found: "nothing", Next: "run aiwe --help"},
+				err:     &core.Error{Outcome: "usage", Expected: "a command name", Found: "nothing", Next: "run " + core.Product + " --help"},
 				outcome: "usage", status: core.StatusUsage, exitCode: 2,
 			},
 			{
@@ -132,7 +132,7 @@ func TestOutcomes(t *testing.T) {
 			},
 			{
 				name:    "plain error of an unknown condition is not fail-closed",
-				err:     errors.New("open D:/GitHub/aiwe/.git/HEAD: access is denied"),
+				err:     errors.New("open .git/HEAD: access is denied"),
 				outcome: "error", status: core.StatusError, exitCode: 1,
 			},
 		}
