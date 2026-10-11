@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"math/rand/v2"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -185,7 +186,7 @@ func TestOwnerMarkerShape(t *testing.T) {
 			if err := os.Remove(p); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.Symlink(cp, p); err != nil {
+			if err := os.Symlink(filepath.Base(cp), p); err != nil {
 				t.Skipf("symlink %s: %v (no symlink privilege)", p, err)
 			}
 		}},
@@ -236,10 +237,11 @@ func TestOwnerMarkerSwappedForLink(t *testing.T) {
 	src := filepath.Join(o.temp, "swap-src")
 	small := filepath.Join(src, "small")
 	link := filepath.Join(src, "link")
+	// The link is relative: under the marker name it names the copy beside it, inside the root.
 	removeTestWrite(t, small, markerTestBad)
 	cp := filepath.Join(d.Path(), "marker-copy")
 	removeTestWrite(t, cp, string(marker))
-	if err := os.Symlink(cp, link); err != nil {
+	if err := os.Symlink(filepath.Base(cp), link); err != nil {
 		t.Skipf("symlink %s: %v (no symlink privilege)", link, err)
 	}
 	p := filepath.Join(d.Path(), markerFile)
@@ -267,11 +269,12 @@ func TestOwnerMarkerSwappedForLink(t *testing.T) {
 const markerTestGrowTo = 64 << 20
 
 // TestOwnerMarkerGrownInPlace catches a marker read whole, or read past 4096 bytes and accepted,
-// when the file the handle checked grows after the check (#172, security review of 34b6c7a). The
-// marker keeps its inode. While it is short it ends in " x" and matches no record. It then grows to
-// 64 MiB, and only while it is large are its first 4097 bytes the valid marker and spaces. So no
-// call may succeed, and no call may allocate the grown file: the read stops after 4097 bytes and
-// the bytes past 4096 are refused, not dropped.
+// when the file the handle checked grows after the check (#172, security review of 34b6c7a). Before
+// each call the marker is short, ends in " x" and matches no record. During the call, after a
+// random delay, it grows in place, same inode, to 64 MiB, and only then turns its first 4097 bytes
+// into the valid marker and spaces; it never shrinks while a call runs. So no call may succeed,
+// and no call may allocate the grown file: the read stops after 4097 bytes and the bytes past 4096
+// are refused, not dropped.
 func TestOwnerMarkerGrownInPlace(t *testing.T) {
 	o, d, marker := markerTestOwned(t)
 	p := filepath.Join(d.Path(), markerFile)
@@ -284,52 +287,47 @@ func TestOwnerMarkerGrownInPlace(t *testing.T) {
 	defer f.Close()
 	pad := []byte(strings.Repeat(" ", 2*maxMarkerBytes))
 	space, x := []byte(" "), []byte("x")
-	var cycles atomic.Int64
-	quit := make(chan struct{})
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for {
-			select {
-			case <-quit:
-				return
-			default:
-			}
-			// Each step leaves a short marker invalid: " x" goes only while the marker is 64 MiB.
-			_, e1 := f.WriteAt(pad, l+2)
-			e2 := f.Truncate(markerTestGrowTo)
-			_, e3 := f.WriteAt(space, l+1)
-			_, e4 := f.WriteAt(x, l+1)
-			e5 := f.Truncate(l + 2)
-			if errors.Join(e1, e2, e3, e4, e5) == nil {
-				cycles.Add(1)
-			}
+	grow := func(delay time.Duration) error {
+		for start := time.Now(); time.Since(start) < delay; {
 		}
-	}()
-	stop := func() { close(quit); wg.Wait() }
+		_, e1 := f.WriteAt(pad, l+2)
+		e2 := f.Truncate(markerTestGrowTo)
+		_, e3 := f.WriteAt(space, l+1)
+		return errors.Join(e1, e2, e3)
+	}
 
 	calls, accepted := 0, false
 	var most uint64
 	var before, after runtime.MemStats
+	took := time.Millisecond
 	for end := time.Now().Add(markerTestRaceFor); time.Now().Before(end); calls++ {
+		if _, err := f.WriteAt(x, l+1); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.Truncate(l + 2); err != nil {
+			t.Fatal(err)
+		}
+		grown := make(chan error, 1)
+		delay := rand.N(took)
 		runtime.ReadMemStats(&before)
+		start := time.Now()
+		go func() { grown <- grow(delay) }()
 		err := o.RemoveOwned(context.Background(), d)
+		took = max(time.Since(start), time.Microsecond)
 		runtime.ReadMemStats(&after)
+		if gerr := <-grown; gerr != nil {
+			t.Fatalf("grow the marker in place: %v", gerr)
+		}
 		most = max(most, after.TotalAlloc-before.TotalAlloc)
 		if err == nil {
 			accepted = true
 			break
 		}
 	}
-	stop()
-	if n := cycles.Load(); n < 2 {
-		t.Fatalf("the marker grew and shrank %d times in %v; the race never ran", n, markerTestRaceFor)
-	}
 	if accepted {
 		t.Errorf("RemoveOwned accepted a marker that grew past 4096 bytes after its check (call %d); want ErrNotOwned every time", calls+1)
 	}
 	if most > 8<<20 {
-		t.Errorf("a RemoveOwned call allocated %d bytes while the marker grew to %d bytes; want the read bounded at %d bytes", most, markerTestGrowTo, maxMarkerBytes+1)
+		t.Errorf("a RemoveOwned call allocated %d bytes while the marker grew to %d bytes in %d calls; want the read bounded at %d bytes", most, markerTestGrowTo, calls, maxMarkerBytes+1)
 	}
 }
