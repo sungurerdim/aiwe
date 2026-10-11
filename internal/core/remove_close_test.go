@@ -115,8 +115,8 @@ func TestRemoveDirEntryCloseError(t *testing.T) {
 // Sweep, or miscounted in its report (§5.15, DR-13). A close that fails while the directory of a dead
 // owner is checked or removed, whether it passed the ownership check or is an empty orphan, must be
 // returned by Sweep. The report follows one rule: a directory whose close failed is never counted
-// Removed, even when it is gone; it is counted once, as Refused. A close that fails during the
-// ownership check keeps the directory.
+// Removed, even when it is gone, nor Refused, even when it is kept; it is counted once, as Failed.
+// A close that fails during the ownership check keeps the directory.
 func TestSweepRemovalCloseError(t *testing.T) {
 	for _, c := range []struct {
 		what  string
@@ -143,8 +143,8 @@ func TestSweepRemovalCloseError(t *testing.T) {
 			if !errors.Is(err, errTestClose) {
 				t.Errorf("Sweep with a failing close of the %s = %+v, %v; want %v", c.what, rep, err, errTestClose)
 			}
-			if want := (SweepReport{Refused: 1}); rep != want {
-				t.Errorf("Sweep report with a failing close of the %s = %+v, want %+v", c.what, rep, want)
+			if failed := sweepTestField(t, rep, "Failed"); rep.Removed != 0 || rep.Live != 0 || rep.Refused != 0 || failed != 1 {
+				t.Errorf("Sweep report with a failing close of the %s = %+v, want Failed 1 and every other count 0", c.what, rep)
 			}
 			if got := sweepTestExists(t, d.Path()); got != c.kept {
 				t.Errorf("after a failing close of the %s, %q exists = %v, want %v", c.what, d.Path(), got, c.kept)
