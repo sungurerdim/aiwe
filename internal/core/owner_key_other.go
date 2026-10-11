@@ -10,16 +10,40 @@ import (
 	"syscall"
 )
 
-// checkOwnerOnly refuses p, the state, temp or cache root or the owner key, when its mode gives
-// group or others any access, or when the effective user does not own it. p is not followed, so a
-// link, whose mode is 0777, is refused too; a root that is a link is refused first by
-// mkdirOwnerOnly. aiwe makes each root 0o700 and the key 0o600.
+// ownerKeyOpenFlag opens the owner key without blocking, so a FIFO under its name cannot hang the
+// open; checkOwnerOnlyFile then refuses it on the handle, as it is not a plain file.
+const ownerKeyOpenFlag = os.O_RDONLY | syscall.O_NONBLOCK
+
+// checkOwnerOnly refuses p, the temp or cache root, when it is neither a plain file nor a
+// directory, when its mode gives group or others any access, or when the effective user does not
+// own it. p is not followed, so a link is refused. aiwe makes each root 0o700 and the key 0o600;
+// the state root and the key are checked on their open handles (checkOwnerOnlyFile).
 func checkOwnerOnly(p string) error {
 	fi, err := os.Lstat(p)
 	if err != nil {
 		return fmt.Errorf("%w: owner-only check of %q: %v", ErrRootUnsafe, p, err)
 	}
-	if fi.Mode().Perm()&0o077 != 0 || fi.Mode().Type()&os.ModeSymlink != 0 {
+	return checkOwnerOnlyInfo(p, fi)
+}
+
+// checkOwnerOnlyFile is checkOwnerOnly on the open file f, named p: the mode and owner are read
+// from the handle (fstat), so they belong to the file f reads, whatever p names later.
+func checkOwnerOnlyFile(f *os.File, p string) error {
+	fi, err := f.Stat()
+	if err != nil {
+		return fmt.Errorf("%w: owner-only check of %q: %v", ErrRootUnsafe, p, err)
+	}
+	return checkOwnerOnlyInfo(p, fi)
+}
+
+// checkOwnerOnlyInfo checks fi, the file info of p; only a plain file or directory passes. A FIFO,
+// device or socket is refused. A link is refused from Lstat (checkOwnerOnly); from a handle
+// (checkOwnerOnlyFile) the open already followed the link, so its target is checked.
+func checkOwnerOnlyInfo(p string, fi fs.FileInfo) error {
+	if t := fi.Mode().Type(); t != 0 && t != fs.ModeDir {
+		return fmt.Errorf("%w: %q is a %v, not a plain file or directory", ErrRootUnsafe, p, t)
+	}
+	if fi.Mode().Perm()&0o077 != 0 {
 		return fmt.Errorf("%w: %q has mode %v; want no access for group or others", ErrRootUnsafe, p, fi.Mode())
 	}
 	st, ok := fi.Sys().(*syscall.Stat_t)

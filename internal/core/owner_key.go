@@ -32,6 +32,7 @@ const (
 	kindOwnedDir       = "owned_dir"
 	markerDomain       = "owned_marker"
 	maxMarkerBytes     = 4096
+	maxOwnerKeyBytes   = 4096
 	maxLedgerLine      = 4 << 20
 )
 
@@ -74,37 +75,68 @@ func orNone(s string) string {
 	return s
 }
 
-// loadOwnerKey reads <state>/owner.key, or makes it with a fresh random key when it is missing. A
-// state root or key that another principal can read or write fails with ErrRootUnsafe.
+// ownerKeyTakenHook, when set, runs right after loadOwnerKey has opened the key and before it
+// checks the key's access; a test uses it to swap the key at that point.
+var ownerKeyTakenHook func()
+
+// loadOwnerKey reads <state>/owner.key, or makes it with a fresh random key when it is missing. Each
+// access is checked on an open handle: the key is made and opened through the checked state root and
+// read from its own checked handle. A root or key that another principal can read or write fails with ErrRootUnsafe.
 func loadOwnerKey(state string) ([]byte, error) {
-	if err := checkOwnerOnly(state); err != nil {
+	rt, err := openOwnerOnlyRoot(state)
+	if err != nil {
 		return nil, err
 	}
+	defer rt.Close()
 	p := filepath.Join(state, ownerKeyFile)
-	b, err := os.ReadFile(p)
+	f, err := rt.OpenFile(ownerKeyFile, ownerKeyOpenFlag, 0)
 	if errors.Is(err, fs.ErrNotExist) {
-		if err := createOwnerKey(p); err != nil {
+		if err := createOwnerKey(rt); err != nil {
 			return nil, err
 		}
-		b, err = os.ReadFile(p)
+		f, err = rt.OpenFile(ownerKeyFile, ownerKeyOpenFlag, 0)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("owner key: %w", err)
 	}
-	if err := checkOwnerOnly(p); err != nil {
+	defer f.Close()
+	if ownerKeyTakenHook != nil {
+		ownerKeyTakenHook()
+	}
+	if err := checkOwnerOnlyFile(f, p); err != nil {
 		return nil, err
 	}
+	b, err := io.ReadAll(io.LimitReader(f, maxOwnerKeyBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("owner key: %w", err)
+	}
 	k, err := hex.DecodeString(strings.TrimSpace(string(b)))
-	if err != nil || len(k) != ownerKeySize {
+	if err != nil || len(b) > maxOwnerKeyBytes || len(k) != ownerKeySize {
 		return nil, fmt.Errorf("owner key %s: want %d hex-encoded bytes", p, ownerKeySize)
 	}
 	return k, nil
 }
 
-// createOwnerKey makes the key file p in one step: a fresh key is written and synced to a file of
-// its own, then hard-linked to p, which fails when p exists. A reader never sees p without its
-// bytes, and when two processes race, the loser keeps no key of its own and reads the winner's.
-func createOwnerKey(p string) error {
+// openOwnerOnlyRoot opens the state root and checks its access on the open handle.
+func openOwnerOnlyRoot(state string) (*os.Root, error) {
+	rt, err := os.OpenRoot(state)
+	if err != nil {
+		return nil, fmt.Errorf("%w: owner-only check of %q: %v", ErrRootUnsafe, state, err)
+	}
+	dir, err := rt.Open(".")
+	if err != nil {
+		return nil, errors.Join(fmt.Errorf("%w: owner-only check of %q: %v", ErrRootUnsafe, state, err), rt.Close())
+	}
+	if err := errors.Join(checkOwnerOnlyFile(dir, state), dir.Close()); err != nil {
+		return nil, errors.Join(err, rt.Close())
+	}
+	return rt, nil
+}
+
+// createOwnerKey makes the key file under the state root rt in one step: a fresh key is written and
+// synced to a file of its own, then hard-linked to the key's name, which fails when it exists. A reader
+// never sees the key without its bytes; of two racing processes, the loser reads the winner's key.
+func createOwnerKey(rt *os.Root) error {
 	k := make([]byte, ownerKeySize)
 	tag := make([]byte, dirSuffixBytes)
 	if _, err := rand.Read(k); err != nil {
@@ -113,31 +145,32 @@ func createOwnerKey(p string) error {
 	if _, err := rand.Read(tag); err != nil {
 		return fmt.Errorf("owner key: %w", err)
 	}
-	tmp := p + "." + hex.EncodeToString(tag) + ".tmp"
-	if err := writeNewFile(tmp, []byte(hex.EncodeToString(k)+"\n")); err != nil {
-		return errors.Join(fmt.Errorf("owner key: %w", err), removeMissingOK(tmp))
+	tmp := ownerKeyFile + "." + hex.EncodeToString(tag) + ".tmp"
+	if err := writeNew(rt.OpenFile, tmp, []byte(hex.EncodeToString(k)+"\n")); err != nil {
+		rerr := rt.Remove(tmp)
+		if errors.Is(rerr, fs.ErrNotExist) {
+			rerr = nil
+		}
+		return errors.Join(fmt.Errorf("owner key: %w", err), rerr)
 	}
-	lerr := os.Link(tmp, p)
+	lerr := rt.Link(tmp, ownerKeyFile)
 	if errors.Is(lerr, fs.ErrExist) {
 		lerr = nil
 	}
-	if err := errors.Join(lerr, os.Remove(tmp)); err != nil {
+	if err := errors.Join(lerr, rt.Remove(tmp)); err != nil {
 		return fmt.Errorf("owner key: %w", err)
-	}
-	return nil
-}
-
-// removeMissingOK removes the file p; a p that does not exist is no error.
-func removeMissingOK(p string) error {
-	if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return err
 	}
 	return nil
 }
 
 // writeNewFile writes b to a file that must not exist yet, and syncs it.
 func writeNewFile(p string, b []byte) error {
-	f, err := os.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	return writeNew(os.OpenFile, p, b)
+}
+
+// writeNew writes b to the file name, which must not exist yet, opened with open, and syncs it.
+func writeNew(open func(string, int, fs.FileMode) (*os.File, error), name string, b []byte) error {
+	f, err := open(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return err
 	}
