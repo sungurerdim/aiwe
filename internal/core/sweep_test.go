@@ -15,6 +15,8 @@ import (
 	"time"
 )
 
+// sweepTestRoots names a state root under a fresh t.TempDir and makes the temp, cache, home and
+// repository roots; OpenOwner makes the state root itself, owner-only.
 func sweepTestRoots(t *testing.T) OwnedRoots {
 	t.Helper()
 	base := t.TempDir()
@@ -25,7 +27,7 @@ func sweepTestRoots(t *testing.T) OwnedRoots {
 		Home:      filepath.Join(base, "home"),
 		Canonical: []string{filepath.Join(base, "repo")},
 	}
-	for _, d := range []string{r.State, r.Temp, r.Cache, r.Home, r.Canonical[0]} {
+	for _, d := range []string{r.Temp, r.Cache, r.Home, r.Canonical[0]} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
 		}
