@@ -23,6 +23,7 @@ func registry() []core.Command {
 		{Module: "front", Object: "version", Params: []string{"format"},
 			Purpose: "print the version of this binary", Run: runVersion},
 	}
+	cmds = append(cmds, core.ConfigCommands()...)
 	return append(cmds, gates.Commands()...)
 }
 
