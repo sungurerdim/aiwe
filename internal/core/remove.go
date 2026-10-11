@@ -89,14 +89,18 @@ func OpenOwner(r OwnedRoots, self ProcessID) (*Owner, error) {
 }
 
 // resolveOwnedRoots makes the state, temp and cache roots of r when they are missing and returns
-// their real paths by name.
+// their real paths by name. A missing state root is made owner-only (mkdirOwnerOnly).
 func resolveOwnedRoots(r OwnedRoots) (map[string]string, error) {
 	paths := make(map[string]string, 3)
 	for _, n := range []namedPath{{"state", r.State}, {"temp", r.Temp}, {"cache", r.Cache}} {
 		if n.path == "" || !filepath.IsAbs(n.path) {
 			return nil, fmt.Errorf("%w: %s root %q is not an absolute path", ErrRootUnsafe, n.name, n.path)
 		}
-		if err := os.MkdirAll(n.path, 0o700); err != nil {
+		mkdir := func(p string) error { return os.MkdirAll(p, 0o700) }
+		if n.name == "state" {
+			mkdir = mkdirOwnerOnly
+		}
+		if err := mkdir(n.path); err != nil {
 			return nil, fmt.Errorf("%s root: %w", n.name, err)
 		}
 		p, err := realDir(n)

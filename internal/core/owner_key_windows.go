@@ -1,7 +1,11 @@
 package core
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -68,6 +72,35 @@ func checkOwnerOnlyACE(p string, ace *windows.ACCESS_ALLOWED_ACE, trusted []*win
 	}
 	return fmt.Errorf("%w: %q grants %s access mask %#x; only the current user, SYSTEM and "+
 		"Administrators may read or write it", ErrRootUnsafe, p, sid, uint32(ace.Mask))
+}
+
+// mkdirOwnerOnly makes the state root p, and any missing parent, when p is missing. p itself is made
+// in one step with a protected DACL that allows only the current user, SYSTEM and Administrators,
+// and that each entry below it inherits, such as the owner key; no ACE of an open parent reaches it.
+// A p that exists is left as it is: checkOwnerOnly refuses it when it is open.
+func mkdirOwnerOnly(p string) error {
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		return err
+	}
+	u, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		return err
+	}
+	sd, err := windows.SecurityDescriptorFromString("D:P(A;OICI;FA;;;" + u.User.Sid.String() +
+		")(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)")
+	if err != nil {
+		return err
+	}
+	name, err := windows.UTF16PtrFromString(p)
+	if err != nil {
+		return err
+	}
+	sa := windows.SecurityAttributes{SecurityDescriptor: sd}
+	sa.Length = uint32(unsafe.Sizeof(sa))
+	if err := windows.CreateDirectory(name, &sa); err != nil && !errors.Is(err, fs.ErrExist) {
+		return &fs.PathError{Op: "mkdir", Path: p, Err: err}
+	}
+	return nil
 }
 
 // ownerOnlySIDs returns the principals that may read and write the owner key: the user of the
