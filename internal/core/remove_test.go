@@ -33,7 +33,7 @@ func removeTestRoots(t *testing.T, base string) OwnedRoots {
 
 func removeTestMkdir(t *testing.T, dir string) {
 	t.Helper()
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatalf("mkdir %s: %v", dir, err)
 	}
 }

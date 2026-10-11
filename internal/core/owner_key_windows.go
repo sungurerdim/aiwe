@@ -21,11 +21,11 @@ const ownerOnlyMask = windows.FILE_READ_DATA | windows.FILE_WRITE_DATA | windows
 	fileDeleteChild | windows.DELETE | windows.WRITE_DAC | windows.WRITE_OWNER |
 	windows.GENERIC_READ | windows.GENERIC_WRITE | windows.GENERIC_ALL
 
-// checkOwnerOnly refuses p, the state root or the owner key, when a principal other than the
-// current user, SYSTEM or Administrators owns it or can read or write it through its DACL; the
-// 0o600/0o700 modes do nothing on Windows. CREATOR OWNER counts as the user: it becomes the creator
-// of each entry made below p. A missing DACL grants everyone every right, and an ACE type other
-// than allow or deny cannot be proven safe, so both are refused (fail-closed).
+// checkOwnerOnly refuses p, the state, temp or cache root or the owner key, when a principal other
+// than the current user, SYSTEM or Administrators owns it or can read or write it through its
+// DACL; the 0o600/0o700 modes do nothing on Windows. CREATOR OWNER counts as the user: it becomes
+// the creator of each entry made below p. A missing DACL grants everyone every right, and an ACE
+// type other than allow or deny cannot be proven safe, so both are refused (fail-closed).
 func checkOwnerOnly(p string) error {
 	trusted, err := ownerOnlySIDs()
 	if err != nil {

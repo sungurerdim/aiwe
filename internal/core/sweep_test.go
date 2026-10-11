@@ -28,7 +28,7 @@ func sweepTestRoots(t *testing.T) OwnedRoots {
 		Canonical: []string{filepath.Join(base, "repo")},
 	}
 	for _, d := range []string{r.Temp, r.Cache, r.Home, r.Canonical[0]} {
-		if err := os.MkdirAll(d, 0o755); err != nil {
+		if err := os.MkdirAll(d, 0o700); err != nil {
 			t.Fatal(err)
 		}
 	}

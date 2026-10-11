@@ -9,9 +9,9 @@ import (
 	"syscall"
 )
 
-// checkOwnerOnly refuses p, the state root or the owner key, when its mode gives group or others any
-// access, or when the effective user does not own it. p is not followed, so a link, whose mode
-// is 0777, is refused too. aiwe makes the state root 0o700 and the key 0o600.
+// checkOwnerOnly refuses p, the state, temp or cache root or the owner key, when its mode gives
+// group or others any access, or when the effective user does not own it. p is not followed, so a
+// link, whose mode is 0777, is refused too. aiwe makes each root 0o700 and the key 0o600.
 func checkOwnerOnly(p string) error {
 	fi, err := os.Lstat(p)
 	if err != nil {
