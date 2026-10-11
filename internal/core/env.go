@@ -19,11 +19,12 @@ func secretMarkers() []string {
 func CleanEnv(parent, credentials []string) []string {
 	child := make([]string, 0, len(parent)+6)
 	for _, kv := range parent {
-		name, _, ok := strings.Cut(kv, "=")
+		name, value, ok := strings.Cut(kv, "=")
 		if !ok {
 			continue
 		}
-		if name == "" || dropFromChild(strings.ToUpper(name), credentials) {
+		upper := strings.ToUpper(name)
+		if name == "" || dropFromChild(upper, credentials) || urlWithPassword(upper, value) {
 			continue
 		}
 		child = append(child, kv)
@@ -40,10 +41,8 @@ func CleanEnv(parent, credentials []string) []string {
 
 // dropFromChild reports whether the upper-case variable name must not reach a child.
 func dropFromChild(upper string, credentials []string) bool {
-	for _, m := range secretMarkers() {
-		if strings.Contains(upper, m) {
-			return true
-		}
+	if secretName(upper) {
+		return true
 	}
 	for _, c := range credentials {
 		if strings.EqualFold(upper, c) {
@@ -56,6 +55,40 @@ func dropFromChild(upper string, credentials []string) bool {
 		}
 	}
 	return strings.HasPrefix(upper, "GIT_CONFIG_KEY_") || strings.HasPrefix(upper, "GIT_CONFIG_VALUE_")
+}
+
+// secretName reports whether the upper-case variable name is secret-shaped: it holds a secret
+// marker, ends in a secret suffix, or is a known credential variable (DR-35, SPEC §6.5).
+func secretName(upper string) bool {
+	for _, m := range secretMarkers() {
+		if strings.Contains(upper, m) {
+			return true
+		}
+	}
+	for _, s := range []string{"_PAT", "_PASS"} {
+		if strings.HasSuffix(upper, s) {
+			return true
+		}
+	}
+	return upper == "NPM_CONFIG__AUTH" || upper == "GOOGLE_APPLICATION_CREDENTIALS"
+}
+
+// urlWithPassword reports whether the upper-case name ends in _URL and its value carries
+// user:password@ in the URL authority; the user may be empty (DR-35, SPEC §6.5).
+func urlWithPassword(upper, value string) bool {
+	if !strings.HasSuffix(upper, "_URL") {
+		return false
+	}
+	_, rest, ok := strings.Cut(value, "://")
+	if !ok {
+		return false
+	}
+	authority := rest
+	if i := strings.IndexAny(rest, "/?#"); i >= 0 {
+		authority = rest[:i]
+	}
+	at := strings.LastIndex(authority, "@")
+	return at >= 0 && strings.Contains(authority[:at], ":")
 }
 
 // reachNames are the upper-case variable names that let a child reach a credential or run a
