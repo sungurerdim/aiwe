@@ -154,6 +154,101 @@ func TestOutput(t *testing.T) {
 		}
 	})
 
+	// A path or value from the file system or the environment reaches the text output with every
+	// terminal control escaped, so a file name cannot drive the terminal (#200). JSON keeps it exact.
+	escapes := []struct {
+		name   string
+		detail string
+		want   string
+	}{
+		{
+			name:   "OSC title sequence with BEL in a file name drives the terminal",
+			detail: "read settings.\x1b]0;PWN\x07.json",
+			want:   `ok: read settings.\x1b]0;PWN\x07.json` + "\n",
+		},
+		{
+			name:   "CSI clear-screen sequence reaches the terminal raw",
+			detail: "path a\x1b[2Jb",
+			want:   `ok: path a\x1b[2Jb` + "\n",
+		},
+		{
+			name:   "lone CR overwrites the line before it",
+			detail: "found ok\rforged",
+			want:   `ok: found ok\x0dforged` + "\n",
+		},
+		{
+			name:   "C1 CSI U+009B and NEL U+0085 reach the terminal raw",
+			detail: "path a\u009b2Jb\u0085c",
+			want:   `ok: path a\u009b2Jb\u0085c` + "\n",
+		},
+		{
+			name:   "DEL reaches the terminal raw",
+			detail: "path a\x7fb",
+			want:   `ok: path a\x7fb` + "\n",
+		},
+		{
+			name:   "bidi override U+202E reverses the displayed path",
+			detail: "file evil\u202etxt.exe",
+			want:   `ok: file evil\u202etxt.exe` + "\n",
+		},
+		{
+			name:   "bidi isolates U+2066 to U+2069 reorder the displayed path",
+			detail: "a\u2066b\u2067c\u2068d\u2069e",
+			want:   `ok: a\u2066b\u2067c\u2068d\u2069e` + "\n",
+		},
+		{
+			name:   "invalid UTF-8 bytes form a control on the terminal",
+			detail: "path a\xffb\xc2",
+			want:   `ok: path a\xffb\xc2` + "\n",
+		},
+		{
+			name:   "plain Unicode, RTL script, newline and tab altered on the way out",
+			detail: "İıŞşĞğ 仓库 مستودع 🚀 é\nC:\\Users\\x\tnext",
+			want:   "ok: İıŞşĞğ 仓库 مستودع 🚀 é\nC:\\Users\\x\tnext\n",
+		},
+	}
+	for _, tc := range escapes {
+		r := core.Result[any]{Status: core.StatusOK, Outcome: core.Outcome("ok"), Detail: tc.detail}
+		t.Run("text escape/"+tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			if err := core.WriteResult(&buf, core.FormatText, r); err != nil {
+				t.Fatalf("WriteResult(text) error = %v", err)
+			}
+			if got := buf.String(); got != tc.want {
+				t.Fatalf("text output = %q, want %q", got, tc.want)
+			}
+		})
+		t.Run("json escape/"+tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			if err := core.WriteResult(&buf, core.FormatJSON, r); err != nil {
+				t.Fatalf("WriteResult(json) error = %v", err)
+			}
+			if strings.ContainsAny(buf.String(), "\x1b\x07\r") {
+				t.Fatalf("json output carries a raw C0 control: %q", buf.String())
+			}
+			var env map[string]json.RawMessage
+			if err := json.Unmarshal(buf.Bytes(), &env); err != nil {
+				t.Fatalf("json output is not one JSON object: %v; output %q", err, buf.String())
+			}
+			if utf8.ValidString(tc.detail) {
+				assertJSONString(t, env, "detail", tc.detail)
+			}
+		})
+	}
+
+	t.Run("text escape/refusal with an OSC sequence in the found path drives the terminal", func(t *testing.T) {
+		var buf bytes.Buffer
+		e := &core.Error{Outcome: core.OutcomeError, Expected: "one JSON object",
+			Found: "an unreadable file settings.\x1b]0;PWN\x07.json", Next: "correct the file"}
+		if err := core.WriteResult(&buf, core.FormatText, core.ErrorResult(e)); err != nil {
+			t.Fatalf("WriteResult(text) error = %v", err)
+		}
+		want := `error: expected one JSON object; found an unreadable file settings.\x1b]0;PWN\x07.json; next: correct the file` + "\n"
+		if got := buf.String(); got != want {
+			t.Fatalf("text refusal = %q, want %q", got, want)
+		}
+	})
+
 	t.Run("unknown format printed anyway instead of refused", func(t *testing.T) {
 		var buf bytes.Buffer
 		r := core.Result[any]{Status: core.StatusOK, Outcome: core.Outcome("ok"), Detail: "done"}
