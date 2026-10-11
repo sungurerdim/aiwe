@@ -67,14 +67,16 @@ func (h *logHandler) WithGroup(name string) slog.Handler {
 	return &c
 }
 
-// Handle writes r with a clean event and only the first value of each allowed key.
+// Handle writes r with a clean event and only the first value of each allowed key. A group
+// attribute is dropped whatever its name, so it cannot forge an allowed key's value.
 func (h *logHandler) Handle(ctx context.Context, r slog.Record) error {
 	out := slog.NewRecord(r.Time, r.Level, logStrip(r.Message), r.PC)
 	seen := map[string]bool{}
 	add := func(a slog.Attr) bool {
-		if logKeys[a.Key] && !seen[a.Key] {
+		v := a.Value.Resolve()
+		if v.Kind() != slog.KindGroup && logKeys[a.Key] && !seen[a.Key] {
 			seen[a.Key] = true
-			out.AddAttrs(slog.String(a.Key, logStrip(a.Value.Resolve().String())))
+			out.AddAttrs(slog.String(a.Key, logStrip(v.String())))
 		}
 		return true
 	}

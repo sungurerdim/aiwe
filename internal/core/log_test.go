@@ -223,6 +223,13 @@ type logTestPayload struct {
 	Step string `json:"step"`
 }
 
+// logTestGroupValuer is a slog.LogValuer that resolves to a group holding a forged detail.
+type logTestGroupValuer struct{}
+
+func (logTestGroupValuer) LogValue() slog.Value {
+	return slog.GroupValue(slog.String("detail", "forged"))
+}
+
 // logTestWalk calls f on every string, key or value, inside the decoded JSON value v.
 func logTestWalk(v any, f func(string)) {
 	switch x := v.(type) {
@@ -334,6 +341,26 @@ func TestLogKeys(t *testing.T) {
 		{name: "allowed key inside a slog.Group reaches the line",
 			write: func(l *slog.Logger) {
 				l.Info("unit_started", slog.Group("g", "unit", "98", "runId", "r-forged"), "detail", "clone ready")
+			},
+			want: []string{"ts", "level", "event", "detail"}},
+		{name: "slog.Group named after an allowed key reaches the line",
+			write: func(l *slog.Logger) {
+				l.Info("unit_started", slog.Group("unit", "detail", "forged"), "detail", "clone ready")
+			},
+			want: []string{"ts", "level", "event", "detail"}},
+		{name: "slog.Group from With named after an allowed key reaches the line",
+			write: func(l *slog.Logger) {
+				l.With(slog.Group("runId", "detail", "forged")).Info("unit_started", "detail", "clone ready")
+			},
+			want: []string{"ts", "level", "event", "detail"}},
+		{name: "LogValuer resolving to a group under an allowed key reaches the line",
+			write: func(l *slog.Logger) {
+				l.Info("unit_started", "unit", logTestGroupValuer{}, "detail", "clone ready")
+			},
+			want: []string{"ts", "level", "event", "detail"}},
+		{name: "LogValuer from With resolving to a group under an allowed key reaches the line",
+			write: func(l *slog.Logger) {
+				l.With("runId", logTestGroupValuer{}).Info("unit_started", "detail", "clone ready")
 			},
 			want: []string{"ts", "level", "event", "detail"}},
 		{name: "With fields lost from the line",
