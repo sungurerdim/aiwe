@@ -46,6 +46,11 @@ linters:
         linters:
           - gocognit
           - gosec
+      # Windows API needs unsafe.Pointer.
+      - path: _windows\.go$
+        linters:
+          - gosec
+        text: G103
       - path: ^internal/core/remove\.go$
         linters:
           - forbidigo
