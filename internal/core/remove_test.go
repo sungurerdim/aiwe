@@ -478,3 +478,72 @@ func TestRemoveTreeEscape(t *testing.T) {
 		}
 	}
 }
+
+// TestCreateOwnedTrailingDot pins the narrowing of #109 (finding 14): an owner such as "run." is
+// refused, since Windows strips the dot and the dir would name another entry, while an inner dot
+// stays allowed. It catches a refusal whose message hides the reason: the error must name the
+// trailing-dot rule, not only the allowed characters.
+func TestCreateOwnedTrailingDot(t *testing.T) {
+	r := removeTestRoots(t, t.TempDir())
+	o := removeTestOpen(t, r)
+	for _, owner := range []string{"run.", "run-20261011-0005.."} {
+		d, err := o.CreateOwned(context.Background(), TempRoot, owner)
+		if err == nil {
+			t.Errorf("CreateOwned(%q) = %+v, nil; want a refusal of the trailing dot", owner, d)
+			continue
+		}
+		msg := strings.ToLower(err.Error())
+		if !strings.Contains(msg, "end") && !strings.Contains(msg, "trailing") {
+			t.Errorf("CreateOwned(%q) error %q does not name the trailing-dot rule", owner, err)
+		}
+	}
+	recs, err := o.records()
+	if err != nil {
+		t.Fatalf("read the ledger: %v", err)
+	}
+	if len(recs) != 0 {
+		t.Errorf("ledger holds %d records after refused owners, want 0: %+v", len(recs), recs)
+	}
+	if _, err := o.CreateOwned(context.Background(), TempRoot, "run.20261011"); err != nil {
+		t.Errorf("CreateOwned(%q) with an inner dot: %v; want it allowed", "run.20261011", err)
+	}
+}
+
+// TestRemoveOwnedSwapAfterCheck catches a removal that checks the owned name, then reopens it by
+// name: a name swapped after the check for a link to another dir inside the root is followed, and
+// that dir is emptied (#109, finding 8). The swap runs in removeCheckedHook, right after the check,
+// so the test does not rely on a race.
+func TestRemoveOwnedSwapAfterCheck(t *testing.T) {
+	r := removeTestRoots(t, t.TempDir())
+	o := removeTestOpen(t, r)
+	d := removeTestCreate(t, o, TempRoot)
+	removeTestWrite(t, filepath.Join(d.Path(), "work.txt"), "owned work")
+	victim := filepath.Join(o.temp, "victim")
+	keep := filepath.Join(victim, "keep.txt")
+	removeTestWrite(t, keep, "inside the temp root, not owned")
+	moved := filepath.Join(o.temp, "moved-away")
+	swapped := false
+	removeCheckedHook = func(name string) {
+		if swapped || name != filepath.Base(d.Path()) {
+			return
+		}
+		swapped = true
+		if err := os.Rename(d.Path(), moved); err != nil {
+			t.Errorf("move the owned dir away: %v", err)
+			return
+		}
+		removeTestLink(t, victim, d.Path())
+	}
+	t.Cleanup(func() { removeCheckedHook = nil })
+
+	err := o.RemoveOwned(context.Background(), d)
+	if !swapped {
+		t.Fatalf("removeCheckedHook never ran for %q", filepath.Base(d.Path()))
+	}
+	if !errors.Is(err, ErrNotOwned) {
+		t.Errorf("RemoveOwned after the swap = %v, want %v", err, ErrNotOwned)
+	}
+	if !removeTestExists(t, keep) {
+		t.Errorf("file %q in a dir the owner never made was removed through the swapped name", keep)
+	}
+}
