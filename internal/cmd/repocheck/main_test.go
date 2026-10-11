@@ -213,4 +213,31 @@ func TestRepocheckAll(t *testing.T) {
 			t.Fatalf("envelope status = ok with check size red; output %q", out.String())
 		}
 	})
+
+	// A check that read zero files measured nothing; green would be a fail-open (DR-13).
+	for _, name := range []string{"size", "source-rules"} {
+		t.Run(name+" is not green when it reads zero Go files", func(t *testing.T) {
+			empty := t.TempDir()
+			if err := os.WriteFile(filepath.Join(empty, "go.mod"),
+				[]byte("module example.com/empty\n\ngo 1.24\n"), 0o600); err != nil {
+				t.Fatalf("write go.mod: %v", err)
+			}
+			t.Chdir(empty)
+			var buf bytes.Buffer
+			code := core.RunCLI(context.Background(), commands(),
+				[]string{name, "--repo", ".", "--format", "json"}, &buf)
+			if code == 0 {
+				t.Fatalf("repocheck %s exit code = 0 on a module without Go files; output %q", name, buf.String())
+			}
+			var one allReport
+			if err := json.Unmarshal(buf.Bytes(), &one); err != nil {
+				t.Fatalf("repocheck %s --format json is not one result envelope: %v; output %q", name, err, buf.String())
+			}
+			for _, c := range one.Data.Checks {
+				if c.Result == "green" {
+					t.Fatalf("check %s result = green after reading zero Go files; output %q", c.Check, buf.String())
+				}
+			}
+		})
+	}
 }
