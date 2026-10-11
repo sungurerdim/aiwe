@@ -49,12 +49,20 @@ func Rules(repo string) ([]Finding, error) {
 	return found, nil
 }
 
-// missingTests returns a finding for each §3 test that is absent and not excused by §14.
+// missingTests returns a finding for each §3 test that is absent and not excused by §14. A §3 or
+// §14 section that is missing or names nothing is an error: that rule was not checked (DR-13).
 func missingTests(repo string, lines []string) ([]Finding, error) {
 	planned := plannedFiles(section(lines, "## 14.", "## "))
+	if len(planned) == 0 {
+		return nil, fmt.Errorf("rules: %s: no §14 Files cell lists a file; the phase rule is unchecked", specFile)
+	}
+	tests := namedTests(section(lines, "## 3.", "## "))
+	if len(tests) == 0 {
+		return nil, fmt.Errorf("rules: %s: the §3 table names no test; the test rule is unchecked", specFile)
+	}
 	seen := map[string]bool{}
 	var found []Finding
-	for _, test := range namedTests(section(lines, "## 3.", "## ")) {
+	for _, test := range tests {
 		if seen[test] {
 			continue
 		}
@@ -124,10 +132,15 @@ func plannedFiles(sec []string) map[string]bool {
 	return planned
 }
 
-// missingRepoFiles returns a finding for each file of the §12.1 list that is absent.
+// missingRepoFiles returns a finding for each file of the §12.1 list that is absent; a §12.1
+// section that is missing or names no file is an error (DR-13).
 func missingRepoFiles(repo string, lines []string) ([]Finding, error) {
+	names := repoFiles(section(lines, "### 12.1", "#"))
+	if len(names) == 0 {
+		return nil, fmt.Errorf("rules: %s: §12.1 names no repository file; the file rule is unchecked", specFile)
+	}
 	var found []Finding
-	for _, name := range repoFiles(section(lines, "### 12.1", "#")) {
+	for _, name := range names {
 		present, err := fileExists(repo, name)
 		if err != nil {
 			return nil, err

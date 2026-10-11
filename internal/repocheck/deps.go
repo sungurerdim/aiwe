@@ -30,6 +30,17 @@ func Deps(goList []byte) ([]Finding, error) {
 	for _, p := range pkgs {
 		byPath[p.ImportPath] = p
 	}
+	found, err := notAllowedFindings(pkgs, byPath)
+	if err != nil {
+		return nil, err
+	}
+	sortFindings(found)
+	return found, nil
+}
+
+// notAllowedFindings returns one module_not_allowed finding per module that a package of the main
+// module imports directly and DR-41 does not allow.
+func notAllowedFindings(pkgs []listedPackage, byPath map[string]listedPackage) ([]Finding, error) {
 	seen := map[string]bool{}
 	var found []Finding
 	for _, p := range pkgs {
@@ -47,7 +58,6 @@ func Deps(goList []byte) ([]Finding, error) {
 			}
 		}
 	}
-	sortFindings(found)
 	return found, nil
 }
 
@@ -146,7 +156,7 @@ func Doctor(env DoctorEnv) ([]Prerequisite, error) {
 	for _, tool := range tools {
 		p := Prerequisite{Name: tool, Present: goOK && env.ResolveTool(tool) == nil}
 		if !p.Present {
-			p.Install = "go get -tool " + tool
+			p.Install = "go mod download"
 		}
 		report = append(report, p)
 	}
@@ -174,15 +184,11 @@ func goPresent(env DoctorEnv, want []int) bool {
 	if err != nil {
 		return false
 	}
-	have, pre, ok := parseGoVersion(strings.TrimPrefix(v, "go"))
-	if !ok {
-		return false
-	}
-	c := slices.Compare(padVersion(have, len(want)), padVersion(want, len(have)))
-	return c > 0 || (c == 0 && !pre)
+	have, ok := goVersionKey(v)
+	return ok && slices.Compare(have, want) >= 0
 }
 
-// parseGoMod returns the go directive's version and the tool entries of a go.mod body.
+// parseGoMod returns the go directive's version key and the tool entries of a go.mod body.
 func parseGoMod(body string) ([]int, []string, error) {
 	var goLine string
 	var tools []string
@@ -203,39 +209,62 @@ func parseGoMod(body string) ([]int, []string, error) {
 			goLine = strings.TrimSpace(strings.TrimPrefix(line, "go "))
 		}
 	}
-	want, pre, ok := parseGoVersion(goLine)
-	if !ok || pre {
-		return nil, nil, fmt.Errorf("go directive %q is not a release version", goLine)
+	want, ok := goVersionKey(goLine)
+	if !ok {
+		return nil, nil, fmt.Errorf("go directive %q is not a Go version", goLine)
 	}
 	return want, tools, nil
 }
 
-// parseGoVersion reads a version such as 1.27.9 or 1.28rc1; pre reports a pre-release suffix,
-// which sorts below the release of the same numbers.
-func parseGoVersion(v string) (nums []int, pre bool, ok bool) {
-	if v == "" {
-		return nil, false, false
+// releaseRank orders a release after its betas (rank 1) and release candidates (rank 2).
+const releaseRank = 3
+
+// goVersionKey turns a Go version such as 1.27.9, go1.28rc1 or `go1.27.9 X:jsonv2` (an experiment
+// suffix after a space is ignored) into a key that slices.Compare orders: major, minor, patch,
+// release rank, pre-release number. So go1.28rc2 sorts below 1.28.0 and above 1.27.9.
+func goVersionKey(v string) ([]int, bool) {
+	fields := strings.Fields(v)
+	if len(fields) == 0 {
+		return nil, false
 	}
-	for _, part := range strings.Split(v, ".") {
-		end := strings.IndexFunc(part, func(r rune) bool { return r < '0' || r > '9' })
-		if end < 0 {
-			end = len(part)
-		}
-		n, err := strconv.Atoi(part[:end])
-		if pre || err != nil {
-			return nil, false, false // a part after a pre-release suffix, or no leading digits
-		}
-		nums = append(nums, n)
-		pre = end < len(part)
+	parts := strings.Split(strings.TrimPrefix(fields[0], "go"), ".")
+	if len(parts) > 3 {
+		return nil, false
 	}
-	return nums, pre, true
+	last := parts[len(parts)-1]
+	end := strings.IndexFunc(last, func(r rune) bool { return r < '0' || r > '9' })
+	if end < 0 {
+		end = len(last)
+	}
+	parts[len(parts)-1] = last[:end]
+	key := make([]int, 0, 5)
+	for _, part := range parts {
+		n, err := strconv.Atoi(part)
+		if err != nil || n < 0 {
+			return nil, false
+		}
+		key = append(key, n)
+	}
+	for len(key) < 3 {
+		key = append(key, 0)
+	}
+	rank, num, ok := preRelease(last[end:])
+	return append(key, rank, num), ok
 }
 
-// padVersion returns v extended with zeros to at least n parts, so 1.27 equals 1.27.0.
-func padVersion(v []int, n int) []int {
-	out := slices.Clone(v)
-	for len(out) < n {
-		out = append(out, 0)
+// preRelease reads the suffix after a version's last number: "" is a release, betaN and rcN are
+// pre-releases. Any other suffix is not a Go version.
+func preRelease(suffix string) (rank, num int, ok bool) {
+	if suffix == "" {
+		return releaseRank, 0, true
 	}
-	return out
+	for i, prefix := range []string{"beta", "rc"} {
+		digits, found := strings.CutPrefix(suffix, prefix)
+		if !found {
+			continue
+		}
+		n, err := strconv.Atoi(digits)
+		return i + 1, n, err == nil && n >= 0
+	}
+	return 0, 0, false
 }
