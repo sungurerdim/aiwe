@@ -103,6 +103,7 @@ func gitTestArm(t *testing.T, r gitTestRepo, args ...string) {
 // TestGitOptions guards DR-49 and SPEC §5.21: a run clone's .git/config, attributes or hooks must
 // not make a core.Git call run a program, and every call carries the fixed options.
 func TestGitOptions(t *testing.T) {
+	home := gitTestHome(t)
 	t.Run("fixed options win over the clone's config", func(t *testing.T) {
 		// Catches a call without one of the four -c options: the clone's own value would show.
 		r := gitTestNewRepo(t)
@@ -130,6 +131,9 @@ func TestGitOptions(t *testing.T) {
 		}
 		hooks := strings.TrimSpace(res.Stdout)
 		gitTestCheckHooksDir(t, r.dir, repoHooks, hooks)
+		if want := filepath.ToSlash(filepath.Join(home, "hooks")); hooks != want {
+			t.Errorf("core.hooksPath in a core.Git call = %q, want %q under the AIWE_HOME state root", hooks, want)
+		}
 	})
 
 	t.Run("diff.external is not run by diff, log or show", func(t *testing.T) {
@@ -243,6 +247,75 @@ func TestGitOptions(t *testing.T) {
 		_, _ = core.Git(t.Context(), r.dir, "ls-remote", remote)
 		if ran := gitTestRan(t, r.marker); ran != "" {
 			t.Fatalf("core.Git ls-remote ran the ext transport command: %q", ran)
+		}
+	})
+
+	t.Run("Git refuses a hooks directory that holds an entry", func(t *testing.T) {
+		// Catches a call that takes a non-empty engine hooks directory as core.hooksPath, where
+		// a planted file would run as a hook (fail-closed, DR-49).
+		stray := filepath.Join(gitTestHome(t), "hooks", "stray")
+		gitTestWrite(t, stray, gitTestHook("unused", "stray"))
+		r := gitTestNewRepo(t)
+		gitTestRaw(t, r.dir, "add", "README.md")
+		res, err := core.Git(t.Context(), r.dir, "commit", "-q", "-m", "docs: commit with a stray hook")
+		if err == nil {
+			t.Fatalf("core.Git commit with %s in the hooks directory = nil error, want a refusal (stdout %q)", stray, res.Stdout)
+		}
+		if got := strings.TrimSpace(gitTestRaw(t, r.dir, "rev-list", "--count", "HEAD")); got != "1" {
+			t.Errorf("commits after a refused core.Git commit = %s, want 1: git ran although the hooks directory was not empty", got)
+		}
+	})
+}
+
+// gitTestHome points the AIWE_HOME state root at a fresh temporary directory for the test, so
+// no core.Git call creates or reads the user's real state root.
+func gitTestHome(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("AIWE_HOME", home)
+	return home
+}
+
+// TestGitRefusesLeadingOption guards SPEC §5.21: the first argument of a core.Git call is the
+// subcommand. A leading option would skip --no-ext-diff or override a fixed -c option.
+func TestGitRefusesLeadingOption(t *testing.T) {
+	gitTestHome(t)
+
+	t.Run("Git refuses --no-pager before diff", func(t *testing.T) {
+		// Catches a leading option that moves diff out of args[0], so --no-ext-diff is dropped.
+		r := gitTestNewRepo(t)
+		gitTestRaw(t, r.dir, "config", "diff.external", "echo external >> '"+r.marker+"'")
+		gitTestArm(t, r, "diff")
+		_, err := core.Git(t.Context(), r.dir, "--no-pager", "diff")
+		if ran := gitTestRan(t, r.marker); ran != "" {
+			t.Errorf("core.Git --no-pager diff ran the clone's diff.external: %q", ran)
+		}
+		if err == nil {
+			t.Errorf("core.Git --no-pager diff = nil error, want a refusal of the leading option")
+		}
+	})
+
+	t.Run("Git refuses a caller -c that overrides core.hooksPath", func(t *testing.T) {
+		// Catches a caller -c after the fixed options: git takes the last value, so the clone's
+		// hooks would run.
+		r := gitTestNewRepo(t)
+		dir := filepath.Join(r.dir, ".githooks")
+		for _, hook := range []string{"pre-commit", "commit-msg", "post-commit"} {
+			gitTestWrite(t, filepath.Join(dir, hook), gitTestHook(r.marker, hook))
+		}
+		gitTestRaw(t, r.dir, "add", "README.md")
+		gitTestArm(t, r, "-c", "core.hooksPath=.githooks", "commit", "-q", "-m", "docs: armed hook check")
+		gitTestWrite(t, filepath.Join(r.dir, "README.md"), "# aiwe\n\nGüncel sürüm 5.0\n")
+		gitTestRaw(t, r.dir, "add", "README.md")
+		_, err := core.Git(t.Context(), r.dir, "-c", "core.hooksPath=.githooks", "commit", "-q", "-m", "docs: engine commit")
+		if ran := gitTestRan(t, r.marker); ran != "" {
+			t.Errorf("core.Git -c core.hooksPath=.githooks commit ran the clone's hooks: %q", ran)
+		}
+		if err == nil {
+			t.Errorf("core.Git -c core.hooksPath=.githooks commit = nil error, want a refusal of the leading option")
+		}
+		if got := strings.TrimSpace(gitTestRaw(t, r.dir, "rev-list", "--count", "HEAD")); got != "2" {
+			t.Errorf("commits after a refused core.Git commit = %s, want 2: the refused commit landed", got)
 		}
 	})
 }
