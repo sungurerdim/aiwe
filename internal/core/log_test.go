@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -221,6 +223,13 @@ type logTestPayload struct {
 	Step string `json:"step"`
 }
 
+// logTestGroupValuer is a slog.LogValuer that resolves to a group holding a forged detail.
+type logTestGroupValuer struct{}
+
+func (logTestGroupValuer) LogValue() slog.Value {
+	return slog.GroupValue(slog.String("detail", "forged"))
+}
+
 // logTestWalk calls f on every string, key or value, inside the decoded JSON value v.
 func logTestWalk(v any, f func(string)) {
 	switch x := v.(type) {
@@ -304,10 +313,62 @@ func logTestTopKeys(t *testing.T, line string) []string {
 func TestLogKeys(t *testing.T) {
 	const secret = "ghp_EXAMPLE0123456789abcdefEXAMPLE0123"
 	tests := []struct {
-		name  string
-		write func(l *slog.Logger)
-		want  []string
+		name   string
+		write  func(l *slog.Logger)
+		want   []string
+		values map[string]string
 	}{
+		{name: "allowed key from the record written twice",
+			write:  func(l *slog.Logger) { l.Info("unit_started", "unit", "98", "unit", "99", "detail", "clone ready") },
+			want:   []string{"ts", "level", "event", "unit", "detail"},
+			values: map[string]string{"unit": "98"}},
+		{name: "allowed key from With and the record written twice",
+			write: func(l *slog.Logger) {
+				l.With("runId", "r-20261011-0001").Info("unit_started", "runId", "r-forged", "detail", "clone ready")
+			},
+			want:   []string{"ts", "level", "event", "runId", "detail"},
+			values: map[string]string{"runId": "r-20261011-0001"}},
+		{name: "record field after WithGroup reaches the line",
+			write: func(l *slog.Logger) {
+				l.With("detail", "clone ready").WithGroup("g").Info("unit_started", "unit", "98", "runId", "r-forged")
+			},
+			want: []string{"ts", "level", "event", "detail"}},
+		{name: "With field after WithGroup reaches the line",
+			write: func(l *slog.Logger) {
+				l.With("detail", "clone ready").WithGroup("g").With("unit", "98").Info("unit_started")
+			},
+			want: []string{"ts", "level", "event", "detail"}},
+		{name: "allowed key inside a slog.Group reaches the line",
+			write: func(l *slog.Logger) {
+				l.Info("unit_started", slog.Group("g", "unit", "98", "runId", "r-forged"), "detail", "clone ready")
+			},
+			want: []string{"ts", "level", "event", "detail"}},
+		{name: "slog.Group named after an allowed key reaches the line",
+			write: func(l *slog.Logger) {
+				l.Info("unit_started", slog.Group("unit", "detail", "forged"), "detail", "clone ready")
+			},
+			want: []string{"ts", "level", "event", "detail"}},
+		{name: "slog.Group from With named after an allowed key reaches the line",
+			write: func(l *slog.Logger) {
+				l.With(slog.Group("runId", "detail", "forged")).Info("unit_started", "detail", "clone ready")
+			},
+			want: []string{"ts", "level", "event", "detail"}},
+		{name: "LogValuer resolving to a group under an allowed key reaches the line",
+			write: func(l *slog.Logger) {
+				l.Info("unit_started", "unit", logTestGroupValuer{}, "detail", "clone ready")
+			},
+			want: []string{"ts", "level", "event", "detail"}},
+		{name: "LogValuer from With resolving to a group under an allowed key reaches the line",
+			write: func(l *slog.Logger) {
+				l.With("runId", logTestGroupValuer{}).Info("unit_started", "detail", "clone ready")
+			},
+			want: []string{"ts", "level", "event", "detail"}},
+		{name: "With fields lost from the line",
+			write: func(l *slog.Logger) {
+				l.With("runId", "r-20261011-0001", "unit", "98").Info("unit_started", "detail", "clone ready")
+			},
+			want:   []string{"ts", "level", "event", "runId", "unit", "detail"},
+			values: map[string]string{"runId": "r-20261011-0001", "unit": "98"}},
 		{name: "foreign key leaks its value",
 			write: func(l *slog.Logger) { l.Info("unit_started", "unit", "98", "token", secret, "detail", "clone ready") },
 			want:  []string{"ts", "level", "event", "unit", "detail"}},
@@ -369,6 +430,31 @@ func TestLogKeys(t *testing.T) {
 				t.Errorf("event, level, detail = %v, %v, %v; want unit_started, INFO, clone ready",
 					obj["event"], obj["level"], obj["detail"])
 			}
+			for k, v := range tc.values {
+				if obj[k] != v {
+					t.Errorf("log line %q has %s = %v, want the first value %q", raw, k, obj[k], v)
+				}
+			}
 		})
+	}
+}
+
+// TestConfigStateDirectory guards the config reader against reading a directory whose name ends
+// in ".json" as a state file; reading it fails, so the whole config would refuse.
+func TestConfigStateDirectory(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "x.json"), 0o700); err != nil {
+		t.Fatalf("make directory x.json: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{"logLevel": "error"}`), 0o600); err != nil {
+		t.Fatalf("write state file settings.json: %v", err)
+	}
+	settings := []core.ConfigSetting{{Name: "logLevel", Env: strings.ToUpper(core.Product) + "_LOG_LEVEL", Default: "info"}}
+	got, err := core.ResolveConfig(settings, nil, func(string) string { return "" }, dir)
+	if err != nil {
+		t.Fatalf("ResolveConfig with a directory x.json in the state root: %v, want it skipped", err)
+	}
+	if len(got) != 1 || got[0].Value != "error" || got[0].Origin != core.ConfigOriginState {
+		t.Errorf("ResolveConfig = %+v, want logLevel = error from the state file", got)
 	}
 }

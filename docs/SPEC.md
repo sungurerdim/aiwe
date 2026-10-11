@@ -156,7 +156,7 @@ A test whose source is not yet in the tree passes only while a §14 Files cell l
 
 | # | Rule | Serves | Enforcement |
 |---|---|---|---|
-| DR-1 | The engine runs unattended: every wait has a time limit, every stop has a name, irreversible actions sit behind the engine's own key. | M2 | test `engine/lifecycle_test.go` (every exit path returns a named outcome) |
+| DR-1 | The engine runs unattended: every wait has a time limit, every stop has a name, irreversible actions sit behind the engine's own key. That key is the owner's terminal-only approval of the plan digest (§7.9); it is not a stored secret. | M2 | test `engine/lifecycle_test.go` (every exit path returns a named outcome) |
 | DR-2 | Work whose answer is determined by its input is code, never a model call. | M4 | judgement: auditor (a new model call site needs a stated reason) |
 | DR-3 | The engine adapts to project, agent, harness and provider by the adaptation ladder (§7.7) and never guesses. | S1, S3 | test `engine/synthesis_test.go` |
 | DR-4 | Ladder rungs: (1) mechanical derivation; (2) an agent-made artefact, produced by one role, verified by another, proved on the base commit, stored with provenance; (3) the owner, for product decisions only. | S3 | test `engine/synthesis_test.go`; ledger `kind = artefact` |
@@ -198,7 +198,7 @@ A test whose source is not yet in the tree passes only while a §14 Files cell l
 | DR-40 | The product needs nothing installed except git on Windows, macOS and Linux: no language runtime, tool or framework; it ships as one binary per OS and architecture (§6.2). | S1 | CI step `clean-os-smoke` (§12.2) |
 | DR-41 | Shipped code links only the Go standard library, `golang.org/x/*` and the official MCP Go SDK, plus the modules these require; any other module needs a stated reason and an owner decision. | S1, M3 | check `repo/deps` (modules of `go list -deps ./cmd/...` against the allow-list); gate step `vuln` |
 | DR-42 | Every element — workflow, job, step, gate step, release step, document section, code path — exists only if it is necessary; each CI and release step states its reason in one clause, and a step without one is removed. | S2, M5 | check `repo/ci-shape` (a step without a `# why:` comment is red; prints workflow, job and step counts); CI job `required` reports duration and step count per run (§12.2); judgement: auditor checklist item "is every new element necessary?" |
-| DR-43 | The engine reaches a provider only through its official interface — the provider's own CLI, logged in by the user, or an API key; it never reads, stores, proxies or rewrites subscription credentials or OAuth traffic, and never reuses a subscription login outside the provider's own CLI (§17); the README states this rule to the user (§12.1). | S1 | contract suite `adapters/providertest` (no read of a harness credential store; HTTP only to the source's base URL); judgement: security-reviewer on every adapter change (§9.1) |
+| DR-43 | aiwe holds no credential. It reaches a provider account only through the provider's own CLI login, made by the user (for example `gh auth login`, `opencode auth login`), or through an API key read from an environment variable. It never stores, caches, encrypts, prompts for or manages a credential, API key, token or secret. It may read an API key or another secret from an environment variable and pass it only to the child process that needs it (§6.5, §7.9); it never writes the value anywhere. A harness keeps its login only through its own flag or config-dir variable; aiwe never copies or links a login file. It never reads, proxies or rewrites subscription credentials or OAuth traffic, and never reuses a subscription login outside the provider's own CLI (§17). Masking and the payload scan (§11) stay; they hold nothing. `owner.key` (§5.15) is not a provider credential. The README states this rule to the user (§12.1). | S1 | contract suite `adapters/providertest` (no read of a harness credential store; HTTP only to the source's base URL); judgement: security-reviewer on every adapter change (§9.1) |
 | DR-44 | The engine never runs a general-purpose agent: every run carries one role card; the role is resolved mechanically from the unit's kind, type, labels and paths (§9.1); a unit whose role does not resolve does not start (`role_unresolved`). | S3, S7 | test `engine/role_test.go` (every resolution row, and an unresolvable unit) |
 | DR-45 | A behaviour unit (§8.4) has at least one Done item ending in `— test: <path>` that names the test and the failure it catches; a code unit without a source path carries a one-line `test-exempt` reason instead; the unit parser refuses a unit that breaks either half (`invalid`). | S5, M3 | test `engine/unit_test.go` (`TestUnitTestItem`: a behaviour unit without a test item, an exempt unit with a source path) |
 | DR-46 | aiwe is built with aiwe. Every standard aiwe applies to the projects it manages applies equally to its own development, with no exemptions. Until the self-hosting point, the lead session and its role-specific agents apply the standard by hand; no external agent runs outside aiwe. Once a capability merges, aiwe itself takes over that step. | S4, M3 | hand-over table and self-hosting point (§14); each hand-over unit has a Done item for it; after the self-hosting point a unit worked outside aiwe is a defect and is recorded as one: CI flags a unit commit on `main` without a `Run-Id` trailer (§12.2, Q17; test `repocheck/run_id_test.go`, unit 1.29); judgement: auditor |
@@ -322,7 +322,8 @@ terminal (`not_a_terminal`). Benefit and enforcement: DR-23.
 
 ### 5.8 Naming
 Package names short and lower case; files `snake_case.go`; exported identifiers `PascalCase`, others
-`camelCase`; outcomes `snake_case` strings from one table; commands `<module> <object>-<verb>`.
+`camelCase`; outcomes `snake_case` strings from one table; commands `<object> <verb>`, such as
+`aiwe unit check`; a command with one action has no verb, such as `aiwe version`.
 Enforced: gate step `format`; check `repo/source-rules` (file names).
 
 ### 5.9 Size limits
@@ -397,18 +398,21 @@ under the cache root (§6.5).
 ```go
 type OwnedDir struct{ path string }   // unexported field: only core.CreateOwned makes one
 type OwnedRoot int                    // TempRoot or CacheRoot; no other value exists
-func CreateOwned(ctx context.Context, root OwnedRoot, owner string) (OwnedDir, error) // ledger record, then dir + marker
-func RemoveOwned(ctx context.Context, d OwnedDir) error                              // checks root, marker, record; retries locks
+func (o *Owner) CreateOwned(ctx context.Context, root OwnedRoot, owner string) (OwnedDir, error) // ledger record, then dir + marker
+func (o *Owner) RemoveOwned(ctx context.Context, d OwnedDir) error                              // checks root, marker, record; retries locks
 ```
+`CreateOwned` and `RemoveOwned` are methods of `core.Owner`. `core.Owner` holds the roots and the
+owner key, injected as §5.4 describes.
 Removal refuses unless all four hold: the real path is under the temp root or the cache root, the
 ledger holds an `owned_dir` record for it, the marker file `.owner` matches that record, and no
 symlink leaves that root. The state root and every user directory stay outside (Q14). At start, a
 temp or cache root (env overrides included) that is, or contains, the user's home, the state root, a
 canonical repository or a file-system root, that is a symlink or junction, or that is not
 owner-only, is refused (`root_unsafe`), the same as the state root. The `owned_dir` record and
-the `.owner` marker carry an HMAC-SHA256 under a key in `<state>/owner.key`; the key never enters a
-run environment (DR-35), so a run cannot forge a marker from what it is given. Below `os-sandbox` a
-run can still read the state root itself (§6.7). Benefit: a user directory cannot reach removal, by
+the `.owner` marker carry an HMAC-SHA256 under a key in `<state>/owner.key`. This key is the
+engine's local state-ownership key, not a provider credential (DR-43). The key never enters a run
+environment (DR-35), so a run cannot forge a marker from what it is given. Below `os-sandbox` a run
+can still read the state root itself (§6.7). Benefit: a user directory cannot reach removal, by
 type and at run time. Enforced: DR-25.
 
 ### 5.16 Check key
@@ -576,7 +580,8 @@ Reason: protocol conformance is the SDK's job. Dependency policy: DR-41.
   global; no project needs a step (DR-8).
 - Terminal-only commands (§5.7) are absent from the MCP tool list.
 - `aiwe version` prints the version GoReleaser injected at build time (§12.3); a build without one
-  prints `unknown`.
+  prints `unknown`. The printed version has no `v` prefix: tag `v1.0.0` prints `1.0.0`, because
+  `.goreleaser.yaml` injects GoReleaser's `.Version` (§17).
 - Any command that targets a repository without a stored gate runs onboarding first (§7.1).
 - Self-description (DR-34):
 
@@ -638,11 +643,12 @@ Serves DR-35, DR-16.
   variable whose value may carry a password; names compare without case). A `_URL` variable is
   dropped when its value has a `:` after a `://` and an `@` after that `:`; the check is
   fail-closed and drops such a value even without a password. A value without `://`, such as an
-  scp-style git address, is not checked. The
-  adapter adds back only its own source's credential. It also drops the parent shell's identity
-  variables (listed in the adapter) and starts the harness with user-level rules, memory, hooks and
-  plugins off, through the harness's documented flag or an isolated config home that keeps the
-  login (U28). `HOME` points to the run's scratch directory. `GIT_CONFIG_NOSYSTEM=1` and an
+  scp-style git address, is not checked. The adapter adds back only its own source's API key, read
+  from its `credentialEnv` variable; it writes the key nowhere (DR-43). It also drops the parent
+  shell's identity variables (listed in the adapter) and starts the harness with user-level rules,
+  memory, hooks and plugins off, through the harness's documented flag or config-dir variable, which
+  keeps the harness's own login (U28). aiwe never copies or links a login file (DR-43). `HOME`
+  points to the run's scratch directory. `GIT_CONFIG_NOSYSTEM=1` and an
   environment-set `credential.helper` with an empty value clear git's credential helpers, and
   `GIT_TERMINAL_PROMPT=0` stops git from asking (§17). `GIT_CONFIG_GLOBAL` points to the null
   device, so no user-level git setting such as `core.askPass` applies (`core/env.go`). Push stays the engine's (DR-18). These are
@@ -753,7 +759,7 @@ parser (§8.4) validates every unit before work starts.
 | 11 mutation | M | Mutation run on changed lines where the profile names a tool; else `not_measured`. Evidence only (§11). |
 | 12 audit | J | `auditor` (DR-9) compares done criteria with the diff, using only engine-made evidence (§9.2). `security-reviewer` and `ux-reviewer` run beside it when their path tables match (§9.1). Each verdict comes from the judging run's own result, bound to its RunID (DR-9); integration needs every verdict GREEN; a `not_measured` dimension is recorded in the status comment and the ledger. Before a RED verdict is acted on, the engine resolves every `path:line` and identifier it cites on the tip; an unresolved citation makes the verdict `unverified_finding`, sent to a new auditor run, never to the writer. |
 | 13 fix loop | J | Returned or red → engineer fix round, up to the fix-round limit (§7.4), then `quarantined`. A repeated red signature calls the `debugger` (§7.4). |
-| 14 integrate | M | DR-19 at pull-request level (Q21). The engine pushes the run branch and opens one pull request per unit through the tracker port: title = `<type>(<scope>)` of the unit's first non-test commit, then `: `, then the unit issue's title with its first letter in lower case; body carries `Refs #<n>` for the unit issue (§8.4) and ends with the `Run-Id` trailer. A batch = several unit pull requests, gated together in a temporary integration clone of the working branch tip. A unit commit marked breaking waits for the owner (§12.3). Batch states: `queued → running → splitting → merged \| removed`. A red batch splits in halves until each red pull request is isolated; a removed one stays open with its reason in a comment and returns as a fix round. A conflict follows §7.4. |
+| 14 integrate | M | DR-19 at pull-request level (Q21). The engine pushes the run branch (authentication: §10.1) and opens one pull request per unit through the tracker port: title = `<type>(<scope>)` of the unit's first non-test commit, then `: `, then the unit issue's title with its first letter in lower case; body carries `Refs #<n>` for the unit issue (§8.4) and ends with the `Run-Id` trailer. A batch = several unit pull requests, gated together in a temporary integration clone of the working branch tip. A unit commit marked breaking waits for the owner (§12.3). Batch states: `queued → running → splitting → merged \| removed`. A red batch splits in halves until each red pull request is isolated; a removed one stays open with its reason in a comment and returns as a fix round. A conflict follows §7.4. |
 | 15 pull request CI | M | Wait for the CI run of each pull request head through the tracker port. Red → the pull request stays open with its reason; the unit returns as a fix round. No run observed within the wait limit → `ci_not_observed`: never green. |
 | 16 merge and main CI | M | Green CI and head = `AuditedTip` → the engine squash-merges the pull request through the tracker port, giving the head SHA, so a moved head is refused (`unaudited_commits`). The canonical repository's checked-out branch is never a push target. A merge refused because `main` moved rebuilds the batch on the new tip once; a second → `push_rejected`, batch requeued. The engine then waits for the CI run of the squash commit on `main`, which also feeds the release job (§12.3): red → the engine opens a revert pull request for the squash commit through the tracker port, never a direct push, because the `main` ruleset refuses a change without a pull request (§16, Q21); it squash-merges the revert pull request once that pull request's CI is green, then requeues the unit as a fix round; a red revert pull request CI → `revert_red` (§7.4); none within the wait limit → `ci_not_observed`, the issue stays open. |
 | 17 closeout | M | Only after `main` CI of the squash commit is green (step 16), close the unit issue `completed`; a red `main` CI or `ci_not_observed` leaves it open (DR-50). The same write that closes the issue marks `[x]` each `## Done` item whose evidence is green (Q22). Before unit 0.12 brings CI, the §14 row 0.12 applies. The status comment's final state is the evidence (gate summary, pull request and CI links, Run-Id). Delete the claim ref, run refs, the run branch and the integration clone. On each pass, close `completed` every open `runnable: owner` unit issue that a commit on `main` references once `main` CI of that commit is green; a red `main` CI leaves it open. Then close `completed` every goal issue whose task-list units are all closed (DR-50). Then close every milestone whose issues are all closed and whose phase gate (§14) is green; a gate that is not green leaves the milestone open (DR-50). |
@@ -1400,15 +1406,18 @@ type Tracker interface {
 }
 ```
 - The GitHub adapter calls the REST API, and GraphQL only where REST lacks the call, over HTTPS
-  with `net/http`. No tracker CLI is used.
-- Token resolution, first hit wins: `GH_TOKEN`, `GITHUB_TOKEN`, then `git credential fill` for the
-  remote host. The token is held in memory for the call, never stored, never logged, never placed in
-  a run environment (DR-18).
+  with `net/http` when the token comes from the environment.
+- Access, first hit wins: `GH_TOKEN`, then `GITHUB_TOKEN`, then the user's `gh` CLI login. With the
+  `gh` login, the adapter makes the same calls through `gh api` and never reads the login's token
+  (DR-43). A token from the environment is held in memory for the call, never stored, never
+  logged, never placed in a run environment (DR-18).
 - Least permissions (default; unit 1.25 proves them): a fine-grained token on the managed repository
   with Contents read and write, Issues read and write, Pull requests read and write, Actions read
   and Metadata read. A missing
-  permission ends the call with its `403` outcome. A token from `git credential fill` is used as it
-  is.
+  permission ends the call with its `403` outcome. A token from the environment or the `gh` login
+  is used as it is.
+- `git push` of a run branch authenticates through git's own configured credential helper, for
+  example the one `gh auth setup-git` sets. aiwe never reads that credential (DR-43).
 - Every write passes masking and the payload scan first (§11); a text that fails the scan is not
   sent.
 - Pull requests, a built-in GitHub element (DR-31): `pr-create` is REST
@@ -1523,7 +1532,7 @@ No issue form and no pull-request template: templates come from the tool (DR-34)
    a goal is split by aiwe's architect role or by your own session from aiwe's template, and every
    unit is validated mechanically before work starts (§7.2).
 3. **Supported providers**: the command `aiwe adapters list`, which prints the compiled adapter list
-   (§5.2); the README never copies that list. One sentence states DR-43.
+   (§5.2); the README never copies that list. One paragraph states DR-43.
 4. **Risk**: below `os-sandbox` an agent runs with your rights, as in other coding agent tools
    (§6.7).
 5. Install (§6.2), first run and MCP registration (§6.3).
@@ -1638,7 +1647,7 @@ Rules:
   Fixed, every other type → Changed). The repository has no `CHANGELOG.md`, and CI never commits to
   `main`.
 - Provenance: one GitHub artifact attestation; users verify with `gh attestation verify` (optional;
-  the product never needs gh) or with `checksums.txt`. Rejected: cosign — a second tool and a
+  verification never needs gh) or with `checksums.txt`. Rejected: cosign — a second tool and a
   second signature for the same claim. SBOM file: §15; the binary already carries its module list
   (`go version -m`, §17).
 - Code signing: Q7.
@@ -1882,7 +1891,7 @@ project of one §8.2 stack with GitHub Actions CI.
 | 1.4 | Each check runs once per key, and agents request it via `aiwe verify`. | `gates/cache.go`, `gates/key.go`, `engine/verify.go`, `engine/commands.go`, `cmd/aiwe/main.go` | `go test -run 'Cache|Key|Verify' ./internal/gates/ ./internal/engine/` |
 | 1.5 | Diff checks D1–D16 run with the stack profile's patterns. | `gates/checks.go`, `gates/test_shape.go`, `gates/diff.go`, `gates/audit.go`, `gates/payload.go` | `go test ./internal/gates/` |
 | 1.6 | The tracker port has a fake that passes its contract suite. | `tracker/tracker.go`, `tracker/trackertest/fake.go`, `tracker/trackertest/contract.go` | `go test ./internal/tracker/...` |
-| 1.7 | The GitHub adapter works over HTTPS and normalises old issues. | `tracker/github.go`, `tracker/http.go`, `tracker/credential.go`, `tracker/normalize.go` | `go test ./internal/tracker/...` |
+| 1.7 | The GitHub adapter works over HTTPS with an env token or through `gh api` with the `gh` login, and normalises old issues. | `tracker/github.go`, `tracker/http.go`, `tracker/credential.go`, `tracker/normalize.go` | `go test ./internal/tracker/...` |
 | 1.8 | Intake filters issue text, and status comments and owner briefs work. | `tracker/intake.go`, `engine/status.go`, `engine/brief.go` | `go test -run 'Intake|Status|Brief' ./internal/tracker/ ./internal/engine/` |
 | 1.9 | `aiwe unit check` accepts only bodies that follow the unit template. | `engine/unit.go`, `engine/goal.go`, `engine/unit_check.go`, `engine/commands.go` | `go test -run 'Unit|Goal' ./internal/engine/` |
 | 1.10 | The ledger keeps one append-only schema of measured or unknown values. | `ledger/record.go`, `ledger/store.go`, `ledger/rotate.go` | `go test ./internal/ledger/` |
@@ -2055,7 +2064,7 @@ No open question remains. Each decision keeps its id; other sections cite it.
 | Q15 | Release notes (owner, 2026-10-10): GoReleaser writes each release's notes from the commits, in Keep a Changelog layout, into the GitHub Release (§12.3). The repository keeps no `CHANGELOG.md`; CI never commits to `main`. Each pull request prints the computed version and the notes as a dry run (§12.2). |
 | Q16 | Visibility (owner, 2026-10-10): the repository starts private and becomes public at Gate 1. GitHub private vulnerability reporting is for public repositories (§17), so the reporting channel of `SECURITY.md` opens at Gate 1. |
 | Q17 | `Run-Id` scope (owner, 2026-10-10): the CI check applies only to a commit that closes or references a unit issue (an issue whose body has the unit preamble, §8.4). Dependabot and outside pull requests pass normal review and CI; the check lists their commits as `external` (DR-46, §12.2). A commit that references a `runnable: owner` unit (3.10) is listed as `owner`, never as a defect: an owner unit is never dispatched, so it has no run. |
-| Q18 | Gate 1 target (owner, 2026-10-10): the private sandbox repository `aiwe-sandbox` under the owner's account, created on 2026-10-10. aiwe reaches it with the owner's own git and GitHub credentials (§14). |
+| Q18 | Gate 1 target (owner, 2026-10-10): the private sandbox repository `aiwe-sandbox` under the owner's account, created on 2026-10-10. aiwe reaches it through `GH_TOKEN`, `GITHUB_TOKEN` or the owner's `gh` CLI login, and pushes through git's own credential helper (§10.1, DR-43). |
 | Q19 | Sandbox (owner, 2026-10-10): the MVP runs agents at sandbox level `env-scrub`; a stronger level comes after Gate 1 and is required before the first live operation (§6.7, §15). README and SECURITY state the open risk. |
 | Q20 | CI minutes (owner, 2026-10-10): Windows and macOS tests run only when `os-variant` is on (an OS-specific file, `go.mod` or `ci.yml` changed), at a phase gate (`workflow_dispatch` with `all-os`) and before a live release; every other push tests on Linux only (§12.2, U29). |
 | Q21 | Branch model (owner, 2026-10-10): trunk-based, no development branch. Each unit works on a short-lived run branch and merges through its own pull request: CI runs on the pull request, and the engine squash-merges it when CI is green and the head equals the audited tip; batch gate and bisect work on pull requests (DR-19, §7.3 steps 14–16). Before the self-hosting point the lead session does the same by hand (§14). |
@@ -2171,7 +2180,22 @@ Facts checked on 2026-10-10:
   report no failure, so a required job needs `needs` with `always()`. Source: docs.github.com,
   Troubleshooting required status checks; Using conditions to control job execution.
 - `actions/setup-go` v7: caching on by default (key from `go.mod`, or `cache-dependency-path`);
-  `go-version-file` reads the `toolchain` line. Source: github.com/actions/setup-go.
+  `go-version-file` reads the `toolchain` line; with no `toolchain` line it reads the `go` line, and
+  a `go` line with a patch version selects that exact version. Source: github.com/actions/setup-go,
+  `docs/advanced-usage.md`, checked 2026-10-11.
+- Go toolchain pin: `go.mod` has the line `go 1.27.2` and no `toolchain` line, so the `go` line is
+  the pin. GoReleaser v2.18.3 (a `tool` line in `go.mod`) declares `go 1.27.1` in its own `go.mod`,
+  so the pin cannot be lower than 1.27.1: a module's `go` line must be at least the `go` line of
+  each dependency. With `GOTOOLCHAIN=auto`, the default, `go` downloads and runs the pinned
+  toolchain when the local one is older. Source: `go.mod`; the GoReleaser v2.18.3 module `go.mod`,
+  local module cache; go.dev/doc/toolchain, checked 2026-10-11.
+- GoReleaser `.Version` is the tag with the `v` prefix stripped. Source: goreleaser.com, Templates
+  (`www/content/customization/general/templates.md`), checked 2026-10-11.
+- GoReleaser v2.18.3 names the binary and the archives after the project name. `.goreleaser.yaml`
+  sets no `project_name`, so GoReleaser takes the GitHub release repository name, which it reads
+  from the git remote. A clone whose remote names another repository builds another name. Source:
+  GoReleaser v2.18.3 source, `internal/pipe/release/scm.go`, `internal/pipe/project/project.go`,
+  `internal/pipe/build/build.go`, `internal/pipe/archive/archive.go`, local module cache.
 - golangci-lint v2.14.0 (stack survey). Linters present: `staticcheck`, `errcheck`, `unused`,
   `govet` ("roughly the same as 'go vet' and uses its passes"), `exhaustive`, `errorlint`,
   `contextcheck`, `containedctx`, `noctx`, `bodyclose`, `forbidigo`, `gosec`, `gomodguard_v2`;
@@ -2184,7 +2208,7 @@ Facts checked on 2026-10-10:
   pkg.go.dev, golang.org/x/tools/cmd/deadcode.
 - `go mod tidy -diff` changes nothing and exits non-zero when the diff is not empty; `go test`
   caches successful package results and reruns only on changed inputs. Source: `go help mod tidy`,
-  `go help test` (Go 1.25.7, local).
+  `go help test` (Go 1.27.2, local, 2026-10-11).
 - The `tool` directive in `go.mod` exists since Go 1.24 and runs through `go tool`. Source:
   go.dev/ref/mod.
 - `go version -m` prints a binary's embedded module versions. Source: pkg.go.dev/cmd/go.
@@ -2198,7 +2222,7 @@ Facts checked on 2026-10-10:
   open; on Windows `Command` quotes for `CommandLineToArgvW`, and `cmd.exe` batch files need
   `SysProcAttr.CmdLine`; since Go 1.19 lookup never resolves through the current directory
   (`ErrDot`). Source: pkg.go.dev, os/exec. `syscall.SysProcAttr` has `CmdLine` and
-  `CreationFlags` on Windows and `Setpgid` on Linux. Source: `go doc` (Go 1.25.7, local).
+  `CreationFlags` on Windows and `Setpgid` on Linux. Source: `go doc` (Go 1.27.2, local, 2026-10-11).
 - `golang.org/x/sys/windows` exports `CreateJobObject`, `AssignProcessToJobObject`,
   `TerminateJobObject`, `SetInformationJobObject`, `JOBOBJECT_EXTENDED_LIMIT_INFORMATION`. Source:
   pkg.go.dev (v0.49.0 page).
@@ -2248,7 +2272,7 @@ Facts checked on 2026-10-10:
 - MCP Registry entry: the server entry is `server.json`; an MCPB package uses `"registryType":
   "mcpb"`. Source: github.com/modelcontextprotocol/registry, `package-types.mdx`, checked 2026-10-10.
 - `go test -run <pattern>` that matches no test prints `ok <package> <time> [no tests to run]` and
-  exits 0. Source: Go 1.25.7, local run on the standard library package `strings`.
+  exits 0. Source: Go 1.27.2, local run (2026-10-11) on the standard library package `strings`.
 - git: an empty `credential.helper` resets the helper list; `GIT_CONFIG_NOSYSTEM` skips the system
   config; `GIT_CONFIG_COUNT` with key and value pairs sets config from the environment;
   `GIT_TERMINAL_PROMPT=0` stops terminal prompts; `core.hooksPath` moves the hook directory;
@@ -2260,8 +2284,9 @@ Facts checked on 2026-10-10:
   `PUT /repos/{owner}/{repo}/pulls/{pull_number}/merge` with `merge_method` `merge`, `squash` or
   `rebase`, `commit_title`, `commit_message`, and `sha`, the SHA the head must match to allow the
   merge. Source: docs.github.com, REST pulls, checked 2026-10-10.
-- Lead machine (Windows 11 x64, measured 2026-10-10): Go 1.25.7 with `CGO_ENABLED=0`; gcc,
-  GoReleaser, golangci-lint and svu are not on `PATH`.
+- Lead machine (Windows 11 x64, measured 2026-10-11): Go 1.25.7 installed; inside the module
+  `GOTOOLCHAIN=auto` runs Go 1.27.2; `CGO_ENABLED=0`; gcc, GoReleaser, golangci-lint and svu are
+  not on `PATH`.
 
 Unknown. Each open item names the unit whose Done item measures it before the engine relies on it,
 or why no measurement is needed. The measured value is that unit's evidence (§8.4) and then moves to
@@ -2322,8 +2347,9 @@ the facts above.
   without adding a dependency. Measured by unit 3.8.
 - U27 Whether argv survives as separate arguments through an access method such as a remote shell
   client. Deferred with Phase 4: measured by unit 4.4 before the first live operation.
-- U28 Per harness and OS, which config isolation keeps the user's login (one harness on macOS needs
-  the login keychain; Linux and Windows not measured). Measured by unit 1.12.
+- U28 Per harness and OS, which harness flag or config-dir variable keeps the user's login without
+  aiwe copying or linking a login file (DR-43). One harness on macOS needs the login keychain;
+  Linux and Windows are not measured. Measured by unit 1.12.
 - U29 GitHub Actions minutes for private repositories on the owner's plan: the aiwe repository
   runs CI while it is private (Q16), and `aiwe-sandbox` runs its fixture CI (Q18). Measured by unit
   0.12: the `required` job prints the month's minutes per OS against the plan (§17, Q20).

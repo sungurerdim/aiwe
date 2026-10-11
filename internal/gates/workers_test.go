@@ -123,7 +123,7 @@ func TestRunnerWorkers(t *testing.T) {
 			t.Setenv(workersArgvEnv, argvFile)
 			declared := []string{goBin, "test", "-p", "1", "./..."}
 			def := Definition{FormatVersion: 1, Steps: []GateStep{{ID: "test", Command: slices.Clone(declared), Required: true}}}
-			report, err := (&Runner{Capacity: tc.capacity}).Run(context.Background(), def, t.TempDir(), nil)
+			report, err := (&Runner{Capacity: tc.capacity, Owner: rootsTestOwner(t)}).Run(context.Background(), def, t.TempDir(), nil)
 			if err != nil {
 				t.Fatalf("Run: %v", err)
 			}
@@ -155,7 +155,7 @@ func TestRunnerWorkersRequired(t *testing.T) {
 	argvFile := filepath.Join(t.TempDir(), "argv.txt")
 	t.Setenv(workersArgvEnv, argvFile)
 	def := Definition{FormatVersion: 1, Steps: []GateStep{{ID: "test", Command: []string{goBin, "test", "./..."}, Required: true}}}
-	report, err := (&Runner{}).Run(context.Background(), def, t.TempDir(), nil)
+	report, err := (&Runner{Owner: rootsTestOwner(t)}).Run(context.Background(), def, t.TempDir(), nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}

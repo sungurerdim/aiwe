@@ -1,2 +1,5 @@
 # GoReleaser snapshot and release output
 /dist/
+# custom-gcl built by go tool golangci-lint custom (.custom-gcl.yml)
+/custom-gcl
+/custom-gcl.exe

@@ -92,7 +92,7 @@ func rootsTestOwner(t *testing.T) *core.Owner {
 }
 
 // rootsTestSetup points the parent's roots and temp directory at test directories, so the parent's
-// own roots are known and every fallback directory lands under the test's temp directory.
+// own roots are known and a directory made outside an owner would land in the test's temp directory.
 func rootsTestSetup(t *testing.T) map[string]string {
 	t.Helper()
 	parent := map[string]string{}
@@ -110,67 +110,79 @@ func rootsTestSetup(t *testing.T) map[string]string {
 
 // TestRoots catches a check that leaves an entry in its redirected state, cache or temp root and
 // stays green (SPEC §7.8), a check that runs in the parent's roots, two checks that share roots,
-// and fresh roots left on disk after a clean check. It runs with an owner, whose roots are owned
-// directories, and without one.
+// and fresh roots left on disk after a clean or a red check. Each check's roots are owned
+// directories of the runner's owner.
 func TestRoots(t *testing.T) {
-	for _, tc := range []struct {
-		name  string
-		owner bool
-	}{{"owner", true}, {"no owner", false}} {
-		t.Run(tc.name, func(t *testing.T) {
-			parent := rootsTestSetup(t)
-			r := &Runner{}
-			if tc.owner {
-				r.Owner = rootsTestOwner(t)
+	t.Run("owner", func(t *testing.T) {
+		parent := rootsTestSetup(t)
+		r := &Runner{Owner: rootsTestOwner(t)}
+		dir := t.TempDir()
+		clean1, rec1 := rootsTestStep(dir, "clean1", "")
+		clean2, rec2 := rootsTestStep(dir, "clean2", "")
+		report, err := r.Run(context.Background(), Definition{FormatVersion: 1, Steps: []GateStep{clean1, clean2}}, dir, nil)
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		if report.Result != ResultGreen {
+			t.Fatalf("catches a clean check turned red by its roots: %+v", report)
+		}
+		env1, env2 := rootsTestEnv(t, rec1), rootsTestEnv(t, rec2)
+		var seen []string
+		for _, v := range rootsTestVars() {
+			for _, got := range []string{env1[v], env2[v]} {
+				if got == "" || got == parent[v] || slices.Contains(seen, got) {
+					t.Errorf("catches a check whose %s is not one fresh root of its own: %q (parent %q, seen %v)", v, got, parent[v], seen)
+				}
+				seen = append(seen, got)
+				if _, err := os.Stat(got); !errors.Is(err, fs.ErrNotExist) {
+					t.Errorf("catches a clean check's fresh root %s left on disk: stat %q: %v", v, got, err)
+				}
+				if _, err := os.Stat(filepath.Dir(got)); got != "" && !errors.Is(err, fs.ErrNotExist) {
+					t.Errorf("catches a clean check's fresh roots directory left on disk: stat %q: %v", filepath.Dir(got), err)
+				}
 			}
-			dir := t.TempDir()
-			clean1, rec1 := rootsTestStep(dir, "clean1", "")
-			clean2, rec2 := rootsTestStep(dir, "clean2", "")
-			report, err := r.Run(context.Background(), Definition{FormatVersion: 1, Steps: []GateStep{clean1, clean2}}, dir, nil)
+		}
+
+		for _, v := range rootsTestVars() {
+			leave, rec := rootsTestStep(dir, "leave-"+strings.ToLower(v), v)
+			report, err := r.Run(context.Background(), Definition{FormatVersion: 1, Steps: []GateStep{leave}}, dir, nil)
 			if err != nil {
 				t.Fatalf("Run: %v", err)
 			}
-			if report.Result != ResultGreen {
-				t.Fatalf("catches a clean check turned red by its roots: %+v", report)
+			step := report.Steps[0]
+			if step.Result != ResultRed || !strings.Contains(step.Detail, "left.txt") {
+				t.Errorf("catches a check that leaves an entry in its %s root and stays green: %+v", v, step)
 			}
-			env1, env2 := rootsTestEnv(t, rec1), rootsTestEnv(t, rec2)
-			var seen []string
-			for _, v := range rootsTestVars() {
-				for _, got := range []string{env1[v], env2[v]} {
-					if got == "" || got == parent[v] || slices.Contains(seen, got) {
-						t.Errorf("catches a check whose %s is not one fresh root of its own: %q (parent %q, seen %v)", v, got, parent[v], seen)
-					}
-					seen = append(seen, got)
-					if _, err := os.Stat(got); !errors.Is(err, fs.ErrNotExist) {
-						t.Errorf("catches a clean check's fresh root %s left on disk: stat %q: %v", v, got, err)
-					}
-					if _, err := os.Stat(filepath.Dir(got)); got != "" && !errors.Is(err, fs.ErrNotExist) {
-						t.Errorf("catches a clean check's fresh roots directory left on disk: stat %q: %v", filepath.Dir(got), err)
-					}
-				}
+			if _, err := os.Stat(filepath.Join(parent[v], "left.txt")); !errors.Is(err, fs.ErrNotExist) {
+				t.Errorf("catches a check that writes into the parent's %s root: %v", v, err)
 			}
+			got := rootsTestEnv(t, rec)[v]
+			if _, err := os.Stat(got); !errors.Is(err, fs.ErrNotExist) {
+				t.Errorf("catches owned fresh roots left on disk after a red check: stat %q: %v", got, err)
+			}
+		}
+	})
 
-			for _, v := range rootsTestVars() {
-				leave, rec := rootsTestStep(dir, "leave-"+strings.ToLower(v), v)
-				report, err := r.Run(context.Background(), Definition{FormatVersion: 1, Steps: []GateStep{leave}}, dir, nil)
-				if err != nil {
-					t.Fatalf("Run: %v", err)
-				}
-				step := report.Steps[0]
-				if step.Result != ResultRed || !strings.Contains(step.Detail, "left.txt") {
-					t.Errorf("catches a check that leaves an entry in its %s root and stays green: %+v", v, step)
-				}
-				if _, err := os.Stat(filepath.Join(parent[v], "left.txt")); !errors.Is(err, fs.ErrNotExist) {
-					t.Errorf("catches a check that writes into the parent's %s root: %v", v, err)
-				}
-				if got := rootsTestEnv(t, rec)[v]; tc.owner {
-					if _, err := os.Stat(got); !errors.Is(err, fs.ErrNotExist) {
-						t.Errorf("catches owned fresh roots left on disk after a red check: stat %q: %v", got, err)
-					}
-				}
-			}
-		})
-	}
+	t.Run("no owner refuses", func(t *testing.T) {
+		rootsTestSetup(t)
+		dir := t.TempDir()
+		step, rec := rootsTestStep(dir, "unowned", "")
+		report, err := (&Runner{}).Run(context.Background(), Definition{FormatVersion: 1, Steps: []GateStep{step}}, dir, nil)
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		if report.Result == ResultGreen || len(report.Steps) != 1 || report.Steps[0].Result != ResultNotMeasured ||
+			!strings.Contains(report.Steps[0].Detail, "owner") {
+			t.Errorf("catches a runner with no owner whose check is not refused as not_measured naming the owner: %+v", report)
+		}
+		if _, err := os.Stat(rec); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("catches a check run in roots no owner made: stat %q: %v", rec, err)
+		}
+		entries, err := os.ReadDir(os.TempDir())
+		if err != nil || len(entries) != 0 {
+			t.Errorf("catches fresh roots made outside an owner in the OS temp directory: %v %v", entries, err)
+		}
+	})
 }
 
 // TestRootsEnv catches a check process that inherits a secret-shaped variable (DR-35, SPEC §6.5):
@@ -190,7 +202,7 @@ func TestRootsEnv(t *testing.T) {
 	}
 	dir := t.TempDir()
 	step, rec := rootsTestStep(dir, "env", "")
-	report, err := (&Runner{}).Run(context.Background(), Definition{FormatVersion: 1, Steps: []GateStep{step}}, dir, nil)
+	report, err := (&Runner{Owner: rootsTestOwner(t)}).Run(context.Background(), Definition{FormatVersion: 1, Steps: []GateStep{step}}, dir, nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}

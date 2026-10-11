@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -170,7 +171,7 @@ func TestConfigShowCommand(t *testing.T) {
 		t.Setenv(envName(suffix), want[i].Value)
 	}
 	var out bytes.Buffer
-	code := core.RunCLI(context.Background(), core.ConfigCommands(), []string{"config", "show", "--format", "json"}, &out)
+	code := core.RunCLI(context.Background(), core.ConfigCommands(), []string{"config", "show", "--format", "json"}, &out, io.Discard)
 	if code != 0 {
 		t.Fatalf("exit %d, want 0:\n%s", code, out.String())
 	}

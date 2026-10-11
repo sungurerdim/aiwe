@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"strings"
 	"testing"
 
@@ -29,7 +32,7 @@ func cliRegistry() []core.Command {
 func TestHelp(t *testing.T) {
 	cmds := cliRegistry()
 	var out bytes.Buffer
-	code := core.RunCLI(context.Background(), cmds, []string{"--help"}, &out)
+	code := core.RunCLI(context.Background(), cmds, []string{"--help"}, &out, io.Discard)
 	if code != 0 {
 		t.Errorf("aiwe --help exits %d, want 0; output:\n%s", code, out.String())
 	}
@@ -95,7 +98,7 @@ func TestParseFormat(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			var out bytes.Buffer
-			code := core.RunCLI(context.Background(), cliRegistry(), tc.args, &out)
+			code := core.RunCLI(context.Background(), cliRegistry(), tc.args, &out, io.Discard)
 			if code != tc.exitCode {
 				t.Errorf("aiwe %s exits %d, want %d; output: %q", strings.Join(tc.args, " "), code, tc.exitCode, out.String())
 			}
@@ -116,5 +119,43 @@ func TestParseFormat(t *testing.T) {
 				t.Errorf("aiwe %s printed %q, want a result envelope with status %q", strings.Join(tc.args, " "), out.String(), tc.status)
 			}
 		})
+	}
+}
+
+// TestRunCLIStream catches a command that gets no stream writer, and streamed output that reaches
+// stdout, where it breaks the --format json envelope, instead of the stream writer RunCLI is given
+// (stderr in the binary, SPEC §5).
+func TestRunCLIStream(t *testing.T) {
+	const line = "cli-stream-test-line"
+	cmds := []core.Command{{Module: "gates", Object: "gates", Verb: "gate", Params: []string{"format"},
+		Purpose: "stream one line, then report ok",
+		Run: func(_ context.Context, in core.Input) (core.Result[any], error) {
+			if in.Stream == nil {
+				return core.Result[any]{}, errors.New("the command got no stream writer")
+			}
+			if _, err := fmt.Fprintln(in.Stream, line); err != nil {
+				return core.Result[any]{}, err
+			}
+			return core.Result[any]{Status: core.StatusOK, Outcome: core.OutcomeOK, Detail: "streamed"}, nil
+		}}}
+	var out, stream bytes.Buffer
+	code := core.RunCLI(context.Background(), cmds, []string{"gates", "gate", "--format", "json"}, &out, &stream)
+	raw := out.String()
+	if code != 0 {
+		t.Fatalf("exit %d, want 0\n%s", code, raw)
+	}
+	dec := json.NewDecoder(strings.NewReader(raw))
+	var env map[string]any
+	if err := dec.Decode(&env); err != nil {
+		t.Fatalf("stdout is not a JSON envelope: %v\n%s", err, raw)
+	}
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		t.Errorf("stdout holds more than the one JSON envelope: %q", raw)
+	}
+	if strings.Contains(raw, line) {
+		t.Errorf("streamed output reached stdout, mixed into the envelope: %q", raw)
+	}
+	if got := stream.String(); !strings.Contains(got, line) {
+		t.Errorf("streamed output did not reach the stream writer: %q", got)
 	}
 }
