@@ -32,6 +32,7 @@ const (
 const (
 	maxOwnerName   = 64
 	dirSuffixBytes = 8
+	maxOwnedName   = maxOwnerName + 1 + 2*dirSuffixBytes
 	removeAttempts = 5
 	removeWait     = 200 * time.Millisecond
 )
@@ -295,9 +296,14 @@ func (o *Owner) checkOwned(p string, recs []ownedRecord) (string, string, error)
 }
 
 // removeTree removes name under rootPath through an os.Root, which never leaves rootPath and never
-// follows a link. A failed attempt, such as a file another process holds open, is retried 5 times,
-// 200 ms apart, then fails with ErrResidueLocked (SPEC §6.4); the next sweep retries.
+// follows a link. A name that is not a plain name, or that is not a directory, such as one swapped
+// for a link, fails with ErrNotOwned at once. A failed attempt, such as a file another process holds
+// open, is retried 5 times, 200 ms apart, then fails with ErrResidueLocked (SPEC §6.4); the next
+// sweep retries.
 func removeTree(ctx context.Context, rootPath, name string) error {
+	if !plainName(name, maxOwnedName) {
+		return fmt.Errorf("%w: remove %q: not an owned directory name", ErrNotOwned, name)
+	}
 	rt, err := os.OpenRoot(rootPath)
 	if err != nil {
 		return fmt.Errorf("remove %q: %w", name, err)
@@ -305,8 +311,8 @@ func removeTree(ctx context.Context, rootPath, name string) error {
 	defer rt.Close()
 	for attempt := 1; ; attempt++ {
 		err = removeOnce(rt, name)
-		if err == nil {
-			return nil
+		if err == nil || errors.Is(err, ErrNotOwned) {
+			return err
 		}
 		if attempt == removeAttempts {
 			break
@@ -323,8 +329,19 @@ func removeTree(ctx context.Context, rootPath, name string) error {
 }
 
 // removeOnce removes the entries of name, then its marker, then name itself, so a removal that
-// stops part way leaves the marker and the next removal still finds the directory owned.
+// stops part way leaves the marker and the next removal still finds the directory owned. A name that
+// is not a directory, such as a link, fails with ErrNotOwned.
 func removeOnce(rt *os.Root, name string) error {
+	fi, err := rt.Lstat(name)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if fi.Mode().Type() != fs.ModeDir {
+		return fmt.Errorf("%w: %q is not a directory (a link is never followed)", ErrNotOwned, name)
+	}
 	d, err := rt.Open(name)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil

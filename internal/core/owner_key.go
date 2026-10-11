@@ -74,8 +74,12 @@ func orNone(s string) string {
 	return s
 }
 
-// loadOwnerKey reads <state>/owner.key, or makes it with a fresh random key when it is missing.
+// loadOwnerKey reads <state>/owner.key, or makes it with a fresh random key when it is missing. A
+// state root or key that another principal can read or write fails with ErrRootUnsafe.
 func loadOwnerKey(state string) ([]byte, error) {
+	if err := checkOwnerOnly(state); err != nil {
+		return nil, err
+	}
 	p := filepath.Join(state, ownerKeyFile)
 	b, err := os.ReadFile(p)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -86,6 +90,9 @@ func loadOwnerKey(state string) ([]byte, error) {
 	}
 	if err != nil {
 		return nil, fmt.Errorf("owner key: %w", err)
+	}
+	if err := checkOwnerOnly(p); err != nil {
+		return nil, err
 	}
 	k, err := hex.DecodeString(strings.TrimSpace(string(b)))
 	if err != nil || len(k) != ownerKeySize {
@@ -247,11 +254,13 @@ func (o *Owner) fileRecords(p string) ([]ownedRecord, error) {
 	return out, nil
 }
 
-// parseRecord returns line as an owned_dir record when it is one and its HMAC is valid for its root.
+// parseRecord returns line as an owned_dir record when it is one, its Path is a plain name, and its
+// HMAC is valid for its root. A Path that is not a plain name could leave its root, so it is no record.
 func (o *Owner) parseRecord(line []byte) (ownedRecord, bool) {
 	var r ownedRecord
 	if !bytes.Contains(line, []byte(kindOwnedDir)) ||
-		json.Unmarshal(line, &r) != nil || r.Kind != kindOwnedDir || r.FormatVersion != ownedFormatVersion {
+		json.Unmarshal(line, &r) != nil || r.Kind != kindOwnedDir || r.FormatVersion != ownedFormatVersion ||
+		!plainName(r.Path, maxOwnedName) {
 		return ownedRecord{}, false
 	}
 	var rootPath string
@@ -307,7 +316,7 @@ func checkOwnedDir(p string) (string, string, error) {
 		return "", "", fmt.Errorf("%w: %q is not a clean absolute path", ErrNotOwned, p)
 	}
 	parent, name := filepath.Dir(p), filepath.Base(p)
-	if !plainName(name, maxOwnerName+1+2*dirSuffixBytes) {
+	if !plainName(name, maxOwnedName) {
 		return "", "", fmt.Errorf("%w: %q is not an owned directory name", ErrNotOwned, p)
 	}
 	fi, err := os.Lstat(p)

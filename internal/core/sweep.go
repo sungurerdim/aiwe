@@ -48,7 +48,7 @@ func (o *Owner) Sweep(ctx context.Context) (SweepReport, error) {
 				continue
 			}
 			rep.Removed++
-		case removeEmptyDir(filepath.Join(o.temp, d.name)):
+		case removeEmptyDir(o.temp, d.name):
 			rep.Removed++
 		default:
 			rep.Refused++
@@ -57,14 +57,20 @@ func (o *Owner) Sweep(ctx context.Context) (SweepReport, error) {
 	return rep, errors.Join(errs...)
 }
 
-// removeEmptyDir removes p when it is a directory, not a link, with no entries; it reports whether
-// p was removed. os.Remove never removes a directory that holds an entry.
-func removeEmptyDir(p string) bool {
-	fi, err := os.Lstat(p)
+// removeEmptyDir removes name under rootPath when it is a directory, not a link, with no entries; it
+// reports whether name was removed. It works through an os.Root, which never leaves rootPath, and
+// Root.Remove never removes a directory that holds an entry.
+func removeEmptyDir(rootPath, name string) bool {
+	rt, err := os.OpenRoot(rootPath)
+	if err != nil {
+		return false
+	}
+	defer rt.Close()
+	fi, err := rt.Lstat(name)
 	if err != nil || fi.Mode().Type() != fs.ModeDir {
 		return false
 	}
-	return os.Remove(p) == nil
+	return rt.Remove(name) == nil
 }
 
 // ownedTemps returns each existing directory under the temp root that a valid owned_dir record
