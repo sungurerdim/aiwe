@@ -24,10 +24,22 @@ const (
 	rulePackageVar       = "package_var"
 	ruleParseError       = "parse_error"
 	ruleInvalidUTF8      = "invalid_utf8"
+	ruleIOImport         = "io_import"
+	ruleFileName         = "file_name"
+	ruleArchSpecific     = "arch_specific"
+	ruleConfigInCode     = "config_in_code"
 )
 
-// removeFile is the one file that may call os.RemoveAll (DR-25).
-const removeFile = "internal/core/remove.go"
+const (
+	// removeFile is the one file that may call os.RemoveAll (DR-25).
+	removeFile = "internal/core/remove.go"
+	// configFile holds the one table of configuration defaults (SPEC §5.12).
+	configFile = "internal/core/config.go"
+	// sourceRulesPath is this file, which may import os (SPEC §5.6).
+	sourceRulesPath = "internal/repocheck/source_rules.go"
+	// configDefaultIndex is the position of Default in an unkeyed core.ConfigSetting literal.
+	configDefaultIndex = 2
+)
 
 // Compiled patterns; the only package-level variables besides sentinel errors (SPEC §5.4).
 var (
@@ -35,6 +47,8 @@ var (
 	machinePathPattern = regexp.MustCompile(`(?:^|[^A-Za-z0-9])[A-Za-z]:[\\/]|(?:^|[^A-Za-z0-9._-])/(?:(?:home|Users)/[^/\s]|root(?:/|$))`)
 	// versionPattern matches a literal that is a whole semantic version, with or without a v.
 	versionPattern = regexp.MustCompile(`^v?[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$`)
+	// fileNamePattern matches a snake_case Go file name (SPEC §5.8).
+	fileNamePattern = regexp.MustCompile(`^[a-z0-9]+(?:_[a-z0-9]+)*\.go$`)
 )
 
 // SourceFile is one Go source file to check; Path is repository-relative and slash-separated.
@@ -82,7 +96,7 @@ func checkSource(cfg SourceRulesConfig, f SourceFile) []SourceFinding {
 		return []SourceFinding{{Rule: ruleInvalidUTF8, Path: f.Path}}
 	}
 	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, f.Path, text, parser.SkipObjectResolution)
+	file, err := parser.ParseFile(fset, f.Path, text, parser.SkipObjectResolution|parser.ParseComments)
 	if err != nil {
 		return []SourceFinding{{Rule: ruleParseError, Path: f.Path, Line: errorLine(err)}}
 	}
@@ -90,6 +104,10 @@ func checkSource(cfg SourceRulesConfig, f SourceFile) []SourceFinding {
 	c.checkLiterals(file)
 	c.checkRemovals(file)
 	c.checkPackageVars(file)
+	c.checkIOImports(file)
+	c.checkFileName()
+	c.checkBuildLines(file)
+	c.checkConfigLiterals(file)
 	return c.found
 }
 

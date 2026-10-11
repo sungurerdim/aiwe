@@ -1,6 +1,7 @@
 package repocheck_test
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -59,8 +60,9 @@ func TestSourceRules(t *testing.T) {
 				"	if err := rm(name); err != nil { return err }",
 				"	return (*os.Root).RemoveAll(root, name)",
 				"}"),
-			// Root.Remove removes one entry, not a tree, so it is allowed outside the owner.
-			sourceRulesFile("internal/engine/sweep.go",
+			// Root.Remove removes one entry, not a tree, so it is allowed outside the owner; the file is
+			// an *_io.go file because it imports os (SPEC §5.6).
+			sourceRulesFile("internal/engine/sweep_io.go",
 				"package engine",
 				`import "os"`,
 				"func sweep(root *os.Root, name string) error { return root.Remove(name) }"),
@@ -96,25 +98,26 @@ func TestSourceRules(t *testing.T) {
 		rule string
 		line int
 	}{
+		// Each machine path is split so this file passes machine_path itself (DR-25).
 		{"Windows home path with a Turkish user name",
 			sourceRulesFile("internal/engine/cache.go", "package engine",
-				`const cacheDir = "C:\\Users\\Ayşe\\AppData\\Local\\cache"`),
+				`const cacheDir = "C`+`:\\Users\\Ayşe\\AppData\\Local\\cache"`),
 			"machine_path", 2},
 		{"Linux home path",
 			sourceRulesFile("internal/engine/cache.go", "package engine",
-				`const src = "/home/kerem/src"`),
+				`const src = "/ho`+`me/kerem/src"`),
 			"machine_path", 2},
 		{"Linux root home path",
 			sourceRulesFile("internal/engine/cache.go", "package engine",
-				`const src = "/root/src"`),
+				`const src = "/ro`+`ot/src"`),
 			"machine_path", 2},
 		{"macOS home path in a raw string",
 			sourceRulesFile("internal/engine/cache.go", "package engine",
-				"const caches = `/Users/mei/Library/Caches`"),
+				"const caches = `/Us"+"ers/mei/Library/Caches`"),
 			"machine_path", 2},
 		{"drive-letter path with forward slashes",
 			sourceRulesFile("internal/engine/cache.go", "package engine",
-				`const repo = "D:/GitHub/project"`),
+				`const repo = "D`+`:/GitHub/project"`),
 			"machine_path", 2},
 		{"product name in a message",
 			sourceRulesFile("internal/engine/run.go", "package engine",
@@ -309,6 +312,73 @@ func TestSourceRules(t *testing.T) {
 			repocheck.SourceFile{Path: "internal/engine/latin.go",
 				Body: []byte("package engine\nconst s = \"\xdd\xfd\"\n")},
 			"invalid_utf8", 0},
+		{"os/exec import in a file that is not *_io.go",
+			sourceRulesFile("internal/engine/route.go", "package engine", `import "os/exec"`,
+				`func run() error { return exec.Command("git", "status").Run() }`),
+			"io_import", 2},
+		{"os import in a core file outside the §5.6 exceptions",
+			sourceRulesFile("internal/core/output.go", "package core", `import "os"`,
+				"func out() *os.File { return os.Stdout }"),
+			"io_import", 2},
+		{"os import in an OS variant of a core file outside the §5.6 exceptions",
+			sourceRulesFile("internal/core/output_windows.go", "package core", `import "os"`,
+				"func out() *os.File { return os.Stdout }"),
+			"io_import", 2},
+		{"net/http import inside an import group",
+			sourceRulesFile("internal/engine/fetch.go", "package engine",
+				"import (", `	"context"`, `	"net/http"`, ")",
+				"func get(ctx context.Context, u string) (*http.Request, error) {",
+				`	return http.NewRequestWithContext(ctx, "GET", u, nil)`,
+				"}"),
+			"io_import", 4},
+		{"net import under an alias",
+			sourceRulesFile("internal/engine/dial.go", "package engine", `import nw "net"`,
+				`func dial() (nw.Conn, error) { return nw.Dial("tcp", "example.com:443") }`),
+			"io_import", 2},
+		{"os import in a file whose name ends in io.go without the _io suffix",
+			sourceRulesFile("internal/engine/radio.go", "package engine", `import "os"`,
+				"func pid() int { return os.Getpid() }"),
+			"io_import", 2},
+		{"camelCase file name",
+			sourceRulesFile("internal/engine/unitRunner.go", "package engine"),
+			"file_name", 0},
+		{"PascalCase file name",
+			sourceRulesFile("internal/engine/Route.go", "package engine"),
+			"file_name", 0},
+		{"kebab-case file name",
+			sourceRulesFile("internal/engine/unit-runner.go", "package engine"),
+			"file_name", 0},
+		{"camelCase test file name",
+			sourceRulesFile("internal/engine/unitRunner_test.go", "package engine_test"),
+			"file_name", 0},
+		{"architecture suffix in the file name",
+			sourceRulesFile("internal/core/cpu_amd64.go", "package core"),
+			"arch_specific", 0},
+		{"OS and architecture suffix in the file name",
+			sourceRulesFile("internal/core/cpu_linux_arm64.go", "package core"),
+			"arch_specific", 0},
+		{"architecture in a go:build line",
+			sourceRulesFile("internal/core/cpu.go", "//go:build arm64", "", "package core"),
+			"arch_specific", 1},
+		{"architecture inside a go:build expression",
+			sourceRulesFile("internal/core/cpu.go", "//go:build linux && amd64", "", "package core"),
+			"arch_specific", 1},
+		{"configuration default in a setting outside the §5.12 table",
+			sourceRulesFile("internal/engine/workers.go", "package engine",
+				`import "github.com/example/zentra/internal/core"`,
+				"func settings() []core.ConfigSetting {",
+				`	return []core.ConfigSetting{{Name: "workers", Env: "WORKERS", Default: "4"}}`,
+				"}"),
+			"config_in_code", 4},
+		{"configuration default in a core file other than the §5.12 table",
+			sourceRulesFile("internal/core/log.go", "package core",
+				"func logSetting() ConfigSetting {",
+				`	return ConfigSetting{Name: "logLevel", Env: "LOG_LEVEL", Default: "info"}`,
+				"}"),
+			"config_in_code", 3},
+		{"configuration default through a dot import of core", sourceRulesFile("internal/engine/workers.go",
+			"package engine", `import . "github.com/example/zentra/internal/core"`,
+			`var workers = ConfigSetting{Name: "workers", Env: "WORKERS", Default: "4"}`), "config_in_code", 3},
 	}
 	for _, tc := range bad {
 		t.Run(tc.name, func(t *testing.T) {
@@ -323,5 +393,108 @@ func TestSourceRules(t *testing.T) {
 			t.Fatalf("SourceRules(%s) = %+v, want a %q finding at %s line %d",
 				tc.file.Path, got, tc.rule, tc.file.Path, tc.line)
 		})
+	}
+}
+
+func TestSourceRulesAllowedForms(t *testing.T) {
+	cfg := repocheck.SourceRulesConfig{Product: "zentra", ProductFile: "internal/core/product.go"}
+	allowed := []struct {
+		name string
+		file repocheck.SourceFile
+	}{
+		{"os/exec import in an *_io.go file",
+			sourceRulesFile("internal/engine/route_io.go", "package engine", `import "os/exec"`,
+				`func run() error { return exec.Command("git", "status").Run() }`)},
+		{"net/http import in an *_io.go file",
+			sourceRulesFile("internal/engine/fetch_io.go", "package engine", `import "net/http"`,
+				`func get(u string) (*http.Response, error) { return http.Get(u) }`)},
+		{"os import in the product's cmd main.go",
+			sourceRulesFile("cmd/zentra/main.go", "package main", `import "os"`,
+				"func main() { os.Exit(0) }")},
+		{"os import in the source rules themselves",
+			sourceRulesFile("internal/repocheck/source_rules.go", "package repocheck", `import "os"`,
+				"func stat(p string) error { _, err := os.Stat(p); return err }")},
+		{"os import in core/env.go (unit 0.3)",
+			sourceRulesFile("internal/core/env.go", "package core", `import "os"`,
+				"func lookup(k string) (string, bool) { return os.LookupEnv(k) }")},
+		{"os import in core/config.go (unit 0.20)",
+			sourceRulesFile("internal/core/config.go", "package core", `import "os"`,
+				"func list(d string) ([]os.DirEntry, error) { return os.ReadDir(d) }")},
+		{"os import in core/sweep.go (unit 0.5)",
+			sourceRulesFile("internal/core/sweep.go", "package core", `import "os"`,
+				"func list(d string) ([]os.DirEntry, error) { return os.ReadDir(d) }")},
+		{"os/exec import in core/process_windows.go, an OS variant of unit 0.6",
+			sourceRulesFile("internal/core/process_windows.go", "//go:build windows", "",
+				"package core", `import "os/exec"`,
+				`func kill() *exec.Cmd { return exec.Command("taskkill") }`)},
+		{"os/exec import in core/git.go (unit 0.18)",
+			sourceRulesFile("internal/core/git.go", "package core", `import "os/exec"`,
+				`func git() *exec.Cmd { return exec.Command("git") }`)},
+		{"os import in core/realpath_unix.go (unit 0.21)",
+			sourceRulesFile("internal/core/realpath_unix.go", "//go:build unix", "",
+				"package core", `import "os"`,
+				"func real(p string) (string, error) { return os.Readlink(p) }")},
+		{"os/exec import in an adapter",
+			sourceRulesFile("internal/adapters/cli.go", "package adapters", `import "os/exec"`,
+				`func harness() *exec.Cmd { return exec.Command("opencode") }`)},
+		{"os import in a test file",
+			sourceRulesFile("internal/gates/runner_test.go", "package gates_test",
+				"import (", `	"os"`, `	"testing"`, ")",
+				"func TestRunner(t *testing.T) { _ = os.Getpid() }")},
+		{"pure standard-library imports outside *_io.go",
+			sourceRulesFile("internal/engine/plan.go", "package engine",
+				"import (", `	"io/fs"`, `	"net/url"`, `	"path/filepath"`, ")",
+				"func plan(p string, m fs.FileMode, u *url.URL) string { return filepath.Base(p) + u.Path + m.String() }")},
+		{"snake_case file name with digits",
+			sourceRulesFile("internal/core/sha256_sum.go", "package core")},
+		{"snake_case test file name",
+			sourceRulesFile("internal/engine/unit_runner_test.go", "package engine_test")},
+		{"architecture word that is not a file-name suffix",
+			sourceRulesFile("internal/engine/arm64_note.go", "package engine")},
+		{"go:build line that names only operating systems",
+			sourceRulesFile("internal/core/process_unix.go", "//go:build unix && !darwin", "",
+				"package core")},
+		{"configuration default in the §5.12 table",
+			sourceRulesFile("internal/core/config.go", "package core",
+				"func settings() []ConfigSetting {",
+				`	return []ConfigSetting{{Name: "logLevel", Env: "LOG_LEVEL", Default: "info"}}`,
+				"}")},
+		{"configuration setting in a test file",
+			sourceRulesFile("internal/core/config_test.go", "package core_test",
+				`import "github.com/example/zentra/internal/core"`,
+				"func settings() []core.ConfigSetting {",
+				`	return []core.ConfigSetting{{Name: "logLevel", Env: "LOG_LEVEL", Default: "info"}}`,
+				"}")},
+	}
+	for _, tc := range allowed {
+		t.Run(tc.name, func(t *testing.T) {
+			// Guards against a rule so broad that an allowed form (SPEC §5.6, §5.8, §5.12, §6.2) turns
+			// repo/source-rules red.
+			if got := repocheck.SourceRules(cfg, []repocheck.SourceFile{tc.file}); len(got) != 0 {
+				t.Fatalf("SourceRules(%s) = %+v, want no finding", tc.file.Path, got)
+			}
+		})
+	}
+}
+
+// TestSourceRulesOwnTestFile guards against a fixture in this file that holds a machine path, which
+// turns repo/source-rules red on this repository's own tree (DR-25).
+func TestSourceRulesOwnTestFile(t *testing.T) {
+	cfg := repocheck.SourceRulesConfig{Product: "zentra", ProductFile: "internal/core/product.go"}
+	body, err := os.ReadFile("source_rules_test.go")
+	if err != nil {
+		t.Fatalf("read source_rules_test.go: %v", err)
+	}
+	file := repocheck.SourceFile{Path: "internal/repocheck/source_rules_test.go", Body: body}
+	var bad []repocheck.SourceFinding
+	for _, f := range repocheck.SourceRules(cfg, []repocheck.SourceFile{file}) {
+		// An unread or unparsed file has no machine_path finding either; that is not a pass.
+		if f.Rule == "machine_path" || f.Rule == "parse_error" || f.Rule == "invalid_utf8" {
+			bad = append(bad, f)
+		}
+	}
+	if len(bad) != 0 {
+		t.Fatalf("SourceRules(%s) = %+v, want no machine_path, parse_error or invalid_utf8 finding",
+			file.Path, bad)
 	}
 }
