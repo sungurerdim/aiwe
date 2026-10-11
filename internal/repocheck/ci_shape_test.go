@@ -48,8 +48,8 @@ jobs:
       - name: gate
         # why: these results do not depend on the OS
         run: |
-          go run ./internal/cmd/repocheck all --repo .
           # why: a shell comment inside the script, never a step reason
+          go run ./internal/cmd/repocheck all --repo .
   test:
     needs: static
     runs-on: ubuntu-latest
