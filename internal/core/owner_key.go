@@ -74,6 +74,10 @@ func orNone(s string) string {
 	return s
 }
 
+// ownerKeyTakenHook, when set, runs right after loadOwnerKey has taken the key and before it
+// checks the key's access; a test uses it to swap the key at that point.
+var ownerKeyTakenHook func()
+
 // loadOwnerKey reads <state>/owner.key, or makes it with a fresh random key when it is missing. A
 // state root or key that another principal can read or write fails with ErrRootUnsafe.
 func loadOwnerKey(state string) ([]byte, error) {
@@ -90,6 +94,9 @@ func loadOwnerKey(state string) ([]byte, error) {
 	}
 	if err != nil {
 		return nil, fmt.Errorf("owner key: %w", err)
+	}
+	if ownerKeyTakenHook != nil {
+		ownerKeyTakenHook()
 	}
 	if err := checkOwnerOnly(p); err != nil {
 		return nil, err
