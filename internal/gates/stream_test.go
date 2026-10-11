@@ -9,26 +9,32 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/sungurerdim/aiwe/internal/core"
 )
 
 // streamHelperEnv makes this test binary a helper step: it prints streamOutLine to its standard
 // output and streamErrLine to its standard error, then waits up to streamWait for the file the
-// variable names. It exits 0 once the file exists and 5 when the wait ends without it. Only a
+// variable names. It exits 0 once the file exists, 5 when the wait ends without it and 6 when it
+// cannot print to its standard output. Only a
 // runner that streams the output while the step runs lets the test create the file in time. It
 // opens no window.
+func streamHelperEnv() string { return gatesTestEnv("STREAM") }
+
 const (
-	streamHelperEnv = "AIWE_GATES_TEST_STREAM"
-	streamOutLine   = "aiwe-stream-stdout-line"
-	streamErrLine   = "aiwe-stream-stderr-line"
-	streamWait      = 10 * time.Second
+	streamOutLine = core.Product + "-stream-stdout-line"
+	streamErrLine = core.Product + "-stream-stderr-line"
+	streamWait    = 10 * time.Second
 )
 
 func init() {
-	release := os.Getenv(streamHelperEnv)
+	release := os.Getenv(streamHelperEnv())
 	if release == "" {
 		return
 	}
-	fmt.Fprintln(os.Stdout, streamOutLine)
+	if _, err := fmt.Fprintln(os.Stdout, streamOutLine); err != nil {
+		os.Exit(6)
+	}
 	fmt.Fprintln(os.Stderr, streamErrLine)
 	for deadline := time.Now().Add(streamWait); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
 		if _, err := os.Stat(release); err == nil {
@@ -65,7 +71,7 @@ func (w *streamTestWriter) Write(p []byte) (int, error) {
 // standard error reach the runner's Output while it still runs, under a header that names the step.
 func TestStream(t *testing.T) {
 	release := filepath.Join(t.TempDir(), "release")
-	t.Setenv(streamHelperEnv, release)
+	t.Setenv(streamHelperEnv(), release)
 	w := &streamTestWriter{release: release}
 	step := GateStep{ID: "stream", Command: []string{os.Args[0], "-test.run=^$"}, Required: true}
 	def := Definition{FormatVersion: 1, Steps: []GateStep{step}}

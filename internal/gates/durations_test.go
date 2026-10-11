@@ -14,6 +14,9 @@ import (
 	"github.com/sungurerdim/aiwe/internal/core"
 )
 
+// durationsTestModule is the module path of this repository, derived from the product constant.
+const durationsTestModule = "github.com/sungurerdim/" + core.Product
+
 // TestDurations pins the test step of SPEC §5.13 and DR-38: `go test -json` gives each package's
 // duration; the step limit is at least 2 × the longest recorded package and is never divided by
 // the worker count; `-p` comes from DR-7; a package whose current duration exceeds half the limit
@@ -25,12 +28,12 @@ func TestDurations(t *testing.T) {
 }
 
 func testDurationsParse(t *testing.T) {
-	const out = `{"Time":"2026-10-11T09:14:02.1Z","Action":"start","Package":"github.com/sungurerdim/aiwe/internal/core"}
-{"Time":"2026-10-11T09:14:02.2Z","Action":"run","Package":"github.com/sungurerdim/aiwe/internal/core","Test":"TestMeasured"}
-{"Time":"2026-10-11T09:14:02.3Z","Action":"output","Package":"github.com/sungurerdim/aiwe/internal/core","Test":"TestMeasured","Output":"=== RUN   TestMeasured\n"}
-{"Time":"2026-10-11T09:14:04.9Z","Action":"pass","Package":"github.com/sungurerdim/aiwe/internal/core","Test":"TestMeasured","Elapsed":2.61}
-{"Time":"2026-10-11T09:14:14.5Z","Action":"pass","Package":"github.com/sungurerdim/aiwe/internal/core","Elapsed":12.42}
-{"Time":"2026-10-11T09:15:47.0Z","Action":"fail","Package":"github.com/sungurerdim/aiwe/internal/gates","Elapsed":94.8}
+	const out = `{"Time":"2026-10-11T09:14:02.1Z","Action":"start","Package":"` + durationsTestModule + `/internal/core"}
+{"Time":"2026-10-11T09:14:02.2Z","Action":"run","Package":"` + durationsTestModule + `/internal/core","Test":"TestMeasured"}
+{"Time":"2026-10-11T09:14:02.3Z","Action":"output","Package":"` + durationsTestModule + `/internal/core","Test":"TestMeasured","Output":"=== RUN   TestMeasured\n"}
+{"Time":"2026-10-11T09:14:04.9Z","Action":"pass","Package":"` + durationsTestModule + `/internal/core","Test":"TestMeasured","Elapsed":2.61}
+{"Time":"2026-10-11T09:14:14.5Z","Action":"pass","Package":"` + durationsTestModule + `/internal/core","Elapsed":12.42}
+{"Time":"2026-10-11T09:15:47.0Z","Action":"fail","Package":"` + durationsTestModule + `/internal/gates","Elapsed":94.8}
 `
 	cases := []struct {
 		name    string
@@ -42,19 +45,19 @@ func testDurationsParse(t *testing.T) {
 			name:  "package events give durations and test events are not packages",
 			input: out,
 			want: []PackageDuration{
-				{Package: "github.com/sungurerdim/aiwe/internal/core", Elapsed: 12420 * time.Millisecond},
-				{Package: "github.com/sungurerdim/aiwe/internal/gates", Elapsed: 94800 * time.Millisecond},
+				{Package: durationsTestModule + "/internal/core", Elapsed: 12420 * time.Millisecond},
+				{Package: durationsTestModule + "/internal/gates", Elapsed: 94800 * time.Millisecond},
 			},
 		},
 		{
 			name:    "a line that is not a JSON event is refused, not skipped",
-			input:   "FAIL\tgithub.com/sungurerdim/aiwe/internal/gates [build failed]\n",
+			input:   "FAIL\t" + durationsTestModule + "/internal/gates [build failed]\n",
 			wantErr: true,
 		},
 		{
 			name: "a line that is not a JSON event beside a valid package end is refused, not skipped",
-			input: `{"Time":"2026-10-11T09:14:14.5Z","Action":"pass","Package":"github.com/sungurerdim/aiwe/internal/core","Elapsed":12.42}
-FAIL	github.com/sungurerdim/aiwe/internal/gates [build failed]
+			input: `{"Time":"2026-10-11T09:14:14.5Z","Action":"pass","Package":"` + durationsTestModule + `/internal/core","Elapsed":12.42}
+FAIL	` + durationsTestModule + `/internal/gates [build failed]
 `,
 			wantErr: true,
 		},
@@ -70,14 +73,14 @@ FAIL	github.com/sungurerdim/aiwe/internal/gates [build failed]
 		},
 		{
 			name: "test events without a package end measured no package and are refused (DR-13)",
-			input: `{"Time":"2026-10-11T09:14:02.2Z","Action":"run","Package":"github.com/sungurerdim/aiwe/internal/core","Test":"TestMeasured"}
-{"Time":"2026-10-11T09:14:04.9Z","Action":"pass","Package":"github.com/sungurerdim/aiwe/internal/core","Test":"TestMeasured","Elapsed":2.61}
+			input: `{"Time":"2026-10-11T09:14:02.2Z","Action":"run","Package":"` + durationsTestModule + `/internal/core","Test":"TestMeasured"}
+{"Time":"2026-10-11T09:14:04.9Z","Action":"pass","Package":"` + durationsTestModule + `/internal/core","Test":"TestMeasured","Elapsed":2.61}
 `,
 			wantErr: true,
 		},
 		{
 			name:    "a package end without Elapsed measured no duration and is refused, never read as 0 (DR-13)",
-			input:   `{"Time":"2026-10-11T09:14:14.5Z","Action":"pass","Package":"github.com/sungurerdim/aiwe/internal/core"}` + "\n",
+			input:   `{"Time":"2026-10-11T09:14:14.5Z","Action":"pass","Package":"` + durationsTestModule + `/internal/core"}` + "\n",
 			wantErr: true,
 		},
 	}
@@ -103,8 +106,8 @@ FAIL	github.com/sungurerdim/aiwe/internal/gates [build failed]
 func testDurationsPrepare(t *testing.T) {
 	pkgs := func(longest time.Duration) []PackageDuration {
 		return []PackageDuration{
-			{Package: "github.com/sungurerdim/aiwe/internal/core", Elapsed: 12 * time.Second},
-			{Package: "github.com/sungurerdim/aiwe/internal/gates", Elapsed: longest},
+			{Package: durationsTestModule + "/internal/core", Elapsed: 12 * time.Second},
+			{Package: durationsTestModule + "/internal/gates", Elapsed: longest},
 		}
 	}
 	cases := []struct {
@@ -151,8 +154,8 @@ func testDurationsPrepare(t *testing.T) {
 }
 
 func testDurationsCheck(t *testing.T) {
-	const core = "github.com/sungurerdim/aiwe/internal/core"
-	const gatesPkg = "github.com/sungurerdim/aiwe/internal/gates"
+	const core = durationsTestModule + "/internal/core"
+	const gatesPkg = durationsTestModule + "/internal/gates"
 	limit := 600 * time.Second
 	cases := []struct {
 		name     string
@@ -211,10 +214,10 @@ func testDurationsCheck(t *testing.T) {
 
 // durationsJSONEnv makes this test binary a helper test step: it prints the file the variable
 // names, as `go test -json` would, and exits 0. It is portable and opens no window.
-const durationsJSONEnv = "AIWE_GATES_TEST_JSON"
+func durationsJSONEnv() string { return gatesTestEnv("JSON") }
 
 func init() {
-	path := os.Getenv(durationsJSONEnv)
+	path := os.Getenv(durationsJSONEnv())
 	if path == "" {
 		return
 	}
@@ -245,7 +248,7 @@ func durationsTestStep(t *testing.T, output string) GateStep {
 	if err := os.WriteFile(path, []byte(output), 0o600); err != nil {
 		t.Fatalf("write the go test -json fixture: %v", err)
 	}
-	t.Setenv(durationsJSONEnv, path)
+	t.Setenv(durationsJSONEnv(), path)
 	return GateStep{ID: "test", Command: []string{os.Args[0], "-test.run=^$"}, Required: true}
 }
 
@@ -255,7 +258,7 @@ func durationsTestStep(t *testing.T, output string) GateStep {
 // worker count; its `go test -json` output gives the package durations; a package over half that
 // limit turns the gate red; an empty or unparsable duration list is not_measured (DR-13, DR-38).
 func TestDurationsRunner(t *testing.T) {
-	const pkg = "github.com/sungurerdim/aiwe/internal/gates"
+	const pkg = durationsTestModule + "/internal/gates"
 	green := func(d time.Duration) StepRun { return StepRun{Result: ResultGreen, Duration: d} }
 	// twenty is 20 green runs whose p90 is 40 s: the limit is 3 × 40 s = 120 s.
 	twenty := func() []StepRun {

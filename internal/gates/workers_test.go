@@ -2,6 +2,7 @@ package gates
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -16,17 +17,17 @@ import (
 // workersArgvEnv makes this test binary a fake `go` tool: it writes the arguments it was started
 // with, one per line, to the file the variable names, prints the `go test -json` output of one
 // package that ran 2.4 s, far under half of the 60 s floor limit, and exits 0. It opens no window.
-const workersArgvEnv = "AIWE_GATES_TEST_ARGV"
+func workersArgvEnv() string { return gatesTestEnv("ARGV") }
 
 func init() {
-	path := os.Getenv(workersArgvEnv)
+	path := os.Getenv(workersArgvEnv())
 	if path == "" {
 		return
 	}
 	if err := os.WriteFile(path, []byte(strings.Join(os.Args[1:], "\n")), 0o600); err != nil {
 		os.Exit(3)
 	}
-	if _, err := os.Stdout.WriteString(durationsTestPackage("github.com/sungurerdim/aiwe/internal/core", 2.4)); err != nil {
+	if _, err := os.Stdout.WriteString(durationsTestPackage(durationsTestModule+"/internal/core", 2.4)); err != nil {
 		os.Exit(4)
 	}
 	os.Exit(0)
@@ -90,14 +91,17 @@ func workersFakeGo(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("open the test binary: %v", err)
 	}
-	defer src.Close()
+	defer func() {
+		if err := src.Close(); err != nil {
+			t.Errorf("close the test binary: %v", err)
+		}
+	}()
 	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o700)
 	if err != nil {
 		t.Fatalf("create the fake go tool: %v", err)
 	}
 	if _, err := io.Copy(out, src); err != nil {
-		out.Close()
-		t.Fatalf("copy the fake go tool: %v", err)
+		t.Fatalf("copy the fake go tool: %v", errors.Join(err, out.Close()))
 	}
 	if err := out.Close(); err != nil {
 		t.Fatalf("close the fake go tool: %v", err)
@@ -120,7 +124,7 @@ func TestRunnerWorkers(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			argvFile := filepath.Join(t.TempDir(), "argv.txt")
-			t.Setenv(workersArgvEnv, argvFile)
+			t.Setenv(workersArgvEnv(), argvFile)
 			declared := []string{goBin, "test", "-p", "1", "./..."}
 			def := Definition{FormatVersion: 1, Steps: []GateStep{{ID: "test", Command: slices.Clone(declared), Required: true}}}
 			report, err := (&Runner{Capacity: tc.capacity, Owner: rootsTestOwner(t)}).Run(context.Background(), def, t.TempDir(), nil)
@@ -153,7 +157,7 @@ func TestRunnerWorkers(t *testing.T) {
 func TestRunnerWorkersRequired(t *testing.T) {
 	goBin := workersFakeGo(t)
 	argvFile := filepath.Join(t.TempDir(), "argv.txt")
-	t.Setenv(workersArgvEnv, argvFile)
+	t.Setenv(workersArgvEnv(), argvFile)
 	def := Definition{FormatVersion: 1, Steps: []GateStep{{ID: "test", Command: []string{goBin, "test", "./..."}, Required: true}}}
 	report, err := (&Runner{Owner: rootsTestOwner(t)}).Run(context.Background(), def, t.TempDir(), nil)
 	if err != nil {

@@ -17,13 +17,14 @@ import (
 
 // runnerSleepEnv makes this test binary a helper step that runs for runnerSleepFor and then exits
 // with code 1, the code a Windows job gives a process it stops. It is portable and opens no window.
+func runnerSleepEnv() string { return gatesTestEnv("SLEEP") }
+
 const (
-	runnerSleepEnv = "AIWE_GATES_TEST_SLEEP"
 	runnerSleepFor = 30 * time.Second
 )
 
 func init() {
-	if os.Getenv(runnerSleepEnv) != "1" {
+	if os.Getenv(runnerSleepEnv()) != "1" {
 		return
 	}
 	time.Sleep(runnerSleepFor)
@@ -50,9 +51,9 @@ func runnerTestSteps(t *testing.T) (green1, green2, red, missing GateStep) {
 	t.Helper()
 	goBin := runnerTestGo(t)
 	green1 = GateStep{ID: "format", Command: []string{goBin, "version"}, Required: true}
-	green2 = durationsTestStep(t, durationsTestPackage("github.com/sungurerdim/aiwe/internal/core", 2.4))
-	red = GateStep{ID: "vuln", Command: []string{goBin, "help", "aiwe-no-such-help-topic"}, Required: true}
-	missing = GateStep{ID: "lint", Command: []string{"aiwe-gate-tool-that-is-not-installed"}, Required: true}
+	green2 = durationsTestStep(t, durationsTestPackage(durationsTestModule+"/internal/core", 2.4))
+	red = GateStep{ID: "vuln", Command: []string{goBin, "help", core.Product + "-no-such-help-topic"}, Required: true}
+	missing = GateStep{ID: "lint", Command: []string{core.Product + "-gate-tool-that-is-not-installed"}, Required: true}
 	return green1, green2, red, missing
 }
 
@@ -293,7 +294,7 @@ func TestRunnerNothingRun(t *testing.T) {
 // process happened to exit with the declared code: a step that ran out of time never exited on its
 // own, so it is not_measured and the gate is not green (DR-13, DR-15).
 func TestRunnerTimeout(t *testing.T) {
-	t.Setenv(runnerSleepEnv, "1")
+	t.Setenv(runnerSleepEnv(), "1")
 	slow := GateStep{ID: "test", Command: []string{os.Args[0], "-test.run=^$"}, Required: true,
 		TimeoutSeconds: 1, Expect: Expect{ExitCode: 1}}
 	def := Definition{FormatVersion: 1, Steps: []GateStep{slow}}

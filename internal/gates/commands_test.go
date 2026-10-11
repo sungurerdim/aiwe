@@ -76,7 +76,7 @@ func commandsTestRunStreams(t *testing.T, args ...string) (int, commandsTestEnve
 	code := core.RunCLI(context.Background(), Commands(), argv, &out, &stream)
 	var env commandsTestEnvelope
 	if err := json.Unmarshal(out.Bytes(), &env); err != nil {
-		t.Fatalf("aiwe %s printed no JSON envelope: %v\n%s", strings.Join(argv, " "), err, out.String())
+		t.Fatalf(core.Product+" %s printed no JSON envelope: %v\n%s", strings.Join(argv, " "), err, out.String())
 	}
 	return code, env, out.String(), stream.String()
 }
@@ -285,7 +285,7 @@ func TestGateCommandStream(t *testing.T) {
 	if err := os.WriteFile(release, nil, 0o600); err != nil {
 		t.Fatalf("write the release file: %v", err)
 	}
-	t.Setenv(streamHelperEnv, release)
+	t.Setenv(streamHelperEnv(), release)
 	step := GateStep{ID: "stream", Command: []string{os.Args[0]}, Required: true}
 	code, env, out, stderr := commandsTestRunStreams(t, "--repo", commandsTestRepo(t, []GateStep{step}))
 	if code != 0 || env.Data.Result != ResultGreen {
@@ -311,7 +311,7 @@ func TestGateCommandOwner(t *testing.T) {
 	for _, v := range []string{"HOME", "USERPROFILE", "LOCALAPPDATA", "XDG_STATE_HOME", "XDG_CACHE_HOME"} {
 		t.Setenv(v, convention)
 	}
-	t.Setenv(rootsHelperEnv, "1")
+	t.Setenv(rootsHelperEnv(), "1")
 	step, record := rootsTestStep(t.TempDir(), "owned", "")
 	code, env, out := commandsTestRun(t, "--repo", commandsTestRepo(t, []GateStep{step}))
 	if code != 0 || env.Data.Result != ResultGreen {
@@ -343,7 +343,7 @@ func TestGateCommandOwner(t *testing.T) {
 // owner opens: the command refuses with a named outcome and runs no step (SPEC §6.4, §7.8).
 func TestGateCommandNoOwner(t *testing.T) {
 	commandsTestSetRoots(t)
-	t.Setenv(rootsHelperEnv, "1")
+	t.Setenv(rootsHelperEnv(), "1")
 	step, record := rootsTestStep(t.TempDir(), "unowned", "")
 	repo := commandsTestRepo(t, []GateStep{step})
 	// A temp root that is the repository itself is unsafe, so no owner opens.
@@ -368,7 +368,7 @@ func TestGateCommandNoOwner(t *testing.T) {
 // so no check's roots can land inside the repository (SPEC §6.4).
 func TestGateCommandRepoInTemp(t *testing.T) {
 	roots := commandsTestSetRoots(t)
-	t.Setenv(rootsHelperEnv, "1")
+	t.Setenv(rootsHelperEnv(), "1")
 	first, _ := rootsTestStep(t.TempDir(), "first", "")
 	// The first run makes the temp root owner-only, so only the repository rule can refuse later.
 	if code, env, out := commandsTestRun(t, "--repo", commandsTestRepo(t, []GateStep{first})); code != 0 {
