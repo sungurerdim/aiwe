@@ -144,3 +144,38 @@ func TestRunnerWorkers(t *testing.T) {
 		})
 	}
 }
+
+// TestRunnerWorkersRequired catches a test step run with an assumed worker count or with no place
+// to print it: either one leaves the step not_measured and the fake go tool never starts (DR-7,
+// DR-13).
+func TestRunnerWorkersRequired(t *testing.T) {
+	goBin := workersFakeGo(t)
+	measured := core.CapacityFor(core.Measured[int64]{Value: 8, Known: true}, 2)
+	cases := []struct {
+		name   string
+		runner Runner
+	}{
+		{"no chosen capacity is not measured", Runner{Out: io.Discard}},
+		{"no place to print the count is not measured", Runner{Capacity: measured}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			argvFile := filepath.Join(t.TempDir(), "argv.txt")
+			t.Setenv(workersArgvEnv, argvFile)
+			def := Definition{FormatVersion: 1, Steps: []GateStep{{ID: "test", Command: []string{goBin, "test", "./..."}, Required: true}}}
+			report, err := tc.runner.Run(context.Background(), def, t.TempDir(), nil)
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			if s := report.Steps[0]; s.Result != ResultNotMeasured || s.ExitCode != exitUnknown {
+				t.Errorf("test step = %+v, want %q with exit code %d", s, ResultNotMeasured, exitUnknown)
+			}
+			if report.Result == ResultGreen {
+				t.Errorf("gate result = %q, want it not green", report.Result)
+			}
+			if _, err := os.Stat(argvFile); err == nil {
+				t.Errorf("the test step started; want it never started")
+			}
+		})
+	}
+}

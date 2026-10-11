@@ -2,6 +2,7 @@ package gates
 
 import (
 	"context"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,6 +10,8 @@ import (
 	"slices"
 	"testing"
 	"time"
+
+	"github.com/sungurerdim/aiwe/internal/core"
 )
 
 // runnerSleepEnv makes this test binary a helper step that runs for runnerSleepFor and then exits
@@ -48,6 +51,12 @@ func runnerTestSteps(t *testing.T) (green1, green2, red, missing GateStep) {
 	red = GateStep{ID: "vuln", Command: []string{goBin, "help", "aiwe-no-such-help-topic"}, Required: true}
 	missing = GateStep{ID: "lint", Command: []string{"aiwe-gate-tool-that-is-not-installed"}, Required: true}
 	return green1, green2, red, missing
+}
+
+// runnerTestRunner returns a Runner with a chosen worker count and a place to print it, so a gate
+// with a test step runs that step (DR-7).
+func runnerTestRunner() *Runner {
+	return &Runner{Capacity: core.CapacityFor(core.Measured[int64]{Value: 4, Known: true}, 1), Out: io.Discard}
 }
 
 // runnerTestIDs returns the step ids of a report in report order.
@@ -114,7 +123,7 @@ func TestRunner(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			def := Definition{FormatVersion: 1, Steps: tc.steps}
-			report, err := (&Runner{}).Run(context.Background(), def, t.TempDir(), tc.only)
+			report, err := runnerTestRunner().Run(context.Background(), def, t.TempDir(), tc.only)
 			if err != nil {
 				t.Fatalf("catches %s: Run returned an error, but a decided gate is a result (SPEC §5.3): %v", tc.catches, err)
 			}
@@ -195,7 +204,7 @@ func TestRunnerTimeout(t *testing.T) {
 		TimeoutSeconds: 1, Expect: Expect{ExitCode: 1}}
 	def := Definition{FormatVersion: 1, Steps: []GateStep{slow}}
 	start := time.Now()
-	report, err := (&Runner{}).Run(context.Background(), def, t.TempDir(), nil)
+	report, err := runnerTestRunner().Run(context.Background(), def, t.TempDir(), nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
