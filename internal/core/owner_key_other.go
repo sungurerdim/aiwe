@@ -36,8 +36,9 @@ func checkOwnerOnlyFile(f *os.File, p string) error {
 	return checkOwnerOnlyInfo(p, fi)
 }
 
-// checkOwnerOnlyInfo checks fi, the file info of p, for checkOwnerOnly. A link, FIFO, device or
-// socket is refused: only a plain file or a directory is read.
+// checkOwnerOnlyInfo checks fi, the file info of p; only a plain file or directory passes. A FIFO,
+// device or socket is refused. A link is refused from Lstat (checkOwnerOnly); from a handle
+// (checkOwnerOnlyFile) the open already followed the link, so its target is checked.
 func checkOwnerOnlyInfo(p string, fi fs.FileInfo) error {
 	if t := fi.Mode().Type(); t != 0 && t != fs.ModeDir {
 		return fmt.Errorf("%w: %q is a %v, not a plain file or directory", ErrRootUnsafe, p, t)
