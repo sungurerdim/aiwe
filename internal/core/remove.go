@@ -103,6 +103,9 @@ func resolveOwnedRoot(n namedPath) (string, error) {
 	if n.path == "" || !filepath.IsAbs(n.path) {
 		return "", fmt.Errorf("%w: %s root %q is not an absolute path", ErrRootUnsafe, n.name, n.path)
 	}
+	// A trailing separator or "." element would make Lstat follow a link at the end; Clean drops
+	// both, also after a \\?\ prefix.
+	n.path = filepath.Clean(n.path)
 	if err := mkdirOwnerOnly(n.path); err != nil {
 		return "", fmt.Errorf("%s root: %w", n.name, err)
 	}
