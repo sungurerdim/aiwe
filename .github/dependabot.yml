@@ -1,0 +1,17 @@
+# Security updates for pinned Go modules and GitHub Actions (SPEC §12.1).
+# Dependabot pull requests pass normal review and CI and are listed as external (SPEC §16, Q17).
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore
+      include: scope
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
