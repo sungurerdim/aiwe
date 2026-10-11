@@ -144,6 +144,9 @@ func TestRoots(t *testing.T) {
 					if _, err := os.Stat(got); !errors.Is(err, fs.ErrNotExist) {
 						t.Errorf("catches a clean check's fresh root %s left on disk: stat %q: %v", v, got, err)
 					}
+					if _, err := os.Stat(filepath.Dir(got)); got != "" && !errors.Is(err, fs.ErrNotExist) {
+						t.Errorf("catches a clean check's fresh roots directory left on disk: stat %q: %v", filepath.Dir(got), err)
+					}
 				}
 			}
 
