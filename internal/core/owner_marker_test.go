@@ -347,3 +347,68 @@ func TestOwnerMarkerGrownInPlace(t *testing.T) {
 		t.Errorf("a RemoveOwned call allocated %d bytes while the marker grew to %d bytes in %d calls; want the read bounded at %d bytes", most, markerTestGrowTo, calls, maxMarkerBytes+1)
 	}
 }
+
+// TestOwnerMarkerTornRead catches a marker read that takes more bytes than the size checked on
+// its handle (#172, step 2: read at most the size it checked). The marker keeps its inode and
+// cycles in a tight loop: short and ending in " x", which matches no record; then grown past 4096
+// bytes; then its first bytes turned into the valid marker and spaces; then " x" again; then
+// shrunk. No state is a valid marker of at most 4096 bytes. A read checked at the short size that
+// takes bytes of the grown file and then hits the shrunk end sees the valid marker and spaces;
+// such a read is longer than the size checked and must be refused, so no call may succeed.
+func TestOwnerMarkerTornRead(t *testing.T) {
+	o, d, marker := markerTestOwned(t)
+	p := filepath.Join(d.Path(), markerFile)
+	l := int64(len(marker))
+	removeTestWrite(t, p, string(marker)+" x")
+	f, err := os.OpenFile(p, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatalf("open the marker to grow it: %v", err)
+	}
+	defer f.Close()
+	pad := []byte(strings.Repeat(" ", 2*maxMarkerBytes))
+	space, x := []byte(" "), []byte("x")
+	var cycles atomic.Int64
+	quit := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-quit:
+				return
+			default:
+			}
+			_, e1 := f.WriteAt(pad, l+2)
+			_, e2 := f.WriteAt(space, l+1)
+			_, e3 := f.WriteAt(x, l+1)
+			e4 := f.Truncate(l + 2)
+			if errors.Join(e1, e2, e3, e4) == nil {
+				cycles.Add(1)
+			}
+		}
+	}()
+	stop := func() { close(quit); wg.Wait() }
+	t.Cleanup(func() {
+		select {
+		case <-quit:
+		default:
+			stop()
+		}
+	})
+
+	calls, accepted := 0, false
+	for end := time.Now().Add(markerTestRaceFor); time.Now().Before(end); calls++ {
+		if err := o.RemoveOwned(context.Background(), d); err == nil {
+			accepted = true
+			break
+		}
+	}
+	stop()
+	if n := cycles.Load(); n < 2 {
+		t.Fatalf("the marker grew and shrank %d times in %v; the race never ran", n, markerTestRaceFor)
+	}
+	if accepted {
+		t.Errorf("RemoveOwned accepted a marker read past the size checked on its handle while it grew and shrank (call %d); want ErrNotOwned every time", calls+1)
+	}
+}
