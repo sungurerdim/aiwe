@@ -369,7 +369,7 @@ func TestSourceRules(t *testing.T) {
 				"func settings() []core.ConfigSetting {",
 				`	return []core.ConfigSetting{{Name: "workers", Env: "WORKERS", Default: "4"}}`,
 				"}"),
-			"config_in_code", 5},
+			"config_in_code", 4},
 		{"configuration default in a core file other than the §5.12 table",
 			sourceRulesFile("internal/core/log.go", "package core",
 				"func logSetting() ConfigSetting {",
