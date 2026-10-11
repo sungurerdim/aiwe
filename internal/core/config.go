@@ -40,8 +40,9 @@ type ConfigValue struct {
 
 // ResolveConfig resolves each setting, in settings order, by flags > env > state files > default
 // (SPEC §5.12). A flag counts when its name is a key of flags; an empty env value counts as unset.
-// Only <stateDir>/*.json files are state files; each holds one JSON object of string values. A
-// broken state file, or one setting in two state files, returns ErrConfigInvalid.
+// Only the settings files of stateDir are read: settings.json and settings.*.json; each holds one
+// JSON object of string values. Other state files are not settings. A broken settings file, or one
+// setting in two settings files, returns ErrConfigInvalid.
 func ResolveConfig(settings []ConfigSetting, flags map[string]string, getenv func(string) string,
 	stateDir string) ([]ConfigValue, error) {
 	state, err := readConfigState(stateDir)
@@ -72,8 +73,8 @@ func resolveSetting(s ConfigSetting, flags map[string]string, getenv func(string
 	return ConfigValue{Name: s.Name, Value: s.Default, Origin: ConfigOriginDefault}
 }
 
-// readConfigState merges every file of dir whose name ends in the lower-case ".json" into one
-// name → value map, in file name order. An empty dir or a missing directory holds no settings; a
+// readConfigState merges every settings file of dir into one name → value map, in file name
+// order. An empty dir or a missing directory holds no settings; a
 // relative dir is a usage error, since the working directory is never used (SPEC §5.12).
 func readConfigState(dir string) (map[string]string, error) {
 	state := map[string]string{}
@@ -91,7 +92,7 @@ func readConfigState(dir string) (map[string]string, error) {
 		return nil, configInvalid("a readable state directory", err.Error())
 	}
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+		if e.IsDir() || !isSettingsFile(e.Name()) {
 			continue
 		}
 		if err := mergeConfigFile(state, filepath.Join(dir, e.Name())); err != nil {
@@ -99,6 +100,16 @@ func readConfigState(dir string) (map[string]string, error) {
 		}
 	}
 	return state, nil
+}
+
+// isSettingsFile reports whether name is settings.json or settings.<part>.json with a non-empty
+// part, lower-case as written (SPEC §5.12).
+func isSettingsFile(name string) bool {
+	if name == "settings.json" {
+		return true
+	}
+	part, ok := strings.CutPrefix(name, "settings.")
+	return ok && len(part) > len(".json") && strings.HasSuffix(part, ".json")
 }
 
 // mergeConfigFile adds the settings of the state file at path to state.
