@@ -42,7 +42,10 @@ func runGate(ctx context.Context, in core.Input) (core.Result[any], error) {
 	if err != nil {
 		return core.Result[any]{}, err
 	}
-	var r Runner
+	// One gate run starts no other job on this path, and no admission count exists yet: jobs is 1.
+	capacity := core.CapacityFor(core.MeasureCores(), 1)
+	capacity.JobsFrom = "single-run"
+	r := Runner{Capacity: capacity}
 	report, err := r.Run(ctx, def, repo, only)
 	if err != nil {
 		return core.Result[any]{}, err
