@@ -394,3 +394,14 @@ func TestGateCommandRepoInTemp(t *testing.T) {
 		t.Errorf("catches a step run with its repository inside the temp root: stat %q: %v", record, err)
 	}
 }
+
+// TestGateDetailReason catches a text output that drops the reason a gate has no result: a gate
+// that ran no required step reads not_measured, and its detail line must say why.
+func TestGateDetailReason(t *testing.T) {
+	report := GateReport{Result: ResultNotMeasured, Detail: "no required step ran, so the gate has no evidence",
+		Steps: []StepReport{{ID: "vuln", Result: ResultGreen, Detail: "not required"}}}
+	want := "gate not_measured (no required step ran, so the gate has no evidence)\n  vuln: green (not required)"
+	if got := gateDetail(report); got != want {
+		t.Errorf("gateDetail = %q, want %q", got, want)
+	}
+}
