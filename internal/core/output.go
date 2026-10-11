@@ -47,10 +47,10 @@ func WriteResult(w io.Writer, f Format, r Result[any]) error {
 }
 
 // textLine renders r as "<status>: <detail>". A refusal's detail already starts with
-// "<outcome>: " (SPEC §5.10); when that outcome is the status word, the line names it once.
+// "<outcome>: " (SPEC §5.10); when that prefix is the status word, the line names it once.
 func textLine(r Result[any]) string {
 	prefix := string(r.Status) + ": "
-	if string(r.Outcome) == string(r.Status) && strings.HasPrefix(r.Detail, prefix) {
+	if strings.HasPrefix(r.Detail, prefix) {
 		return r.Detail
 	}
 	return prefix + r.Detail
