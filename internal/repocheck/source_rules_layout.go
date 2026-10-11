@@ -13,6 +13,9 @@ import (
 // The layout rules of check repo/source-rules: IO imports, file names, architecture and
 // configuration defaults (SPEC §5.6, §5.8, §5.12, §12.2).
 
+// repocheckMainPath is the entry point of repocheck, which may import os (SPEC §5.6).
+const repocheckMainPath = "internal/cmd/repocheck/main.go"
+
 // ioImports are the imports that do process, file or network IO (SPEC §5.6).
 func ioImports() []string { return []string{"os", "os/exec", "net", "net/http"} }
 
@@ -44,7 +47,7 @@ func (c *sourceChecker) addAt(rule string, line int) {
 func (c *sourceChecker) mayImportIO() bool {
 	p := c.path
 	if c.isTestFile() || strings.HasSuffix(p, "_io.go") || strings.HasPrefix(p, "internal/adapters/") ||
-		p == "cmd/"+c.cfg.Product+"/main.go" || p == sourceRulesPath {
+		p == "cmd/"+c.cfg.Product+"/main.go" || p == repocheckMainPath || p == sourceRulesPath {
 		return true
 	}
 	dir, name := path.Split(p)
