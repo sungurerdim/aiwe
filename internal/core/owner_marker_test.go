@@ -37,10 +37,20 @@ func markerTestOwned(t *testing.T) (*Owner, OwnedDir, []byte) {
 
 // markerTestSwapper puts each source in turn under the marker's name: it hard-links the source to a
 // spare name beside the sources and renames that over the marker, so the marker name always exists.
+// A source that is a symlink is made afresh with its target instead: a hard link to a symlink
+// never showed the open following it in the race on Linux.
 // The returned stop ends the loop and reports how many swaps took effect.
 func markerTestSwapper(t *testing.T, marker string, srcs []string) func() int64 {
 	t.Helper()
 	spare := filepath.Join(filepath.Dir(srcs[0]), "next")
+	targets := make([]string, len(srcs))
+	for i, s := range srcs {
+		if fi, err := os.Lstat(s); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+			if targets[i], err = os.Readlink(s); err != nil {
+				t.Fatalf("readlink %s: %v", s, err)
+			}
+		}
+	}
 	var swaps atomic.Int64
 	quit := make(chan struct{})
 	var wg sync.WaitGroup
@@ -54,7 +64,13 @@ func markerTestSwapper(t *testing.T, marker string, srcs []string) func() int64 
 			default:
 			}
 			_ = os.Remove(spare)
-			if os.Link(srcs[i%len(srcs)], spare) != nil {
+			var mk error
+			if tg := targets[i%len(srcs)]; tg != "" {
+				mk = os.Symlink(tg, spare)
+			} else {
+				mk = os.Link(srcs[i%len(srcs)], spare)
+			}
+			if mk != nil {
 				continue
 			}
 			if os.Rename(spare, marker) == nil {
