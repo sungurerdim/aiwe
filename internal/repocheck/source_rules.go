@@ -72,7 +72,6 @@ type sourceChecker struct {
 	path    string
 	fset    *token.FileSet
 	imports map[string]string // local name → import path
-	roots   map[string]bool   // names that hold an *os.Root, file-wide
 	found   []SourceFinding
 }
 
@@ -207,24 +206,22 @@ func (c *sourceChecker) checkLiteral(lit *ast.BasicLit, rules []literalRule) {
 	}
 }
 
-// checkRemovals flags every use of os.RemoveAll or (*os.Root).RemoveAll, called or taken as a
-// value, outside removeFile; with `import . "os"` a bare RemoveAll counts too.
+// checkRemovals flags every RemoveAll selector outside removeFile, whatever its receiver, called or
+// taken as a value; with `import . "os"` a bare RemoveAll counts too. Without type information an
+// *os.Root receiver cannot be told apart, so the rule fails closed (DR-25).
 func (c *sourceChecker) checkRemovals(file *ast.File) {
 	if c.path == removeFile {
 		return
 	}
-	c.roots = map[string]bool{}
-	ast.Inspect(file, c.visitRootName)
 	ast.Inspect(file, c.visitRemoval)
 }
 
-// visitRemoval flags n when it names os.RemoveAll or the RemoveAll method of an *os.Root; the
-// selected name of a selector is never a bare identifier, so x.RemoveAll of another type stays
-// unflagged.
+// visitRemoval flags n when it is a RemoveAll selector or, under a dot import of os, a bare
+// RemoveAll; the selected name of a selector is never visited as a bare identifier.
 func (c *sourceChecker) visitRemoval(n ast.Node) bool {
 	switch n := n.(type) {
 	case *ast.SelectorExpr:
-		if c.isPkgSel(n, "os", "RemoveAll") || (n.Sel.Name == "RemoveAll" && c.isRootExpr(n.X)) {
+		if n.Sel.Name == "RemoveAll" {
 			c.add(ruleRecursiveRemoval, n.Pos())
 		}
 		ast.Inspect(n.X, c.visitRemoval)
@@ -235,93 +232,6 @@ func (c *sourceChecker) visitRemoval(n ast.Node) bool {
 		}
 	}
 	return true
-}
-
-// visitRootName records the names that hold an *os.Root: fields, parameters, results and
-// receivers of that type, variables declared with it, and variables assigned from os.OpenRoot.
-// Without type information names are tracked file-wide, not per scope.
-func (c *sourceChecker) visitRootName(n ast.Node) bool {
-	switch n := n.(type) {
-	case *ast.Field:
-		if c.isRootType(n.Type) {
-			c.addRootNames(n.Names)
-		}
-	case *ast.ValueSpec:
-		c.addRootSpec(n)
-	case *ast.AssignStmt:
-		if len(n.Rhs) == 1 && len(n.Lhs) > 0 && c.isOpenRoot(n.Rhs[0]) {
-			if id, ok := n.Lhs[0].(*ast.Ident); ok {
-				c.roots[id.Name] = true
-			}
-		}
-	}
-	return true
-}
-
-// addRootSpec records the names of a var spec typed *os.Root or initialised from os.OpenRoot.
-func (c *sourceChecker) addRootSpec(vs *ast.ValueSpec) {
-	if c.isRootType(vs.Type) {
-		c.addRootNames(vs.Names)
-		return
-	}
-	// os.OpenRoot returns (*os.Root, error), so its root is always the first name of its pair.
-	for i, v := range vs.Values {
-		if i < len(vs.Names) && c.isOpenRoot(v) {
-			c.roots[vs.Names[i].Name] = true
-		}
-	}
-}
-
-func (c *sourceChecker) addRootNames(names []*ast.Ident) {
-	for _, id := range names {
-		c.roots[id.Name] = true
-	}
-}
-
-// isRootType reports whether expr is *os.Root, under any import alias or a dot import.
-func (c *sourceChecker) isRootType(expr ast.Expr) bool {
-	star, ok := expr.(*ast.StarExpr)
-	if !ok {
-		return false
-	}
-	switch x := star.X.(type) {
-	case *ast.SelectorExpr:
-		return c.isPkgSel(x, "os", "Root")
-	case *ast.Ident:
-		return x.Name == "Root" && c.imports[".os"] == "os"
-	}
-	return false
-}
-
-// isOpenRoot reports whether expr is a call of os.OpenRoot.
-func (c *sourceChecker) isOpenRoot(expr ast.Expr) bool {
-	call, ok := expr.(*ast.CallExpr)
-	if !ok {
-		return false
-	}
-	switch fn := call.Fun.(type) {
-	case *ast.SelectorExpr:
-		return c.isPkgSel(fn, "os", "OpenRoot")
-	case *ast.Ident:
-		return fn.Name == "OpenRoot" && c.imports[".os"] == "os"
-	}
-	return false
-}
-
-// isRootExpr reports whether expr yields an *os.Root, or is the method-expression receiver
-// (*os.Root).
-func (c *sourceChecker) isRootExpr(expr ast.Expr) bool {
-	switch x := expr.(type) {
-	case *ast.Ident:
-		return c.roots[x.Name]
-	case *ast.SelectorExpr:
-		return c.roots[x.Sel.Name]
-	case *ast.ParenExpr:
-		return c.isRootType(x.X) || c.isRootExpr(x.X)
-	case *ast.CallExpr:
-		return c.isOpenRoot(x)
-	}
-	return false
 }
 
 // checkPackageVars flags every package-level variable that is not an allowed form (SPEC §5.4).
