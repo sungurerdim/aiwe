@@ -2,6 +2,7 @@ package core
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -65,7 +66,7 @@ func TestOwnedRemoveCloseError(t *testing.T) {
 	for _, c := range []struct {
 		what string
 		kept bool
-	}{{"owned root", true}, {"owned directory", true}, {"removal root", false}} {
+	}{{"owned root", true}, {"owned directory", true}, {"removal root", false}, {"held directory", false}} {
 		t.Run(c.what, func(t *testing.T) {
 			o := removeTestOpen(t, removeTestRoots(t, t.TempDir()))
 			d := removeTestCreate(t, o, TempRoot)
@@ -107,5 +108,30 @@ func TestRemoveDirEntryCloseError(t *testing.T) {
 	}
 	if _, err := os.Lstat(filepath.Join(root, name)); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("empty dir %q left after removeDirEntry: %v", name, err)
+	}
+}
+
+// TestSweepRemovalCloseError catches a failed close on the sweep removal path lost before the
+// caller of Sweep (§5.15): a close that fails while the directory of a dead owner goes, whether it
+// passed the ownership check or is an empty orphan, must be returned by Sweep.
+func TestSweepRemovalCloseError(t *testing.T) {
+	for _, c := range []struct {
+		what  string
+		owned bool
+	}{{"held directory", true}, {"removal root", true}, {"held directory", false}} {
+		t.Run(fmt.Sprintf("%s, owned %v", c.what, c.owned), func(t *testing.T) {
+			r := sweepTestRoots(t)
+			d := sweepTestCreate(t, sweepTestOpen(t, r, sweepTestDeadProcess(t)), TempRoot)
+			if !c.owned {
+				if err := os.Remove(filepath.Join(d.Path(), markerFile)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			testFailClose(t, c.what)
+			rep, err := sweepTestOpen(t, r, sweepTestSelf(t)).Sweep(t.Context())
+			if !errors.Is(err, errTestClose) {
+				t.Errorf("Sweep with a failing close of the %s = %+v, %v; want %v", c.what, rep, err, errTestClose)
+			}
+		})
 	}
 }
