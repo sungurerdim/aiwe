@@ -156,7 +156,7 @@ A test whose source is not yet in the tree passes only while a §14 Files cell l
 
 | # | Rule | Serves | Enforcement |
 |---|---|---|---|
-| DR-1 | The engine runs unattended: every wait has a time limit, every stop has a name, irreversible actions sit behind the engine's own key. | M2 | test `engine/lifecycle_test.go` (every exit path returns a named outcome) |
+| DR-1 | The engine runs unattended: every wait has a time limit, every stop has a name, irreversible actions sit behind the engine's own key. That key is the owner's terminal-only approval of the plan digest (§7.9); it is not a stored secret. | M2 | test `engine/lifecycle_test.go` (every exit path returns a named outcome) |
 | DR-2 | Work whose answer is determined by its input is code, never a model call. | M4 | judgement: auditor (a new model call site needs a stated reason) |
 | DR-3 | The engine adapts to project, agent, harness and provider by the adaptation ladder (§7.7) and never guesses. | S1, S3 | test `engine/synthesis_test.go` |
 | DR-4 | Ladder rungs: (1) mechanical derivation; (2) an agent-made artefact, produced by one role, verified by another, proved on the base commit, stored with provenance; (3) the owner, for product decisions only. | S3 | test `engine/synthesis_test.go`; ledger `kind = artefact` |
@@ -198,7 +198,7 @@ A test whose source is not yet in the tree passes only while a §14 Files cell l
 | DR-40 | The product needs nothing installed except git on Windows, macOS and Linux: no language runtime, tool or framework; it ships as one binary per OS and architecture (§6.2). | S1 | CI step `clean-os-smoke` (§12.2) |
 | DR-41 | Shipped code links only the Go standard library, `golang.org/x/*` and the official MCP Go SDK, plus the modules these require; any other module needs a stated reason and an owner decision. | S1, M3 | check `repo/deps` (modules of `go list -deps ./cmd/...` against the allow-list); gate step `vuln` |
 | DR-42 | Every element — workflow, job, step, gate step, release step, document section, code path — exists only if it is necessary; each CI and release step states its reason in one clause, and a step without one is removed. | S2, M5 | check `repo/ci-shape` (a step without a `# why:` comment is red; prints workflow, job and step counts); CI job `required` reports duration and step count per run (§12.2); judgement: auditor checklist item "is every new element necessary?" |
-| DR-43 | The engine reaches a provider only through its official interface — the provider's own CLI, logged in by the user, or an API key; it never reads, stores, proxies or rewrites subscription credentials or OAuth traffic, and never reuses a subscription login outside the provider's own CLI (§17); the README states this rule to the user (§12.1). | S1 | contract suite `adapters/providertest` (no read of a harness credential store; HTTP only to the source's base URL); judgement: security-reviewer on every adapter change (§9.1) |
+| DR-43 | aiwe holds no credential. It reaches a provider account only through the provider's own CLI login, made by the user (for example `gh auth login`, `opencode auth login`), or through an API key read from an environment variable. It never stores, caches, encrypts, prompts for or manages a credential, API key, token or secret. It may read an API key from its environment variable and pass it to the child process that needs it; it never writes the key anywhere. A harness keeps its login only through its own flag or config-dir variable; aiwe never copies or links a login file. It never reads, proxies or rewrites subscription credentials or OAuth traffic, and never reuses a subscription login outside the provider's own CLI (§17). Masking and the payload scan (§11) stay; they hold nothing. `owner.key` (§5.15) is not a provider credential. The README states this rule to the user (§12.1). | S1 | contract suite `adapters/providertest` (no read of a harness credential store; HTTP only to the source's base URL); judgement: security-reviewer on every adapter change (§9.1) |
 | DR-44 | The engine never runs a general-purpose agent: every run carries one role card; the role is resolved mechanically from the unit's kind, type, labels and paths (§9.1); a unit whose role does not resolve does not start (`role_unresolved`). | S3, S7 | test `engine/role_test.go` (every resolution row, and an unresolvable unit) |
 | DR-45 | A behaviour unit (§8.4) has at least one Done item ending in `— test: <path>` that names the test and the failure it catches; a code unit without a source path carries a one-line `test-exempt` reason instead; the unit parser refuses a unit that breaks either half (`invalid`). | S5, M3 | test `engine/unit_test.go` (`TestUnitTestItem`: a behaviour unit without a test item, an exempt unit with a source path) |
 | DR-46 | aiwe is built with aiwe. Every standard aiwe applies to the projects it manages applies equally to its own development, with no exemptions. Until the self-hosting point, the lead session and its role-specific agents apply the standard by hand; no external agent runs outside aiwe. Once a capability merges, aiwe itself takes over that step. | S4, M3 | hand-over table and self-hosting point (§14); each hand-over unit has a Done item for it; after the self-hosting point a unit worked outside aiwe is a defect and is recorded as one: CI flags a unit commit on `main` without a `Run-Id` trailer (§12.2, Q17; test `repocheck/run_id_test.go`, unit 1.29); judgement: auditor |
@@ -409,8 +409,8 @@ symlink leaves that root. The state root and every user directory stay outside (
 temp or cache root (env overrides included) that is, or contains, the user's home, the state root, a
 canonical repository or a file-system root, that is a symlink or junction, or that is not
 owner-only, is refused (`root_unsafe`), the same as the state root. The `owned_dir` record and
-the `.owner` marker carry an HMAC-SHA256 under a key in `<state>/owner.key`; the key never enters a
-run environment (DR-35), so a run cannot forge a marker from what it is given. Below `os-sandbox` a
+the `.owner` marker carry an HMAC-SHA256 under a key in `<state>/owner.key`. This key is the engine's local state-ownership key, not a
+provider credential (DR-43). The key never enters a run environment (DR-35), so a run cannot forge a marker from what it is given. Below `os-sandbox` a
 run can still read the state root itself (§6.7). Benefit: a user directory cannot reach removal, by
 type and at run time. Enforced: DR-25.
 
@@ -643,10 +643,11 @@ Serves DR-35, DR-16.
   dropped when its value has a `:` after a `://` and an `@` after that `:`; the check is
   fail-closed and drops such a value even without a password. A value without `://`, such as an
   scp-style git address, is not checked. The
-  adapter adds back only its own source's credential. It also drops the parent shell's identity
+  adapter adds back only its own source's API key, read from its `credentialEnv` variable; it writes
+  the key nowhere (DR-43). It also drops the parent shell's identity
   variables (listed in the adapter) and starts the harness with user-level rules, memory, hooks and
-  plugins off, through the harness's documented flag or an isolated config home that keeps the
-  login (U28). `HOME` points to the run's scratch directory. `GIT_CONFIG_NOSYSTEM=1` and an
+  plugins off, through the harness's documented flag or config-dir variable, which keeps the harness's own
+  login (U28). aiwe never copies or links a login file (DR-43). `HOME` points to the run's scratch directory. `GIT_CONFIG_NOSYSTEM=1` and an
   environment-set `credential.helper` with an empty value clear git's credential helpers, and
   `GIT_TERMINAL_PROMPT=0` stops git from asking (§17). `GIT_CONFIG_GLOBAL` points to the null
   device, so no user-level git setting such as `core.askPass` applies (`core/env.go`). Push stays the engine's (DR-18). These are
@@ -1404,15 +1405,16 @@ type Tracker interface {
 }
 ```
 - The GitHub adapter calls the REST API, and GraphQL only where REST lacks the call, over HTTPS
-  with `net/http`. No tracker CLI is used.
-- Token resolution, first hit wins: `GH_TOKEN`, `GITHUB_TOKEN`, then `git credential fill` for the
-  remote host. The token is held in memory for the call, never stored, never logged, never placed in
-  a run environment (DR-18).
+  with `net/http` when the token comes from the environment.
+- Access, first hit wins: `GH_TOKEN`, then `GITHUB_TOKEN`, then the user's `gh` CLI login. With the
+  `gh` login, the adapter makes the same calls through `gh api` and never reads the login's token
+  (DR-43). A token from the environment is held in memory for the call, never stored, never
+  logged, never placed in a run environment (DR-18).
 - Least permissions (default; unit 1.25 proves them): a fine-grained token on the managed repository
   with Contents read and write, Issues read and write, Pull requests read and write, Actions read
   and Metadata read. A missing
-  permission ends the call with its `403` outcome. A token from `git credential fill` is used as it
-  is.
+  permission ends the call with its `403` outcome. A token from the environment or the `gh` login
+  is used as it is.
 - Every write passes masking and the payload scan first (§11); a text that fails the scan is not
   sent.
 - Pull requests, a built-in GitHub element (DR-31): `pr-create` is REST
@@ -1527,7 +1529,7 @@ No issue form and no pull-request template: templates come from the tool (DR-34)
    a goal is split by aiwe's architect role or by your own session from aiwe's template, and every
    unit is validated mechanically before work starts (§7.2).
 3. **Supported providers**: the command `aiwe adapters list`, which prints the compiled adapter list
-   (§5.2); the README never copies that list. One sentence states DR-43.
+   (§5.2); the README never copies that list. One paragraph states DR-43.
 4. **Risk**: below `os-sandbox` an agent runs with your rights, as in other coding agent tools
    (§6.7).
 5. Install (§6.2), first run and MCP registration (§6.3).
@@ -1642,7 +1644,7 @@ Rules:
   Fixed, every other type → Changed). The repository has no `CHANGELOG.md`, and CI never commits to
   `main`.
 - Provenance: one GitHub artifact attestation; users verify with `gh attestation verify` (optional;
-  the product never needs gh) or with `checksums.txt`. Rejected: cosign — a second tool and a
+  verification never needs gh) or with `checksums.txt`. Rejected: cosign — a second tool and a
   second signature for the same claim. SBOM file: §15; the binary already carries its module list
   (`go version -m`, §17).
 - Code signing: Q7.
@@ -2059,7 +2061,7 @@ No open question remains. Each decision keeps its id; other sections cite it.
 | Q15 | Release notes (owner, 2026-10-10): GoReleaser writes each release's notes from the commits, in Keep a Changelog layout, into the GitHub Release (§12.3). The repository keeps no `CHANGELOG.md`; CI never commits to `main`. Each pull request prints the computed version and the notes as a dry run (§12.2). |
 | Q16 | Visibility (owner, 2026-10-10): the repository starts private and becomes public at Gate 1. GitHub private vulnerability reporting is for public repositories (§17), so the reporting channel of `SECURITY.md` opens at Gate 1. |
 | Q17 | `Run-Id` scope (owner, 2026-10-10): the CI check applies only to a commit that closes or references a unit issue (an issue whose body has the unit preamble, §8.4). Dependabot and outside pull requests pass normal review and CI; the check lists their commits as `external` (DR-46, §12.2). A commit that references a `runnable: owner` unit (3.10) is listed as `owner`, never as a defect: an owner unit is never dispatched, so it has no run. |
-| Q18 | Gate 1 target (owner, 2026-10-10): the private sandbox repository `aiwe-sandbox` under the owner's account, created on 2026-10-10. aiwe reaches it with the owner's own git and GitHub credentials (§14). |
+| Q18 | Gate 1 target (owner, 2026-10-10): the private sandbox repository `aiwe-sandbox` under the owner's account, created on 2026-10-10. aiwe reaches it through `GH_TOKEN`, `GITHUB_TOKEN` or the owner's `gh` CLI login (§10.1, DR-43). |
 | Q19 | Sandbox (owner, 2026-10-10): the MVP runs agents at sandbox level `env-scrub`; a stronger level comes after Gate 1 and is required before the first live operation (§6.7, §15). README and SECURITY state the open risk. |
 | Q20 | CI minutes (owner, 2026-10-10): Windows and macOS tests run only when `os-variant` is on (an OS-specific file, `go.mod` or `ci.yml` changed), at a phase gate (`workflow_dispatch` with `all-os`) and before a live release; every other push tests on Linux only (§12.2, U29). |
 | Q21 | Branch model (owner, 2026-10-10): trunk-based, no development branch. Each unit works on a short-lived run branch and merges through its own pull request: CI runs on the pull request, and the engine squash-merges it when CI is green and the head equals the audited tip; batch gate and bisect work on pull requests (DR-19, §7.3 steps 14–16). Before the self-hosting point the lead session does the same by hand (§14). |
@@ -2342,8 +2344,8 @@ the facts above.
   without adding a dependency. Measured by unit 3.8.
 - U27 Whether argv survives as separate arguments through an access method such as a remote shell
   client. Deferred with Phase 4: measured by unit 4.4 before the first live operation.
-- U28 Per harness and OS, which config isolation keeps the user's login (one harness on macOS needs
-  the login keychain; Linux and Windows not measured). Measured by unit 1.12.
+- U28 Per harness and OS, which harness flag or config-dir variable keeps the user's login without
+  aiwe copying or linking a login file (DR-43) (one harness on macOS needs the login keychain; Linux and Windows not measured). Measured by unit 1.12.
 - U29 GitHub Actions minutes for private repositories on the owner's plan: the aiwe repository
   runs CI while it is private (Q16), and `aiwe-sandbox` runs its fixture CI (Q18). Measured by unit
   0.12: the `required` job prints the month's minutes per OS against the plan (§17, Q20).
