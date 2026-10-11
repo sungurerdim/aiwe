@@ -402,7 +402,7 @@ func (o *Owner) CreateOwned(ctx context.Context, root OwnedRoot, owner string) (
 func (o *Owner) RemoveOwned(ctx context.Context, d OwnedDir) error                              // checks root, marker, record; retries locks
 ```
 `CreateOwned` and `RemoveOwned` are methods of `core.Owner`. `core.Owner` holds the roots and the
-ledger key, injected as §5.4 describes.
+owner key, injected as §5.4 describes.
 Removal refuses unless all four hold: the real path is under the temp root or the cache root, the
 ledger holds an `owned_dir` record for it, the marker file `.owner` matches that record, and no
 symlink leaves that root. The state root and every user directory stay outside (Q14). At start, a
@@ -2279,8 +2279,9 @@ Facts checked on 2026-10-10:
   `PUT /repos/{owner}/{repo}/pulls/{pull_number}/merge` with `merge_method` `merge`, `squash` or
   `rebase`, `commit_title`, `commit_message`, and `sha`, the SHA the head must match to allow the
   merge. Source: docs.github.com, REST pulls, checked 2026-10-10.
-- Lead machine (Windows 11 x64, measured 2026-10-11): Go 1.27.2 with `CGO_ENABLED=0`; gcc,
-  GoReleaser, golangci-lint and svu are not on `PATH`.
+- Lead machine (Windows 11 x64, measured 2026-10-11): Go 1.25.7 installed; inside the module
+  `GOTOOLCHAIN=auto` runs Go 1.27.2; `CGO_ENABLED=0`; gcc, GoReleaser, golangci-lint and svu are
+  not on `PATH`.
 
 Unknown. Each open item names the unit whose Done item measures it before the engine relies on it,
 or why no measurement is needed. The measured value is that unit's evidence (§8.4) and then moves to
