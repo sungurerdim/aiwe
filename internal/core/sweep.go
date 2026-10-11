@@ -2,6 +2,8 @@ package core
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -83,7 +85,7 @@ func (o *Owner) sweepDead(ctx context.Context, name string, recs []ownedRecord) 
 
 // removeEmptyDir removes name under rootPath when it is a directory, not a link, with no entries; it
 // reports whether name was removed. It works through an os.Root, which never leaves rootPath, and
-// Root.Remove never removes a directory that holds an entry.
+// removes only the directory its check saw (removeDirEntry); a file never goes.
 func removeEmptyDir(rootPath, name string) bool {
 	rt, err := os.OpenRoot(rootPath)
 	if err != nil {
@@ -94,7 +96,59 @@ func removeEmptyDir(rootPath, name string) bool {
 	if err != nil || fi.Mode().Type() != fs.ModeDir {
 		return false
 	}
-	return rt.Remove(name) == nil
+	if removeEmptyCheckedHook != nil {
+		removeEmptyCheckedHook(name)
+	}
+	return removeDirEntry(rt, name, fi) == nil
+}
+
+// removeEmptyCheckedHook, when set, runs right after removeEmptyDir has checked name and before it
+// removes it; a test uses it to swap name at that point.
+var removeEmptyCheckedHook func(name string)
+
+// removeLastCheckedHook, when set, runs right after removeOnce has checked the emptied name for the
+// last time and before it removes it; a test uses it to swap name at that point.
+var removeLastCheckedHook func(name string)
+
+// removeDirEntry removes name under rt only when it is the empty directory fi describes. Go has no
+// portable call that removes a directory through its own handle, and Root.Remove also removes a
+// file, so name first moves into a new directory with a random name, where it is checked again and
+// removed only while it is still that directory. Anything else under name, or a directory that
+// still holds an entry, moves back and is kept; a swapped name fails with ErrNotOwned.
+func removeDirEntry(rt *os.Root, name string, fi fs.FileInfo) error {
+	suffix := make([]byte, dirSuffixBytes)
+	if _, err := rand.Read(suffix); err != nil {
+		return fmt.Errorf("remove %q: %w", name, err)
+	}
+	// A leading '.' fails plainName, so this name never meets an owned one.
+	aside := ".remove-" + hex.EncodeToString(suffix)
+	if err := rt.Mkdir(aside, 0o700); err != nil {
+		return fmt.Errorf("remove %q: %w", name, err)
+	}
+	moved := filepath.Join(aside, filepath.Base(name))
+	if err := rt.Rename(name, moved); err != nil {
+		return errors.Join(err, rt.Remove(aside))
+	}
+	now, err := rt.Lstat(moved)
+	if err == nil && (now.Mode().Type() != fs.ModeDir || !os.SameFile(fi, now)) {
+		err = fmt.Errorf("%w: %q was swapped after the check (a link is never followed)", ErrNotOwned, name)
+	}
+	if err == nil {
+		err = rt.Remove(moved)
+	}
+	if err != nil {
+		err = errors.Join(err, moveBack(rt, moved, name))
+	}
+	return errors.Join(err, rt.Remove(aside))
+}
+
+// moveBack moves moved back to name when name is free; when name is taken again, moved stays
+// where it is and the error names that place, so nothing under name is replaced.
+func moveBack(rt *os.Root, moved, name string) error {
+	if _, err := rt.Lstat(name); !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("%q is kept at %q: its name is taken again", name, moved)
+	}
+	return rt.Rename(moved, name)
 }
 
 // removeCheckedHook, when set, runs right after removeOnce has checked name and before it opens it;
@@ -144,6 +198,7 @@ func removeTree(ctx context.Context, rootPath, name string, approved fs.FileInfo
 // checked once without following it and must be the directory want describes, then opened once as
 // a sub-root that must be the same directory; the entries are removed through that sub-root, so a
 // name swapped after the check, such as for a link, is never followed and fails with ErrNotOwned.
+// name itself goes only while it is still that directory (removeDirEntry).
 func removeOnce(rt *os.Root, name string, want fs.FileInfo) error {
 	fi, err := approvedEntry(rt, name, want)
 	if fi == nil || err != nil {
@@ -162,11 +217,13 @@ func removeOnce(rt *os.Root, name string, want fs.FileInfo) error {
 	if err := errors.Join(emptyOwned(sub, name, fi), sub.Close()); err != nil {
 		return err
 	}
-	// Root.Remove never follows a link and never removes a directory that holds an entry.
 	if err := sameEntry(rt, name, fi); err != nil {
 		return err
 	}
-	return rt.Remove(name)
+	if removeLastCheckedHook != nil {
+		removeLastCheckedHook(name)
+	}
+	return removeDirEntry(rt, name, fi)
 }
 
 // approvedEntry returns the file info of name under rt, read without following it. It returns nil
