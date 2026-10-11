@@ -2,10 +2,7 @@ package gates
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"io/fs"
-	"os"
 	"strings"
 
 	"github.com/sungurerdim/aiwe/internal/core"
@@ -57,30 +54,6 @@ func runGate(ctx context.Context, in core.Input) (core.Result[any], error) {
 	return gateOutcome(report), nil
 }
 
-// engineOwner opens the engine owner under the resolved roots, with repo as the canonical
-// repository it must keep out of reach (SPEC §6.4, §5.15). Every check runs in roots this owner
-// makes, so a gate with no owner refuses: an unsafe or unresolved root keeps its named outcome.
-func engineOwner(repo string) (*core.Owner, error) {
-	roots, err := core.UserRoots()
-	if err != nil {
-		return nil, ownerRefusal(err)
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, ownerRefusal(fmt.Errorf("%w: home: %w", core.ErrRootUnsafe, err))
-	}
-	self, err := core.CurrentProcess()
-	if err != nil {
-		return nil, ownerRefusal(err)
-	}
-	owner, err := core.OpenOwner(core.OwnedRoots{State: roots.State, Temp: roots.Temp, Cache: roots.Cache,
-		Home: home, Canonical: []string{repo}}, self)
-	if err != nil {
-		return nil, ownerRefusal(err)
-	}
-	return owner, nil
-}
-
 // ownerRefusal is the refusal of a gate whose engine owner did not open. Its outcome is the one the
 // cause names in the outcome table, and so is its next action (BC-1).
 func ownerRefusal(err error) error {
@@ -106,26 +79,6 @@ func stepNames(params map[string]string) ([]string, error) {
 	return ids, nil
 }
 
-// readDefinition reads and parses gate.json at the repository root. A missing file is an error,
-// never a green gate (DR-13).
-func readDefinition(repo string) (Definition, error) {
-	path, err := core.ResolvePath(repo, "gate.json")
-	if err != nil {
-		return Definition{}, err
-	}
-	data, err := os.ReadFile(path)
-	switch {
-	case errors.Is(err, fs.ErrNotExist):
-		return Definition{}, &core.Error{Outcome: core.OutcomeError, Expected: "a gate.json at the repository root",
-			Found: fmt.Sprintf("no file at %q", path), Next: "add gate.json (SPEC §8.3), or pass the --repo that holds it",
-			Err: err}
-	case err != nil:
-		return Definition{}, &core.Error{Outcome: core.OutcomeError, Expected: "a readable gate.json",
-			Found: err.Error(), Next: "make gate.json readable, then run the gate again", Err: err}
-	}
-	return ParseDefinition(data)
-}
-
 // gateOutcome maps a gate report to its result: the status and outcome come from the outcome table.
 func gateOutcome(report GateReport) core.Result[any] {
 	res := core.Result[any]{Status: core.StatusOK, Outcome: core.OutcomeOK, Data: report}
@@ -148,6 +101,9 @@ func gateDetail(report GateReport) string {
 	fmt.Fprintf(&b, "gate %s", report.Result)
 	if report.Partial {
 		b.WriteString(" (partial)")
+	}
+	if report.Detail != "" {
+		fmt.Fprintf(&b, " (%s)", report.Detail)
 	}
 	for _, s := range report.Steps {
 		fmt.Fprintf(&b, "\n  %s: %s", s.ID, s.Result)

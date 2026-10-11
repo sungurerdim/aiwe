@@ -230,7 +230,7 @@ func runSourceRules(_ context.Context, repo string) ([]repocheck.Finding, error)
 	cfg := repocheck.SourceRulesConfig{Product: core.Product, ProductFile: productFile}
 	var found []repocheck.Finding
 	for _, f := range repocheck.SourceRules(cfg, files) {
-		found = append(found, repocheck.Finding{Rule: f.Rule, Path: f.Path, Line: f.Line})
+		found = append(found, repocheck.Finding(f))
 	}
 	return found, nil
 }
