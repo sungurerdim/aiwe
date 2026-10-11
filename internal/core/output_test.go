@@ -203,8 +203,8 @@ func TestOutput(t *testing.T) {
 		},
 		{
 			name:   "plain Unicode, RTL script, newline and tab altered on the way out",
-			detail: "İıŞşĞğ 仓库 مستودع 🚀 é\nC:\\Users\\x\tnext",
-			want:   "ok: İıŞşĞğ 仓库 مستودع 🚀 é\nC:\\Users\\x\tnext\n",
+			detail: "İıŞşĞğ 仓库 مستودع 🚀 é\ndocs\\plan.md\tnext",
+			want:   "ok: İıŞşĞğ 仓库 مستودع 🚀 é\ndocs\\plan.md\tnext\n",
 		},
 	}
 	for _, tc := range escapes {
