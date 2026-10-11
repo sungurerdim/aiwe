@@ -5,9 +5,26 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"testing"
+	"time"
 )
+
+// runnerSleepEnv makes this test binary a helper step that runs for runnerSleepFor and then exits
+// with code 1, the code a Windows job gives a process it stops. It is portable and opens no window.
+const (
+	runnerSleepEnv = "AIWE_GATES_TEST_SLEEP"
+	runnerSleepFor = 30 * time.Second
+)
+
+func init() {
+	if os.Getenv(runnerSleepEnv) != "1" {
+		return
+	}
+	time.Sleep(runnerSleepFor)
+	os.Exit(1)
+}
 
 // runnerTestGo returns the absolute path of the go tool that runs this test. Its subcommands give
 // a real child process with a known exit code on every OS: `go version` exits 0 and `go help` on
@@ -49,6 +66,12 @@ func TestRunner(t *testing.T) {
 	expectTwo := red
 	expectTwo.ID = "tidy"
 	expectTwo.Expect = Expect{ExitCode: 2}
+	rejects := green1
+	rejects.ID = "deadcode"
+	rejects.Expect = Expect{ExitCode: 0, OutputRejects: `\S`}
+	matches := green2
+	matches.ID = "repo"
+	matches.Expect = Expect{ExitCode: 0, OutputMatches: `^ok$`}
 
 	cases := []struct {
 		name string
@@ -78,6 +101,15 @@ func TestRunner(t *testing.T) {
 		{name: "declared exit code", catches: "a step judged by exit code 0 instead of its declared expect.exitCode (SPEC §8.3)",
 			steps: []GateStep{green1, expectTwo}, gate: "green",
 			stepResult: map[string]string{"format": "green", "tidy": "green"}},
+		{name: "output expectation without capture", catches: "a step that declares outputRejects or outputMatches read green on its exit code alone, though the runner never saw its output (DR-13)",
+			steps: []GateStep{rejects, matches}, gate: "incomplete",
+			stepResult: map[string]string{"deadcode": "not_measured", "repo": "not_measured"}},
+		{name: "unrun step before red step", catches: "an unmeasured step hiding a red step, so the gate reads incomplete instead of red: red beats incomplete (#116)",
+			steps: []GateStep{missing, red}, gate: "red",
+			stepResult: map[string]string{"lint": "not_measured", "vuln": "red"}},
+		{name: "partial run with red step", catches: "a --step run whose run step is red reported incomplete instead of red: red beats incomplete (#116)",
+			steps: []GateStep{green1, red}, only: []string{"vuln"}, gate: "red", partial: true,
+			stepResult: map[string]string{"vuln": "red"}, notGreen: []string{"format"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -151,6 +183,33 @@ func TestRunnerNothingRun(t *testing.T) {
 		if string(s.Result) == "green" {
 			t.Errorf("step %q reported green although its context ended before it started", s.ID)
 		}
+	}
+}
+
+// TestRunnerTimeout catches a step stopped at its timeoutSeconds read green because the stopped
+// process happened to exit with the declared code: a step that ran out of time never exited on its
+// own, so it is not_measured and the gate is not green (DR-13, DR-15).
+func TestRunnerTimeout(t *testing.T) {
+	t.Setenv(runnerSleepEnv, "1")
+	slow := GateStep{ID: "test", Command: []string{os.Args[0], "-test.run=^$"}, Required: true,
+		TimeoutSeconds: 1, Expect: Expect{ExitCode: 1}}
+	def := Definition{FormatVersion: 1, Steps: []GateStep{slow}}
+	start := time.Now()
+	report, err := (&Runner{}).Run(context.Background(), def, t.TempDir(), nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if took := time.Since(start); took >= runnerSleepFor {
+		t.Errorf("the step ran %v; timeoutSeconds 1 did not stop it before its %v sleep ended", took, runnerSleepFor)
+	}
+	if len(report.Steps) != 1 {
+		t.Fatalf("reported steps = %+v, want the one declared step", report.Steps)
+	}
+	if s := report.Steps[0]; s.Result != ResultNotMeasured || s.ExitCode != exitUnknown {
+		t.Errorf("a timed-out step reported result %q exit code %d, want %q and %d", s.Result, s.ExitCode, ResultNotMeasured, exitUnknown)
+	}
+	if report.Result == ResultGreen {
+		t.Errorf("a gate whose only step timed out reported green")
 	}
 }
 
@@ -248,6 +307,25 @@ func TestRepositoryGate(t *testing.T) {
 	for _, want := range []string{"format", "lint", "vuln", "tidy", "deadcode", "repo", "test"} {
 		if !slices.Contains(got, want) {
 			t.Errorf("gate.json steps %v lack the SPEC §12.2 step %q", got, want)
+		}
+	}
+
+	// gofmt -l and gofmt -d exit 0 even when a file is not formatted (measured on go1.27.2), so a
+	// format step judged by exit code alone is always green. It must reject any listed file.
+	unformatted := "internal/gates/runner.go\n"
+	for _, s := range def.Steps {
+		if s.ID != "format" {
+			continue
+		}
+		if s.Expect.OutputRejects == "" {
+			t.Fatalf("catches a format step that is green on gofmt's exit code alone: gate.json format step %+v has no outputRejects", s)
+		}
+		re, err := regexp.Compile(s.Expect.OutputRejects)
+		if err != nil {
+			t.Fatalf("format outputRejects %q: %v", s.Expect.OutputRejects, err)
+		}
+		if !re.MatchString(unformatted) {
+			t.Errorf("catches a format step that passes a listed unformatted file: outputRejects %q does not match %q", s.Expect.OutputRejects, unformatted)
 		}
 	}
 }
