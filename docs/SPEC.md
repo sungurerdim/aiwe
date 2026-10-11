@@ -976,7 +976,8 @@ Serves S1, S2.
     { "id": "api-b", "adapter": "openai-chat", "provider": "<provider-id>", "kind": "api",
       "credentialEnv": "B_API_KEY", "baseUrlEnv": "B_BASE_URL", "models": ["<model-id>"],
       "spendCap": { "usd": 50, "since": "<date>" } },
-    { "id": "api-c", "adapter": "openai-chat", "kind": "api", "credentialEnv": "C_API_KEY", "models": ["<model-id>"] } ],
+    { "id": "api-c", "adapter": "openai-chat", "provider": "<provider-id>", "kind": "api",
+      "credentialEnv": "C_API_KEY", "models": ["<model-id>"] } ],
   "roleModels": { "engineer": [ { "source": "api-b", "model": "<model-id>" },
                                 { "source": "sub-a", "model": "<model-id>" } ] } }
 ```
@@ -996,14 +997,15 @@ Serves S1, S2.
 - **Spend cap** `spendCap {usd, since}`, optional per source. When it is set, the ledger's
   `CostUSD` of that source since `since` is compared with `usd`; at the cap the source becomes
   `capped` and receives no run. When it is unset, the source has no spend limit. A cap on a source
-  whose cost kind is `unknown` (`no_price` or `subscription`) is refused (DR-13). Any `unknown`
+  whose `CostUSD` is always `unknown` (`UnknownReason` `no_price` or `subscription`, §8.5) is
+  refused (DR-13). Any `unknown`
   `CostUSD` since `since` (for example a price aged out under DR-21, or `no_usage_data`) reads
   spend `not_measured` and sets the source `capped`. The cap is checked at route time; runs
   already in flight may pass it.
 - `credentialEnv` may not name `GH_TOKEN`, `GITHUB_TOKEN` or another tracker token variable
   (§10.1); such a row is refused, so a tracker token never reaches a run (DR-18).
-- An `api` source without a resolvable base URL (from `baseUrlEnv` or its provider data) is
-  refused.
+- An `api` source without a resolvable base URL is refused. The base URL is `baseUrlEnv` when it
+  is set, else `baseUrl` of its provider data (§10.2).
 - `opsTrusted: true` marks a source the user trusts with operation units (§7.9); absent = false.
 - **Concurrent-run ceiling** (DR-7, Q13): it starts at 1, rises by one after 10 consecutive clean
   runs (default) up to `maxConcurrent` when the row sets it, and falls by one, minimum 1, on a
@@ -1505,7 +1507,8 @@ type Provider interface {
 - **Provider data** `adapters/providers/<provider>.json` (embedded, one file per provider,
   `formatVersion`, fail-closed like §8). It holds the provider-specific fields, so a new
   OpenAI-compatible API or a known CLI harness is one data file and one source row (DR-6):
-  `id`; `adapter`; `reasoning {request, carry}` (request parameters, and reply fields returned
+  `id`; `adapter`; `baseUrl` (https only; the source's `baseUrlEnv`, when set, overrides it);
+  `reasoning {request, carry}` (request parameters, and reply fields returned
   between turns); `errors [{status, code, class}]` (maps a structured error to a §7.6 class);
   `balance {path, field, currency}` or absent (the endpoint of §7.6 item 6; `balance.path` is a
   relative path resolved on the source's own base URL, https only); for a CLI harness
