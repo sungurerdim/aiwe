@@ -2,7 +2,9 @@ package core
 
 import (
 	"bytes"
+	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -225,5 +227,39 @@ func TestProcessStartOfChild(t *testing.T) {
 func TestRealPathEmpty(t *testing.T) {
 	if got, err := realPath(""); err == nil {
 		t.Errorf("realPath(\"\") = %q, nil; want an error", got)
+	}
+}
+
+// TestOwnedCauseWrapped catches a refusal that drops its cause (§5.15): a root or an owned
+// directory that cannot be read fails with its sentinel, and errors.Is must still find the file
+// system error under it, so a caller can tell a missing path from another failure.
+func TestOwnedCauseWrapped(t *testing.T) {
+	base := t.TempDir()
+	dir := filepath.Join(base, "temp")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	di, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	missing := filepath.Join(base, "missing")
+	_, realDirErr := realDir(namedPath{"home", missing})
+	_, missingRootErr := (&Owner{}).checkOwnedContent(missing, "run-20261012-0001", ownedRecord{})
+	_, missingNameErr := (&Owner{}).checkOwnedContent(dir, "run-20261012-0001", ownedRecord{})
+	for _, c := range []struct {
+		name     string
+		err      error
+		sentinel error
+	}{
+		{"realDir of a missing home", realDirErr, ErrRootUnsafe},
+		{"checkRootSafe of a missing root", checkRootSafe(namedPath{"temp root", missing}, nil), ErrRootUnsafe},
+		{"checkAncestors of a missing home", checkAncestors(di, namedPath{"temp root", dir}, namedPath{"home", missing}), ErrRootUnsafe},
+		{"checkOwnedContent under a missing root", missingRootErr, ErrNotOwned},
+		{"checkOwnedContent of a missing name", missingNameErr, ErrNotOwned},
+	} {
+		if !errors.Is(c.err, c.sentinel) || !errors.Is(c.err, fs.ErrNotExist) {
+			t.Errorf("%s = %v; want %v that wraps %v", c.name, c.err, c.sentinel, fs.ErrNotExist)
+		}
 	}
 }
