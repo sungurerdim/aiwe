@@ -31,7 +31,10 @@ const (
 	kindOwnedDir       = "owned_dir"
 	maxOwnerKeyBytes   = 4096
 	maxLedgerLine      = 4 << 20
-	ownerOnlyFix       = "%w; next: remove the access of every other user from %q, or delete it so the next %s run makes it owner-only" // §5.10
+	// openRootFix and foreignRootFix end the refusal of a path, %q, open to another user or owned
+	// by one, with the step that fixes it; %s is the product (SPEC §5.10).
+	openRootFix    = "; next: delete %q so the next %s run makes it owner-only, or remove the access of every other user from it"
+	foreignRootFix = "; next: delete %q, or give its ownership to the user that runs %s"
 )
 
 // ownedRecord is the owned_dir line of the ledger, the TempDirRecord of SPEC §8.5 with the fields
@@ -93,7 +96,7 @@ func loadOwnerKey(state string) ([]byte, error) {
 		ownerKeyTakenHook()
 	}
 	if err := checkOwnerOnlyFile(f, p); err != nil {
-		return nil, fmt.Errorf(ownerOnlyFix, err, p, Product)
+		return nil, err
 	}
 	b, err := io.ReadAll(io.LimitReader(f, maxOwnerKeyBytes+1))
 	if err != nil {
@@ -116,10 +119,7 @@ func openOwnerOnlyRoot(state string) (*os.Root, error) {
 	if err != nil {
 		return nil, errors.Join(fmt.Errorf("%w: owner-only check of %q: %v", ErrRootUnsafe, state, err), rt.Close())
 	}
-	if err := checkOwnerOnlyFile(dir, state); err != nil {
-		return nil, errors.Join(fmt.Errorf(ownerOnlyFix, err, state, Product), dir.Close(), rt.Close())
-	}
-	if err := dir.Close(); err != nil {
+	if err := errors.Join(checkOwnerOnlyFile(dir, state), dir.Close()); err != nil {
 		return nil, errors.Join(err, rt.Close())
 	}
 	return rt, nil

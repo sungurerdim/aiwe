@@ -40,8 +40,8 @@ func Outcomes() []OutcomeRow {
 		{Outcome: "not_owned", Status: StatusError, Err: ErrNotOwned,
 			Next: "leave the directory in place: its ledger record does not prove this process made it"},
 		{Outcome: "root_unsafe", Status: StatusError, Err: ErrRootUnsafe,
-			Next: "make the root the detail names an absolute directory apart from the repository that no other user can " +
-				"read or write; the detail names the step"},
+			Next: "make the root the detail names an absolute directory apart from the repository, not a link, owned by " +
+				"the user that runs " + Product + " and open to no other user"},
 		{Outcome: "residue_locked", Status: StatusError, Err: ErrResidueLocked,
 			Next: "close the process that holds a file in the directory the detail names; the next sweep retries"},
 		{Outcome: "footprint_exceeded", Status: StatusError, Err: ErrFootprintExceeded,

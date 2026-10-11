@@ -65,11 +65,12 @@ func checkOwnerOnlySD(p string, sd *windows.SECURITY_DESCRIPTOR, err error) erro
 	}
 	owner, _, err := sd.Owner()
 	if err != nil || owner == nil || !sidIn(owner, trusted) {
-		return fmt.Errorf("%w: %q is not owned by the current user, SYSTEM or Administrators", ErrRootUnsafe, p)
+		return fmt.Errorf("%w: %q is not owned by the current user, SYSTEM or Administrators"+foreignRootFix, ErrRootUnsafe, p,
+			p, Product)
 	}
 	dacl, _, err := sd.DACL()
 	if err != nil || dacl == nil {
-		return fmt.Errorf("%w: %q has no DACL, so everyone can read and write it", ErrRootUnsafe, p)
+		return fmt.Errorf("%w: %q has no DACL, so everyone can read and write it"+openRootFix, ErrRootUnsafe, p, p, Product)
 	}
 	for i := uint32(0); i < uint32(dacl.AceCount); i++ {
 		var ace *windows.ACCESS_ALLOWED_ACE
@@ -98,7 +99,7 @@ func checkOwnerOnlyACE(p string, ace *windows.ACCESS_ALLOWED_ACE, trusted []*win
 		return nil
 	}
 	return fmt.Errorf("%w: %q grants %s access mask %#x; only the current user, SYSTEM and "+
-		"Administrators may read or write it", ErrRootUnsafe, p, sid, uint32(ace.Mask))
+		"Administrators may read or write it"+openRootFix, ErrRootUnsafe, p, sid, uint32(ace.Mask), p, Product)
 }
 
 // mkdirOwnerOnly makes the state, temp or cache root p, and any missing parent, when p is missing
