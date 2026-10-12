@@ -8,7 +8,7 @@ import (
 	"github.com/sungurerdim/aiwe/internal/core"
 )
 
-// The outcomes of a gate that does not hold; each is a row of core.Outcomes (BC-1).
+// The outcomes of a gate that does not hold; each is a row of core.Outcomes.
 const (
 	outcomeRed        core.Outcome = "red"
 	outcomeIncomplete core.Outcome = "incomplete"
@@ -24,7 +24,7 @@ func Commands() []core.Command {
 
 // runGate runs the gate of <repo>/gate.json, or only the steps --step names, and maps the gate
 // result to one outcome: green is ok, red is red, anything else is incomplete. A red or
-// incomplete gate never exits 0 (BC-1, DR-6).
+// incomplete gate never exits 0 (DR-6).
 func runGate(ctx context.Context, in core.Input) (core.Result[any], error) {
 	repo, ok := in.Params["repo"]
 	if !ok {
@@ -55,7 +55,7 @@ func runGate(ctx context.Context, in core.Input) (core.Result[any], error) {
 }
 
 // ownerRefusal is the refusal of a gate whose engine owner did not open. Its outcome is the one the
-// cause names in the outcome table, and so is its next action (BC-1).
+// cause names in the outcome table, and so is its next action.
 func ownerRefusal(err error) error {
 	outcome := core.ErrorResult(err).Outcome
 	return &core.Error{Outcome: outcome, Expected: "an engine owner over the resolved state, cache and temp roots",

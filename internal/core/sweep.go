@@ -25,7 +25,7 @@ type ownedTemp struct {
 }
 
 // Sweep removes every owned temp directory whose owner process is dead (DR-11); a pid that runs
-// under another start time is a reused pid, so its owner is dead too (U13), except a ProcessID
+// under another start time is a reused pid, so its owner is dead too, except a ProcessID
 // built by hand on Linux: it has no exact start identity, so its owner counts as alive while its
 // pid runs (DR-11). A registered directory of a dead owner that fails the ownership checks is
 // removed only when it is an empty directory, such as one left by a crash before its marker; any

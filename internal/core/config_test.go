@@ -392,7 +392,7 @@ func TestConfig(t *testing.T) {
 	t.Run("config_invalid missing from the outcome table", func(t *testing.T) {
 		row, ok := outcomeTable(t)["config_invalid"]
 		if !ok {
-			t.Fatal("outcome config_invalid is not a row of core.Outcomes() (BC-1)")
+			t.Fatal("outcome config_invalid is not a row of core.Outcomes()")
 		}
 		if !errorsTestBare(row.Err, core.ErrConfigInvalid) || row.Status != core.StatusError || row.Next == "" {
 			t.Errorf("config_invalid row = %+v, want Err core.ErrConfigInvalid, status error and a next action", row)

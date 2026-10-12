@@ -213,7 +213,7 @@ func describe(r checkResult) string {
 	return line
 }
 
-// runRules checks repo against the rules its spec states (SPEC §3, §12.1).
+// runRules checks that repo holds the repository files of SPEC §12.1 (L2).
 func runRules(_ context.Context, repo string) ([]repocheck.Finding, error) {
 	return repocheck.Rules(repo)
 }

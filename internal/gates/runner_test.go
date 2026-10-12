@@ -104,10 +104,10 @@ func TestRunner(t *testing.T) {
 		{name: "every step green", catches: "a gate of green steps not reported green, or a step dropped from the report",
 			steps: []GateStep{green1, green2}, gate: "green",
 			stepResult: map[string]string{"format": "green", "test": "green"}},
-		{name: "partial run", catches: "a --step run that leaves a declared step unrun reported green instead of incomplete (DR-10, SPEC §7.8)",
+		{name: "partial run", catches: "a --step run that leaves a declared step unrun reported green instead of incomplete (DR-6, SPEC §7.8)",
 			steps: []GateStep{green1, green2}, only: []string{"format"}, gate: "incomplete", partial: true,
 			stepResult: map[string]string{"format": "green"}, notGreen: []string{"test"}},
-		{name: "missing tool", catches: "a step that could not start reported green, or dropped so the gate reads green (DR-10, DR-13)",
+		{name: "missing tool", catches: "a step that could not start reported green, or dropped so the gate reads green (DR-6)",
 			steps: []GateStep{green1, missing, green2}, gate: "incomplete",
 			stepResult: map[string]string{"format": "green", "lint": "not_measured", "test": "green"}},
 		{name: "red step", catches: "a step that exits non-zero reported green, or the gate not red",
@@ -116,7 +116,7 @@ func TestRunner(t *testing.T) {
 		{name: "declared exit code", catches: "a step judged by exit code 0 instead of its declared expect.exitCode (SPEC §8.3)",
 			steps: []GateStep{green1, expectTwo}, gate: "green",
 			stepResult: map[string]string{"format": "green", "tidy": "green"}},
-		{name: "output expectation without capture", catches: "a step that declares outputRejects or outputMatches read green on its exit code alone, though the runner never saw its output (DR-13)",
+		{name: "output expectation without capture", catches: "a step that declares outputRejects or outputMatches read green on its exit code alone, though the runner never saw its output (DR-6)",
 			steps: []GateStep{rejects, matches}, gate: "incomplete",
 			stepResult: map[string]string{"deadcode": "not_measured", "repo": "not_measured"}},
 		{name: "unrun step before red step", catches: "an unmeasured step hiding a red step, so the gate reads incomplete instead of red: red beats incomplete (#116)",
@@ -158,7 +158,7 @@ func TestRunner(t *testing.T) {
 	}
 }
 
-// TestRunnerExitCode catches a red step reported without the exit code that made it red (BC-4).
+// TestRunnerExitCode catches a red step reported without the exit code that made it red.
 func TestRunnerExitCode(t *testing.T) {
 	green1, _, red, _ := runnerTestSteps(t)
 	def := Definition{FormatVersion: 1, Steps: []GateStep{green1, red}}
@@ -351,7 +351,7 @@ func TestParseDefinition(t *testing.T) {
 			`{"steps":[{"id":"test","command":["go","test","./..."]}]}`},
 		{"misspelt field", "a misspelt field such as requried silently dropped (fail-closed, SPEC §4)",
 			`{"formatVersion":1,"steps":[{"id":"test","command":["go","test","./..."],"requried":true}]}`},
-		{"zero steps", "an empty gate accepted, so nothing is measured (DR-13)",
+		{"zero steps", "an empty gate accepted, so nothing is measured (DR-6)",
 			`{"formatVersion":1,"steps":[]}`},
 		{"not json", "a truncated file read as an empty gate", `{"formatVersion":1,"steps":[`},
 		{"empty file", "an empty file read as an empty gate", ``},

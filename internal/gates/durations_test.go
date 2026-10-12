@@ -62,24 +62,24 @@ FAIL	` + durationsTestModule + `/internal/gates [build failed]
 			wantErr: true,
 		},
 		{
-			name:    "empty output measured no package and is refused, not read as an empty green list (DR-13)",
+			name:    "empty output measured no package and is refused, not read as an empty green list (DR-6)",
 			input:   "",
 			wantErr: true,
 		},
 		{
-			name:    "blank lines alone measured no package and are refused (DR-13)",
+			name:    "blank lines alone measured no package and are refused (DR-6)",
 			input:   "\n  \n\n",
 			wantErr: true,
 		},
 		{
-			name: "test events without a package end measured no package and are refused (DR-13)",
+			name: "test events without a package end measured no package and are refused (DR-6)",
 			input: `{"Time":"2026-10-11T09:14:02.2Z","Action":"run","Package":"` + durationsTestModule + `/internal/core","Test":"TestMeasured"}
 {"Time":"2026-10-11T09:14:04.9Z","Action":"pass","Package":"` + durationsTestModule + `/internal/core","Test":"TestMeasured","Elapsed":2.61}
 `,
 			wantErr: true,
 		},
 		{
-			name:    "a package end without Elapsed measured no duration and is refused, never read as 0 (DR-13)",
+			name:    "a package end without Elapsed measured no duration and is refused, never read as 0 (DR-6)",
 			input:   `{"Time":"2026-10-11T09:14:14.5Z","Action":"pass","Package":"` + durationsTestModule + `/internal/core"}` + "\n",
 			wantErr: true,
 		},
@@ -139,7 +139,7 @@ func testDurationsPrepare(t *testing.T) {
 				}
 			}
 			if want := []string{"-p=" + strconv.Itoa(tc.workers)}; !slices.Equal(p, want) {
-				t.Errorf("command %q sets parallelism %q, want %q from DR-7", got.Command, p, want)
+				t.Errorf("command %q sets parallelism %q, want %q from DR-3", got.Command, p, want)
 			}
 			for _, a := range before {
 				if !slices.Contains(got.Command, a) {
@@ -187,8 +187,8 @@ func testDurationsCheck(t *testing.T) {
 		limit   time.Duration
 		current []PackageDuration
 	}{
-		{"no package list is not_measured, not green (DR-13)", limit, nil},
-		{"an empty package list is not_measured, not green (DR-13)", limit, []PackageDuration{}},
+		{"no package list is not_measured, not green (DR-6)", limit, nil},
+		{"an empty package list is not_measured, not green (DR-6)", limit, []PackageDuration{}},
 		{"no step limit cannot judge a package", 0, []PackageDuration{{core, 12 * time.Second}}},
 	}
 	for _, tc := range unmeasuredCases {

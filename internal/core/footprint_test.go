@@ -89,7 +89,7 @@ func footprintTestWriteFiles(t *testing.T, dir string, n, size int) {
 	}
 }
 
-// TestFootprint catches contract BC-2: a test that makes temporary directories and leaves
+// TestFootprint catches a test that makes temporary directories and leaves
 // one behind; and a state or cache over its byte or file ceiling that is not red (DR-11, §6.4).
 func TestFootprint(t *testing.T) {
 	ctx := context.Background()
@@ -104,7 +104,7 @@ func TestFootprint(t *testing.T) {
 		}
 	})
 
-	// BC-2: each case is a test that makes temporary directories; a leftover must be counted
+	// Each case is a test that makes temporary directories; a leftover must be counted
 	// and must turn the footprint red.
 	bc2 := []struct {
 		name        string
@@ -151,7 +151,7 @@ func TestFootprint(t *testing.T) {
 		}, 0},
 	}
 	for _, tc := range bc2 {
-		t.Run("BC-2 "+tc.name, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			r := footprintTestRoots(t)
 			tc.run(t, r)
 			o := footprintTestOpen(t, r, footprintTestSelf(t))
