@@ -254,6 +254,21 @@ func TestOutput(t *testing.T) {
 		}
 	})
 
+	// An error result that is not a core.Error, such as an incomplete gate, lists one step per line;
+	// escaping its newlines would flatten the list into one line (#200).
+	t.Run("text escape/step lines of an incomplete error result flattened into one line", func(t *testing.T) {
+		var buf bytes.Buffer
+		r := core.Result[any]{Status: core.StatusError, Outcome: core.Outcome("incomplete"),
+			Detail: "gate incomplete\n  build: green\n  test: not measured\tunknown"}
+		if err := core.WriteResult(&buf, core.FormatText, r); err != nil {
+			t.Fatalf("WriteResult(text) error = %v", err)
+		}
+		want := "error: gate incomplete\n  build: green\n  test: not measured\tunknown\n"
+		if got := buf.String(); got != want {
+			t.Fatalf("text output = %q, want %q", got, want)
+		}
+	})
+
 	// A refusal is one line (SPEC §5.10): a newline or CR in Expected, Found or Next would fake a
 	// second result line (#200).
 	lineFakes := []struct {
@@ -287,6 +302,11 @@ func TestOutput(t *testing.T) {
 			}
 			if got := buf.String(); got != tc.want {
 				t.Fatalf("text refusal = %q, want %q", got, tc.want)
+			}
+		})
+		t.Run("refusal message/"+tc.name, func(t *testing.T) {
+			if msg := tc.err.Error(); strings.ContainsAny(msg, "\n\r\t") {
+				t.Fatalf("core.Error message spans more than one line: %q", msg)
 			}
 		})
 		t.Run("json refusal/"+tc.name, func(t *testing.T) {
