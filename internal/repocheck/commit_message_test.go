@@ -10,6 +10,9 @@ import (
 // ref is the issue line every valid test message carries (SPEC §12.3).
 const ref = "\n\nRefs octo-org/widget#153\n"
 
+// slug is the <owner>/<repo> of the repository the test messages are committed to.
+const slug = "octo-org/widget"
+
 // TestCommitMessage catches a commit message outside Conventional Commits that passes the check,
 // and a valid one that the check refuses (SPEC §4, §12.3).
 func TestCommitMessage(t *testing.T) {
@@ -39,11 +42,13 @@ func TestCommitMessage(t *testing.T) {
 		{"scope with a slash and a dot", "perf(core/process.go): one spawn per gate step" + ref},
 		{"revert type", "revert: feat(core): one result envelope" + ref},
 		{"style type", "style: gofmt the gate package" + ref},
-		{"Closes line instead of Refs", "fix: the gate step reports its exit code\n\nCloses octo-org/widget#7\n"},
+		{"Closes line with its Effect line", "fix: the gate step reports its exit code\n\n" +
+			"Effect: 3 silent exits → 0 silent exits\nCloses octo-org/widget#7\n"},
+		{"Refs to another repository", "docs: the spec names the hook\n\nRefs octo-org/gadget#12\n"},
 	}
 	for _, tc := range valid {
 		t.Run("accepts "+tc.name, func(t *testing.T) {
-			if got := CommitMessage(tc.msg); len(got) != 0 {
+			if got := CommitMessage(tc.msg, slug); len(got) != 0 {
 				t.Fatalf("CommitMessage(%q) = %+v, want no finding", tc.msg, got)
 			}
 		})
@@ -88,10 +93,17 @@ func TestCommitMessage(t *testing.T) {
 		{"issue line below the scissors line",
 			"fix: the gate step\n# ------------------------ >8 ------------------------\nRefs octo-org/widget#153\n",
 			"missing_issue_ref", 0},
+		{"Closes without an Effect line", "fix: the gate step\n\nCloses octo-org/widget#7\n", "missing_effect", 0},
+		{"Effect line without an arrow",
+			"fix: the gate step\n\nEffect: fewer silent exits\nCloses octo-org/widget#7\n", "missing_effect", 0},
+		{"Closes naming another repository",
+			"fix: the gate step\n\nEffect: 3 → 0\nCloses octo-org/gadget#7\n", "closes_other_repo", 4},
+		{"Closes naming a repository of another owner",
+			"fix: the gate step\n\nEffect: 3 → 0\nCloses other-org/widget#7\n", "closes_other_repo", 4},
 	}
 	for _, tc := range invalid {
 		t.Run("refuses "+tc.name, func(t *testing.T) {
-			got := CommitMessage(tc.msg)
+			got := CommitMessage(tc.msg, slug)
 			if !slices.ContainsFunc(got, func(f Finding) bool { return f.Rule == tc.rule && f.Line == tc.line }) {
 				t.Fatalf("CommitMessage(%q) = %+v, want a %s finding at line %d", tc.msg, got, tc.rule, tc.line)
 			}
@@ -99,15 +111,28 @@ func TestCommitMessage(t *testing.T) {
 	}
 
 	t.Run("names the message as the path of every finding", func(t *testing.T) {
-		for _, f := range CommitMessage("Add things\nno blank line\n") {
+		for _, f := range CommitMessage("Add things\nno blank line\n", slug) {
 			if f.Path != commitMessagePath {
 				t.Fatalf("finding %+v has path %q, want %q", f, f.Path, commitMessagePath)
 			}
 		}
 	})
 
+	t.Run("a Closes line with an unknown repository is refused", func(t *testing.T) {
+		got := CommitMessage("fix: the gate step\n\nEffect: 3 → 0\nCloses octo-org/widget#7\n", "")
+		if !slices.ContainsFunc(got, func(f Finding) bool { return f.Rule == "closes_repo_unknown" && f.Line == 4 }) {
+			t.Fatalf("CommitMessage with no repository = %+v, want a closes_repo_unknown finding at line 4", got)
+		}
+	})
+
+	t.Run("a Refs line with an unknown repository is accepted", func(t *testing.T) {
+		if got := CommitMessage("fix: the gate step\n\nRefs octo-org/widget#7\n", ""); len(got) != 0 {
+			t.Fatalf("CommitMessage with no repository = %+v, want no finding", got)
+		}
+	})
+
 	t.Run("an empty message yields only the empty finding", func(t *testing.T) {
-		got := CommitMessage("")
+		got := CommitMessage("", slug)
 		if len(got) != 1 || got[0].Rule != ruleEmptyMessage {
 			t.Fatalf("CommitMessage(\"\") = %+v, want one empty_message finding", got)
 		}
@@ -136,7 +161,7 @@ func fill(t *testing.T, prefix string, n int) string {
 func TestCommitMessageLengths(t *testing.T) {
 	findings := func(msg, rule string) []Finding {
 		var out []Finding
-		for _, f := range CommitMessage(msg) {
+		for _, f := range CommitMessage(msg, slug) {
 			if f.Rule == rule {
 				out = append(out, f)
 			}
@@ -189,8 +214,13 @@ func TestCommitMessageLengths(t *testing.T) {
 			{"indented command",
 				"    " + fill(t, "go test -count=1 -run TestCommitMessage ./internal/repocheck/", 80), false, false},
 			{"tab-indented output", "\t" + fill(t, "--- FAIL: TestCommitMessageLengths/body_line ", 80), false, false},
-			{"quoted output", "> " + fill(t, "commit_message_test.go:42: CommitMessage(...) = [] ", 80), false, false},
+			{"long URL with long prose", fill(t, "See https://github.com/octo-org/widget/issues/153 and ", 126),
+				true, false},
+			{"back quote span followed by prose", "`go vet` " + fill(t, "reports nothing ", 117), true, false},
+			{"prose quoted with a greater-than sign", "> " + fill(t, "The engine ", 124), true, false},
 			{"command in back quotes", "`" + fill(t, "go vet ./internal/repocheck/ ", 78) + "`", false, false},
+			{"two back quote spans", "`go vet` " + fill(t, "and `go test ./internal/repocheck/", 115) + "`",
+				true, false},
 		}
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {
@@ -215,10 +245,53 @@ func TestCommitMessageLengths(t *testing.T) {
 		}
 	})
 
+	t.Run("an unclosed fence exempts nothing", func(t *testing.T) {
+		msg := "test(gates): the step times out\n\nThe run printed:\n\n```\n" +
+			fill(t, "The engine ", 126) + ref
+		if got := findings(msg, "body_line_length"); len(got) != 1 || got[0].Line != 6 {
+			t.Fatalf("body_line_length findings %+v after an unclosed fence, want one at line 6", got)
+		}
+	})
+
+	t.Run("text after the fence marker is checked", func(t *testing.T) {
+		msg := "test(gates): the step times out\n\n```" + fill(t, "sh The engine ", 123) + "\ngo test\n```\n" + ref
+		if got := findings(msg, "body_line_length"); len(got) != 1 || got[0].Line != 3 {
+			t.Fatalf("body_line_length findings %+v on a fence line with prose, want one at line 3", got)
+		}
+	})
+
 	t.Run("a long line below the scissors line is not checked", func(t *testing.T) {
 		msg := "docs: the spec names the hook" + ref + scissorsLine + "\n" + fill(t, "+The engine ", 120) + "\n"
 		if got := findings(msg, "body_line_length"); len(got) != 0 {
 			t.Fatalf("body_line_length findings %+v below the scissors line, want none", got)
 		}
 	})
+}
+
+// TestRepoSlug catches a remote URL whose <owner>/<repo> is misread, so a Closes line to another
+// repository passes, and an unreadable URL that yields a slug instead of none (SPEC §12.3).
+func TestRepoSlug(t *testing.T) {
+	cases := []struct {
+		url  string
+		want string
+	}{
+		{"https://github.com/octo-org/widget.git", "octo-org/widget"},
+		{"https://github.com/octo-org/widget", "octo-org/widget"},
+		{"https://github.com/octo-org/widget/", "octo-org/widget"},
+		{"git@github.com:octo-org/widget.git", "octo-org/widget"},
+		{"ssh://git@github.com/octo-org/widget.git", "octo-org/widget"},
+		{"ssh://git@github.com:22/octo-org/widget.git", "octo-org/widget"},
+		{"https://github.com/octo-org/widget.git\n", "octo-org/widget"},
+		{"", ""},
+		{"github.com", ""},
+		{"https://github.com/widget.git", ""},
+		{"https://github.com/octo org/widget.git", ""},
+		{"../widget", ""},
+		{"D:/repos/widget", ""},
+	}
+	for _, tc := range cases {
+		if got := RepoSlug(tc.url); got != tc.want {
+			t.Errorf("RepoSlug(%q) = %q, want %q", tc.url, got, tc.want)
+		}
+	}
 }
