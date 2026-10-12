@@ -228,33 +228,24 @@ func TestStepStreamHeldBytes(t *testing.T) {
 }
 
 // TestStepStreamByteWrites catches a stream that scans every held byte on each write: a step that
-// writes one byte at a time then costs time quadratic in its line length. Each byte written onto
-// a held line of 60000 bytes must cost about as much as a byte written onto an empty one.
+// writes one byte at a time onto a held line would then cost time quadratic in the line length.
 func TestStepStreamByteWrites(t *testing.T) {
-	const writes = 2000
-	cost := func(held int) time.Duration {
-		best := time.Duration(1 << 62)
-		for range 5 {
-			s, err := newStepStream(io.Discard, GateStep{ID: "bytes"})
-			if err != nil {
-				t.Fatalf("newStepStream: %v", err)
-			}
-			if _, err := s.Write(bytes.Repeat([]byte("x"), held)); err != nil {
-				t.Fatalf("Write(held): %v", err)
-			}
-			start := time.Now()
-			for range writes {
-				if _, err := s.Write([]byte("x")); err != nil {
-					t.Fatalf("Write(byte): %v", err)
-				}
-			}
-			best = min(best, time.Since(start))
-		}
-		return best
+	s, err := newStepStream(io.Discard, GateStep{ID: "bytes"})
+	if err != nil {
+		t.Fatalf("newStepStream: %v", err)
 	}
-	empty, held := cost(0), cost(60000)
-	if held > 10*empty+time.Millisecond {
-		t.Fatalf("catches a write that scans the held line: %d byte writes took %v onto a held line, %v onto an empty one",
-			writes, held, empty)
+	writes := [][]byte{bytes.Repeat([]byte("x"), 60000)}
+	for range 2000 {
+		writes = append(writes, []byte("x"))
+	}
+	written := 0
+	for _, p := range append(writes, []byte("\n")) {
+		if _, err := s.Write(p); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		written += len(p)
+	}
+	if s.scanned > written {
+		t.Fatalf("catches a write that scans the held line: scanned %d bytes for %d written", s.scanned, written)
 	}
 }

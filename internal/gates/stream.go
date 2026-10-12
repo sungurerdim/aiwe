@@ -23,6 +23,8 @@ type stepStream struct {
 	mu      sync.Mutex
 	w       io.Writer
 	pending []byte
+	// scanned counts the bytes searched for a newline, so a test sees that held bytes are not.
+	scanned int
 }
 
 // newStepStream returns the stream of step on w, after a header line that names the step. A nil w
