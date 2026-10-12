@@ -281,7 +281,15 @@ func ownerKeyTestSDDL(t *testing.T, p string) (string, string) {
 	t.Helper()
 	script := "[Security.Principal.WindowsIdentity]::GetCurrent().User.Value; (Get-Acl -LiteralPath '" +
 		strings.ReplaceAll(p, "'", "''") + "').Sddl"
-	out, err := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", script).CombinedOutput()
+	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", script)
+	// Under PowerShell 7 (the GitHub Actions default shell) PSModulePath names PowerShell 7's
+	// module folders first; Windows PowerShell 5.1 then fails to load Get-Acl's module. Without
+	// the variable, 5.1 builds its own default path.
+	cmd.Env = slices.DeleteFunc(os.Environ(), func(kv string) bool {
+		k, _, _ := strings.Cut(kv, "=")
+		return strings.EqualFold(k, "PSModulePath")
+	})
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("read the ACL of %s: %v: %s", p, err, out)
 	}
