@@ -4,58 +4,52 @@ Read this first. It points at the rules; it does not repeat them.
 
 ## What this is
 
-aiwe is an engine that turns a goal issue into verified, merged code through small units, each run
-by a role-specific agent. Go, one binary per OS and architecture. The design and every rule live in
-[docs/SPEC.md](docs/SPEC.md); it is the only source of truth.
+aiwe turns a goal issue into verified, merged code through small units, each run by a role-specific agent. Go, one
+binary per OS and architecture. The design and every rule live in [docs/SPEC.md](docs/SPEC.md); it is the only source
+of truth. The tracker holds the work: one goal issue per milestone, units as its sub-issues (SPEC §13).
 
 ## Checks
 
-An agent never runs the gate, a unit verify, or a test, lint or build command itself (DR-12,
-SPEC §9.4). It asks for its unit verify through `aiwe verify`, and the engine runs it and records
-the result. Until unit 1.4 brings `aiwe verify`, the lead session runs each verify once and records
-it (SPEC §14). Until a release exists, the gate is `go run ./cmd/aiwe gates gate --repo .` (SPEC
-§12.2, §14); the engine or the lead session runs it, and it must exit 0 before a unit is done.
-Until unit 0.7 brings `aiwe gates gate`, the gate result is the unit's own verify (SPEC §14, row
-0.7).
+An agent never runs the gate, a unit verify, or a test, lint or build command itself (DR-8, SPEC §9.4). It asks for
+its unit verify through `aiwe verify`; the engine runs it and records the result. Until `aiwe verify` exists, the lead
+session runs each verify once and records it. Until a release exists, the gate is
+`go run ./cmd/aiwe gates gate --repo .` (SPEC §12.2); the engine or the lead session runs it, and it must exit 0
+before a unit is done.
 
 ## Red lines
 
 Each line names the rule; the rule text is in SPEC §3.
 
-- aiwe is built with aiwe (DR-46); the hand-over points are in SPEC §14. Before the self-hosting
-  point (unit 1.25) only the lead session and its role-specific agents work, by hand, under the
-  same standard. After it, no unit is worked outside aiwe; a unit worked by hand is a defect and is
-  recorded as one. From unit 1.29 on, CI flags a `main` commit that closes or references a unit
-  issue and has no `Run-Id` trailer; Dependabot and outside commits are `external` (Q17).
-- Every piece of work is an issue before it starts, and a finished one closes mechanically (DR-50).
-  Until unit 0.12 brings CI, the closeout records "no workflow on main yet" and closes on the lead
-  session's integration evidence (SPEC §14, row 0.12).
-- Every diff counts from the run's base commit (DR-47).
-- Commit only on your run branch; no push, merge, issue close or tracker write (DR-18).
-- A unit stays inside its declared file set (DR-11, DR-14).
-- Tests are never weakened, skipped or mocked away (DR-28).
-- Absence is not evidence; unmeasured is `unknown`, never `0` (DR-13, DR-21).
-- No machine-specific path, no product name outside its one constant, no recursive removal outside
-  its one owner (DR-25).
-- No new third-party dependency outside the allow-list without an owner decision (DR-41).
-- Source, docs and commit messages are in English; commits follow Conventional Commits (DR-29,
-  SPEC §12.3). A breaking marker needs the owner's approval (SPEC §12.3).
-- Every element must be necessary (DR-42).
+- aiwe is built with aiwe (DR-23). Until M-Skeleton closes, only the lead session and its role-specific agents work, by
+  hand. The lead applies the standard under L5. After M-Skeleton closes, a unit worked outside aiwe is a defect and is
+  recorded as one. From then on, CI flags a `main` commit that closes or references a unit issue and has no `Run-Id`
+  trailer (Q17).
+- Every piece of work is an issue before it starts, and a finished one closes on merge (DR-20, L7).
+- Every diff counts from the run's base commit (DR-9).
+- Commit only on your run branch; no push, merge, issue close or tracker write (DR-13).
+- A unit stays inside its declared file set (DR-7, DR-9).
+- Tests are never weakened, skipped or mocked away (DR-12).
+- Absence is not evidence; unmeasured is `unknown`, never `0` (DR-6).
+- No machine-specific path and no product name outside its one constant (DR-17); no recursive removal outside its one
+  owner (DR-11).
+- No new third-party dependency outside the allow-list without an owner decision (DR-21).
+- Source, docs and commit messages are in English (DR-18); commit messages follow SPEC §12.3. A breaking marker needs
+  the owner's approval.
+- Every element must be necessary (DR-22).
 
 ## Where things are
 
 | Need | Place |
 |---|---|
 | Purpose, users, metrics | SPEC §1 |
-| Design rules DR-1…DR-50 | SPEC §3 |
+| Design rules DR-1…DR-23 | SPEC §3 |
 | Coding rules and patterns | SPEC §4, §5 |
-| Modules and package layout | SPEC §6.1 |
+| Modules, MCP and CLI, disk layout, concurrent sessions | SPEC §6 |
 | Sandbox levels and the open risk | SPEC §6.7 |
-| Unit template | SPEC §8.4 |
+| Issue standard | SPEC §8.4 |
 | Roles and what each may not do | SPEC §9 |
-| Gate, CI and release | SPEC §12 |
-| Behaviour contracts from the previous engine, as Go test cases | SPEC §13.1 |
-| Delivery plan, self-hosting hand-over; one issue per unit, milestone per phase | SPEC §14 |
+| Gate, CI, commit messages and release | SPEC §12 |
+| Milestones | SPEC §13 |
 | Deferred work and its triggers | SPEC §15 |
-| Owner decisions, owner actions and lead tasks | SPEC §16 |
-| Facts and unknowns | SPEC §17 |
+| Decisions | SPEC §16 |
+| Facts and sources | SPEC §17 |
