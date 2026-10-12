@@ -33,21 +33,27 @@ func checkOwnerOnly(p string) error {
 	return checkOwnerOnlySD(p, true, sd, err)
 }
 
-// ownerKeyOpenFlag opens the owner key; an open on Windows does not wait for a writer.
+// ownerKeyOpenFlag opens the owner key and the .owner marker; an open on Windows does not wait for
+// a writer.
 const ownerKeyOpenFlag = os.O_RDONLY
 
 // checkOwnerOnlyFile is checkOwnerOnly on the open file f, named p: the type and the security
 // descriptor are read from the handle, so they belong to the file f reads, whatever p names later.
-// Only a plain file or a directory passes.
+// Only a plain file or a directory passes. A closed f has an invalid handle; it fails with
+// os.ErrClosed, as on Unix, not with the error of a call on that handle.
 func checkOwnerOnlyFile(f *os.File, p string) error {
+	h := windows.Handle(f.Fd())
+	if h == windows.InvalidHandle {
+		return fmt.Errorf("%w: owner-only check of %q: %w", ErrRootUnsafe, p, os.ErrClosed)
+	}
 	fi, err := f.Stat()
 	if err != nil {
-		return fmt.Errorf("%w: owner-only check of %q: %v", ErrRootUnsafe, p, err)
+		return fmt.Errorf("%w: owner-only check of %q: %w", ErrRootUnsafe, p, err)
 	}
 	if t := fi.Mode().Type(); t&^fs.ModeDir != 0 {
 		return fmt.Errorf("%w: owner-only check of %q: a %v is not a plain file or directory", ErrRootUnsafe, p, t)
 	}
-	sd, err := windows.GetSecurityInfo(windows.Handle(f.Fd()), windows.SE_FILE_OBJECT, ownerOnlyInfo)
+	sd, err := windows.GetSecurityInfo(h, windows.SE_FILE_OBJECT, ownerOnlyInfo)
 	return checkOwnerOnlySD(p, fi.IsDir(), sd, err)
 }
 
@@ -58,11 +64,14 @@ const ownerOnlyInfo = windows.OWNER_SECURITY_INFORMATION | windows.DACL_SECURITY
 // dir tells whether p is a directory, which a refusal never names for delete (ownerOnlyNext).
 func checkOwnerOnlySD(p string, dir bool, sd *windows.SECURITY_DESCRIPTOR, err error) error {
 	if err != nil {
-		return fmt.Errorf("%w: owner-only check of %q: %v", ErrRootUnsafe, p, err)
+		return fmt.Errorf("%w: owner-only check of %q: %w", ErrRootUnsafe, p, err)
+	}
+	if sd == nil {
+		return fmt.Errorf("%w: owner-only check of %q: no security descriptor was read", ErrRootUnsafe, p)
 	}
 	trusted, err := ownerOnlySIDs()
 	if err != nil {
-		return fmt.Errorf("%w: owner-only check of %q: %v", ErrRootUnsafe, p, err)
+		return fmt.Errorf("%w: owner-only check of %q: %w", ErrRootUnsafe, p, err)
 	}
 	owner, _, err := sd.Owner()
 	if err != nil || owner == nil || !sidIn(owner, trusted) {
@@ -76,7 +85,7 @@ func checkOwnerOnlySD(p string, dir bool, sd *windows.SECURITY_DESCRIPTOR, err e
 	for i := uint32(0); i < uint32(dacl.AceCount); i++ {
 		var ace *windows.ACCESS_ALLOWED_ACE
 		if err := windows.GetAce(dacl, i, &ace); err != nil {
-			return fmt.Errorf("%w: owner-only check of %q: ACE %d: %v", ErrRootUnsafe, p, i, err)
+			return fmt.Errorf("%w: owner-only check of %q: ACE %d: %w", ErrRootUnsafe, p, i, err)
 		}
 		if err := checkOwnerOnlyACE(p, dir, ace, trusted); err != nil {
 			return err
@@ -86,8 +95,11 @@ func checkOwnerOnlySD(p string, dir bool, sd *windows.SECURITY_DESCRIPTOR, err e
 }
 
 // checkOwnerOnlyACE refuses ace of p when it is neither an allow nor a deny ACE, or when it allows
-// a principal outside trusted a right of ownerOnlyMask.
+// a principal outside trusted a right of ownerOnlyMask. A nil ace cannot be checked, so it is refused.
 func checkOwnerOnlyACE(p string, dir bool, ace *windows.ACCESS_ALLOWED_ACE, trusted []*windows.SID) error {
+	if ace == nil {
+		return fmt.Errorf("%w: owner-only check of %q: an ACE could not be read", ErrRootUnsafe, p)
+	}
 	switch ace.Header.AceType {
 	case windows.ACCESS_DENIED_ACE_TYPE:
 		return nil

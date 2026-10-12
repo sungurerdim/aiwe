@@ -381,14 +381,12 @@ func TestOwnerKeyACL(t *testing.T) {
 		if runtime.GOOS == "windows" {
 			ownerKeyTestGrant(t, key, "(R)")
 		}
-		swap := errors.New("ownerKeyTakenHook never ran")
-		ownerKeyTakenHook = func() { swap = errors.Join(os.Rename(key, key+".open"), os.Rename(key+".good", key)) }
-		t.Cleanup(func() { ownerKeyTakenHook = nil })
-		o, err := OpenOwner(r, self)
+		swap := errors.New("the taken hook never ran")
+		_, err := ownerKeyLoader{taken: func() { swap = errors.Join(os.Rename(key, key+".open"), os.Rename(key+".good", key)) }}.load(r.State)
 		if swap != nil {
-			t.Errorf("ownerKeyTakenHook did not swap the key open to others for the owner-only key: %v", swap)
+			t.Errorf("the taken hook did not swap the key open to others for the owner-only key: %v", swap)
 		}
-		ownerKeyTestRefused(t, "open to others, swapped for the owner-only key after it was taken", key, o, err, false, false)
+		ownerKeyTestRefused(t, "open to others, swapped for the owner-only key after it was taken", key, nil, err, false, false)
 	})
 	if runtime.GOOS != "windows" {
 		t.Skip("the key ACL check is Windows-only; Unix key modes are not measured (#109)")
