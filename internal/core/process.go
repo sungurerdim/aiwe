@@ -38,7 +38,7 @@ type ChildSpec struct {
 
 // Child is a started child process together with every process it starts: its tree. The tree is
 // a process group on Unix and a Job Object on Windows. Wait returns when the child exits; the tree
-// is held until it is empty, StopTree stops it or the context of Start ends (DR-15).
+// is held until it is empty, StopTree stops it or the context of Start ends (DR-11).
 type Child struct {
 	cmd *exec.Cmd
 	// mu serialises the start, the stops and the release of the tree, so a stop never runs

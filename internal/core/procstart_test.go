@@ -50,7 +50,7 @@ func procTestLinuxID(t *testing.T, pid int) string {
 
 // TestCurrentProcess catches an identity of the running process that is not its pid, has no start
 // time or one in the future, changes between two reads, or on Linux is not the exact boot id and
-// start tick of /proc (U13).
+// start tick of /proc.
 func TestCurrentProcess(t *testing.T) {
 	self, err := CurrentProcess()
 	if err != nil {
@@ -84,7 +84,7 @@ func TestCurrentProcess(t *testing.T) {
 	}
 }
 
-// TestStartID catches a start identity that is not exact (U13): on Linux, startID of a running pid
+// TestStartID catches a start identity that is not exact: on Linux, startID of a running pid
 // must be its boot id and start tick, and a gone pid must not run; elsewhere startID must fail, so
 // a record that carries one counts as a live owner.
 func TestStartID(t *testing.T) {
@@ -109,7 +109,7 @@ func TestStartID(t *testing.T) {
 }
 
 // TestProcessStart catches a start time of the running process that is not the OS start time, and a
-// gone pid, or a pid that names no process, read as running (U13).
+// gone pid, or a pid that names no process, read as running.
 func TestProcessStart(t *testing.T) {
 	self, err := CurrentProcess()
 	if err != nil {
@@ -209,7 +209,7 @@ func procTestChild(t *testing.T) (pid int, before, after time.Time) {
 }
 
 // TestProcessStartOfChild catches a start time that is not the moment the process started: one
-// shifted by any amount over a second, or the boot time in place of the start (U13). The start of a
+// shifted by any amount over a second, or the boot time in place of the start. The start of a
 // fresh child must fall between the wall clock read just before and just after it started, within
 // 1 s, plus 20 ms for the 10 ms start tick of Linux.
 func TestProcessStartOfChild(t *testing.T) {

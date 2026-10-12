@@ -215,7 +215,7 @@ func failingRegistry(err error) []core.Command {
 }
 
 // TestCLIFailClosed catches a panic that escapes the result envelope, an error that exits as a
-// decided red or no_change, and a text envelope that names the outcome twice (SPEC §5.3, §5.10).
+// decided red or no_change, and a text envelope that names the outcome twice (SPEC §5.3).
 func TestCLIFailClosed(t *testing.T) {
 	t.Run("recovery set up after argument splitting or format parsing", func(t *testing.T) {
 		f, err := parser.ParseFile(token.NewFileSet(), "cli.go", nil, 0)

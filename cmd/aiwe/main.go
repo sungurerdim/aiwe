@@ -9,7 +9,7 @@ import (
 	"github.com/sungurerdim/aiwe/internal/gates"
 )
 
-// version is the one exception to the package-variable ban (SPEC §5.4): the release build sets it
+// version is the one exception to the package-variable ban (SPEC §5.3): the release build sets it
 // with -ldflags "-X main.version=<tag>", which only works on a package-level string variable.
 var version string
 

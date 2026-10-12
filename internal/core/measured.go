@@ -6,10 +6,10 @@ import (
 	"fmt"
 )
 
-// unknownJSON is the JSON form of a value that was not measured (DR-21).
+// unknownJSON is the JSON form of a value that was not measured (DR-6).
 const unknownJSON = `"unknown"`
 
-// Measured is a price, limit, quota or metric that is either measured or unknown (DR-21, SPEC
+// Measured is a price, limit, quota or metric that is either measured or unknown (DR-6, SPEC
 // §8.5). Unknown is a separate state from 0: the zero Measured is unknown, never a measured 0.
 // The reason for an unknown value lives in the record that holds it, not here.
 type Measured[T int64 | float64] struct {

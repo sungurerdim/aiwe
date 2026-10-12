@@ -22,7 +22,7 @@ type OutcomeRow struct {
 	Err     error
 }
 
-// Outcomes returns the one outcome table (SPEC §5.3, §5.5): every outcome used in code is a row.
+// Outcomes returns the one outcome table (SPEC §5.3, §5.1): every outcome used in code is a row.
 func Outcomes() []OutcomeRow {
 	return []OutcomeRow{
 		{Outcome: OutcomeOK, Status: StatusOK, Next: "read the data of the result"},
@@ -55,7 +55,7 @@ func Outcomes() []OutcomeRow {
 }
 
 // ownerOnlyNext returns the next step that fixes the refusal of p, open to another user or, when
-// foreign, owned by one (SPEC §5.10, §5.15). A directory is never named for delete: it may be the
+// foreign, owned by one (SPEC §5.3, §5.15). A directory is never named for delete: it may be the
 // home, a repository or a file-system root. A file, such as the owner key, is deleted first, so a
 // key another user could read is replaced rather than kept.
 func ownerOnlyNext(p string, dir, foreign bool) string {
@@ -134,7 +134,7 @@ func classify(err error) OutcomeRow {
 // ErrorResult maps err to its result: the outcome, status and exit code come from the outcome table.
 // The detail is one line: an error that is not a *Error, such as a wrapped OS error that names a
 // path, has each LF, CR and tab escaped (#223). A wrapped *Error's "<outcome>: " moves to the start
-// of the detail, so the text envelope names the outcome once (SPEC §5.10).
+// of the detail, so the text envelope names the outcome once (SPEC §5.3).
 func ErrorResult(err error) Result[any] {
 	r := classify(err)
 	return Result[any]{Status: r.Status, Outcome: r.Outcome, Detail: lineEscape(outcomeFirst(err))}

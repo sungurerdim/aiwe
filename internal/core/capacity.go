@@ -5,13 +5,13 @@ import (
 	"runtime"
 )
 
-// The limits that can bind a worker count (DR-7).
+// The limits that can bind a worker count (DR-3).
 const (
 	boundCoresPerJob = "cores/jobs"
 	boundMinimum     = "minimum"
 )
 
-// Capacity is a worker count chosen from measured cores and concurrent jobs (DR-7).
+// Capacity is a worker count chosen from measured cores and concurrent jobs (DR-3).
 type Capacity struct {
 	Cores Measured[int64]
 	Jobs  int
@@ -38,7 +38,7 @@ func (c Capacity) bound() string {
 	return boundMinimum
 }
 
-// String prints the chosen worker count with its inputs and the limit that bound it (DR-7).
+// String prints the chosen worker count with its inputs and the limit that bound it (DR-3).
 func (c Capacity) String() string {
 	cores := "unknown"
 	if c.Cores.Known {
@@ -62,7 +62,7 @@ func MeasureCores() Measured[int64] {
 	return Measured[int64]{Value: int64(n), Known: true}
 }
 
-// Workers is the worker count for jobs concurrent jobs on the measured cores (DR-7).
+// Workers is the worker count for jobs concurrent jobs on the measured cores (DR-3).
 func Workers(jobs int) int {
 	return CapacityFor(MeasureCores(), jobs).Workers
 }

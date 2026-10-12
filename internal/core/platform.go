@@ -9,7 +9,7 @@ import (
 )
 
 // Product is the one product name constant; directory and env variable names derive from it
-// (DR-25).
+// (DR-17).
 const Product = "aiwe"
 
 // ErrRootUnresolved reports a disk root that neither its override nor its OS convention resolves.
@@ -27,7 +27,7 @@ func productEnv(suffix string) string {
 	return strings.ToUpper(Product) + "_" + suffix
 }
 
-// UserRoots resolves the disk roots of this process on the host OS (DR-37).
+// UserRoots resolves the disk roots of this process on the host OS (DR-3).
 func UserRoots() (Roots, error) {
 	return ResolveRoots(runtime.GOOS, LookupEnv, processHome())
 }
@@ -63,7 +63,7 @@ func resolveRoot(goos string, getenv func(string) string, suffix string, convent
 // checkedDir returns v of name, cleaned, when it is an absolute local directory below a file
 // system root; overrides and the convention variables pass it. A .. element, a network, long-path
 // or NT device form and a bare root are refused, since cleaning or following them can differ from
-// the OS walk (fail-closed, DR-37). A trailing separator is cleaned away, not taken as a root.
+// the OS walk (fail-closed, DR-3). A trailing separator is cleaned away, not taken as a root.
 // On windows a component ending in a space or a dot is refused too, since Windows strips it.
 func checkedDir(goos, name, v string) (string, error) {
 	dir, err := absDir(name, v)

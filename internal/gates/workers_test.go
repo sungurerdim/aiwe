@@ -33,7 +33,7 @@ func init() {
 	os.Exit(0)
 }
 
-// TestWorkers pins DR-7 for the test step's argv: one `-p=N` goes into a `go test` command and
+// TestWorkers pins DR-3 for the test step's argv: one `-p=N` goes into a `go test` command and
 // nowhere else; the test binary's own flags after `-args` stay as declared; no `-p`, `--p` or
 // `--p=` of the declared command survives to override N.
 func TestWorkers(t *testing.T) {
@@ -110,7 +110,7 @@ func workersFakeGo(t *testing.T) string {
 }
 
 // TestRunnerWorkers catches the gate's test step run without the measured worker count, or run
-// without printing that count with its inputs (DR-7). The declared gate stays untouched.
+// without printing that count with its inputs (DR-3). The declared gate stays untouched.
 func TestRunnerWorkers(t *testing.T) {
 	goBin := workersFakeGo(t)
 	cases := []struct {
@@ -153,7 +153,7 @@ func TestRunnerWorkers(t *testing.T) {
 
 // TestRunnerWorkersRequired catches a test step run with an assumed worker count: a Runner with no
 // chosen capacity leaves the step not_measured, the gate not green, and the fake go tool never
-// starts (DR-7, DR-13).
+// starts (DR-3, DR-6).
 func TestRunnerWorkersRequired(t *testing.T) {
 	goBin := workersFakeGo(t)
 	argvFile := filepath.Join(t.TempDir(), "argv.txt")

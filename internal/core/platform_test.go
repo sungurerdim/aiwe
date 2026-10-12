@@ -127,7 +127,7 @@ func TestPlatform(t *testing.T) {
 	sep := string(filepath.Separator)
 	for _, tc := range []struct{ name, override string }{
 		// Cleaning a path with .. can differ from the OS walk through a link, so the root is
-		// refused rather than cleaned (fail-closed, DR-37).
+		// refused rather than cleaned (fail-closed, DR-3).
 		{"override with a .. element accepted instead of refused, since cleaning can differ from the OS walk",
 			ovState + sep + ".." + sep + "elsewhere"},
 		{"override with a trailing .. element accepted instead of refused", ovState + sep + "x" + sep + ".."},
@@ -259,7 +259,7 @@ func platformConventionChecks(t *testing.T) {
 		}
 	}
 	// A windows convention value with a component ending in a space or a dot is refused like an
-	// override: Windows strips it and walks another path (DR-37). The rule is read from the goos
+	// override: Windows strips it and walks another path (DR-3). The rule is read from the goos
 	// argument, not the host: the windows cases fail on a POSIX host and the POSIX controls fail on
 	// a windows host when the convention checks ignore goos.
 	for _, stripped := range []struct{ name, value string }{
@@ -365,7 +365,7 @@ func platformUserRoots(t *testing.T) {
 
 // platformTrailingSpaceOrDot checks that a windows override whose path has a component ending in
 // a space or a dot is refused: Windows strips the space or dot and walks another path than the
-// one checked (DR-37). The rule is read from the goos argument, so it runs on every host OS; on
+// one checked (DR-3). The rule is read from the goos argument, so it runs on every host OS; on
 // POSIX such a name is an ordinary directory and stays accepted.
 func platformTrailingSpaceOrDot(t *testing.T) {
 	sep := string(filepath.Separator)

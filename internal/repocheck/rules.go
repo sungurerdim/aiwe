@@ -1,39 +1,25 @@
 package repocheck
 
 import (
-	"encoding/json"
 	"fmt"
 	"regexp"
-	"slices"
 	"strings"
 
 	"github.com/sungurerdim/aiwe/internal/core"
 )
 
-// The rule names of check repo/rules (SPEC §3, §12.1).
-const (
-	ruleMissingTest     = "missing_test"
-	ruleMissingRepoFile = "missing_repo_file"
-	ruleEmptyServes     = "empty_serves"
-	ruleMissingGateStep = "missing_gate_step"
-)
+// ruleMissingRepoFile is the one rule of check repo/rules (SPEC §12.1, L2).
+const ruleMissingRepoFile = "missing_repo_file"
 
-// specFile is the one source of truth that check repo/rules reads (SPEC §3).
+// specFile is the spec whose §12.1 list names the required repository files.
 const specFile = "docs/SPEC.md"
-
-// gateFile is the gate declaration whose steps check repo/rules compares with §12.2.
-const gateFile = "gate.json"
 
 // backtickPattern matches one backticked span of the spec and captures its text.
 var backtickPattern = regexp.MustCompile("`([^`]+)`")
 
-// Rules checks repo against the rules its docs/SPEC.md states. A test named in the §3 table
-// (relative to internal/) is missing_test when it is absent while the source beside it exists; a
-// test whose source is not in the tree yet passes only while a §14 Files cell lists that source.
-// A repository file the §12.1 list names is missing_repo_file when it is absent. A §3 row with an
-// empty Serves cell is empty_serves, and a §12.2 gate step that gate.json lacks is
-// missing_gate_step, each at its spec line. A repository without a readable spec is an error: no
-// rule was checked (DR-13).
+// Rules checks that every repository file the §12.1 list of docs/SPEC.md names exists; an absent
+// one is missing_repo_file. It parses no spec table (L2). A repository without a readable spec, or
+// a spec whose §12.1 names no file, is an error: no rule was checked (DR-6).
 func Rules(repo string) ([]Finding, error) {
 	body, err := readRepoFile(repo, specFile)
 	if err != nil {
@@ -44,195 +30,16 @@ func Rules(repo string) ([]Finding, error) {
 		return nil, fmt.Errorf("rules: %s: %w", specFile, err)
 	}
 	lines := strings.Split(strings.ReplaceAll(spec, "\r\n", "\n"), "\n")
-	tests, err := missingTests(repo, lines)
+	found, err := missingRepoFiles(repo, lines)
 	if err != nil {
 		return nil, err
 	}
-	files, err := missingRepoFiles(repo, lines)
-	if err != nil {
-		return nil, err
-	}
-	serves, err := emptyServes(lines)
-	if err != nil {
-		return nil, err
-	}
-	steps, err := missingGateSteps(repo, lines)
-	if err != nil {
-		return nil, err
-	}
-	found := slices.Concat(tests, files, serves, steps)
 	sortFindings(found)
 	return found, nil
 }
 
-// emptyServes returns a finding for each §3 table row whose Serves cell is empty; a §3 section
-// without a Serves column is an error (DR-13).
-func emptyServes(lines []string) ([]Finding, error) {
-	start := sectionStart(lines, "## 3.")
-	rows := 0
-	var found []Finding
-	tableColumn(section(lines, "## 3.", "## "), "Serves", func(i int, cell string) {
-		rows++
-		if cell == "" {
-			found = append(found, Finding{Rule: ruleEmptyServes, Path: specFile, Line: start + i + 1})
-		}
-	})
-	if rows == 0 {
-		return nil, fmt.Errorf("rules: %s: §3 has no Serves column; the Serves rule is unchecked", specFile)
-	}
-	return found, nil
-}
-
-// missingGateSteps returns a finding at the spec row of each §12.2 gate step that gate.json does
-// not declare. A §12.2 section that names no step, or a gate.json that cannot be read, is an
-// error (DR-13); an absent gate.json declares no step.
-func missingGateSteps(repo string, lines []string) ([]Finding, error) {
-	start := sectionStart(lines, "### 12.2")
-	var found []Finding
-	named := 0
-	declared, err := gateStepIDs(repo)
-	if err != nil {
-		return nil, err
-	}
-	tableColumn(section(lines, "### 12.2", "#"), "Step", func(i int, cell string) {
-		m := backtickPattern.FindStringSubmatch(cell)
-		if m == nil {
-			return
-		}
-		named++
-		if !declared[m[1]] {
-			found = append(found, Finding{Rule: ruleMissingGateStep, Path: specFile, Line: start + i + 1})
-		}
-	})
-	if named == 0 {
-		return nil, fmt.Errorf("rules: %s: §12.2 names no gate step; the gate step rule is unchecked", specFile)
-	}
-	return found, nil
-}
-
-// gateStepIDs returns the step ids gate.json declares; an absent gate.json declares none.
-func gateStepIDs(repo string) (map[string]bool, error) {
-	body, present, err := readRepoFileIfPresent(repo, gateFile)
-	if err != nil || !present {
-		return map[string]bool{}, err
-	}
-	var gate struct {
-		Steps []struct {
-			ID string `json:"id"`
-		} `json:"steps"`
-	}
-	if err := json.Unmarshal(body, &gate); err != nil {
-		return nil, fmt.Errorf("rules: %s: %w", gateFile, err)
-	}
-	ids := map[string]bool{}
-	for _, s := range gate.Steps {
-		ids[s.ID] = true
-	}
-	return ids, nil
-}
-
-// tableColumn calls fn with the index in sec and the trimmed cell of the column named name, for
-// each body row of a table whose header row names that column. A row shorter than the header
-// yields an empty cell.
-func tableColumn(sec []string, name string, fn func(i int, cell string)) {
-	col := -1
-	for i, line := range sec {
-		if !strings.HasPrefix(line, "|") {
-			col = -1
-			continue
-		}
-		cells := strings.Split(strings.Trim(strings.TrimSpace(line), "|"), "|")
-		if h := slices.IndexFunc(cells, func(c string) bool { return strings.TrimSpace(c) == name }); h >= 0 {
-			col = h
-			continue
-		}
-		if col < 0 {
-			continue
-		}
-		cell := ""
-		if col < len(cells) {
-			cell = strings.TrimSpace(cells[col])
-		}
-		if cell != "" && strings.Trim(cell, "-:") == "" {
-			continue // the separator row under the header
-		}
-		fn(i, cell)
-	}
-}
-
-// missingTests returns a finding for each §3 test that is absent and not excused by §14. A §3 or
-// §14 section that is missing or names nothing is an error: that rule was not checked (DR-13).
-func missingTests(repo string, lines []string) ([]Finding, error) {
-	planned := plannedFiles(section(lines, "## 14.", "## "))
-	if len(planned) == 0 {
-		return nil, fmt.Errorf("rules: %s: no §14 Files cell lists a file; the phase rule is unchecked", specFile)
-	}
-	tests := namedTests(section(lines, "## 3.", "## "))
-	if len(tests) == 0 {
-		return nil, fmt.Errorf("rules: %s: the §3 table names no test; the test rule is unchecked", specFile)
-	}
-	seen := map[string]bool{}
-	var found []Finding
-	for _, test := range tests {
-		if seen[test] {
-			continue
-		}
-		seen[test] = true
-		missing, err := testMissing(repo, test, planned)
-		if err != nil {
-			return nil, err
-		}
-		if missing {
-			found = append(found, Finding{Rule: ruleMissingTest, Path: "internal/" + test})
-		}
-	}
-	return found, nil
-}
-
-// testMissing reports whether the internal-relative test is absent while its source exists, or
-// absent while its source is neither in the tree nor listed by a §14 Files cell.
-func testMissing(repo, test string, planned map[string]bool) (bool, error) {
-	present, err := fileExists(repo, "internal/"+test)
-	if err != nil || present {
-		return false, err
-	}
-	source := strings.TrimSuffix(test, "_test.go") + ".go"
-	inTree, err := fileExists(repo, "internal/"+source)
-	if err != nil {
-		return false, err
-	}
-	return inTree || (!planned[source] && !planned["internal/"+source]), nil
-}
-
-// namedTests returns each backticked _test.go path in the table rows of the §3 section.
-func namedTests(sec []string) []string {
-	var tests []string
-	for _, line := range sec {
-		if !strings.HasPrefix(line, "|") {
-			continue
-		}
-		for _, m := range backtickPattern.FindAllStringSubmatch(line, -1) {
-			if strings.HasSuffix(m[1], "_test.go") {
-				tests = append(tests, m[1])
-			}
-		}
-	}
-	return tests
-}
-
-// plannedFiles returns each backticked path in the Files column of the §14 phase tables.
-func plannedFiles(sec []string) map[string]bool {
-	planned := map[string]bool{}
-	tableColumn(sec, "Files", func(_ int, cell string) {
-		for _, m := range backtickPattern.FindAllStringSubmatch(cell, -1) {
-			planned[m[1]] = true
-		}
-	})
-	return planned
-}
-
 // missingRepoFiles returns a finding for each file of the §12.1 list that is absent; a §12.1
-// section that is missing or names no file is an error (DR-13).
+// section that is missing or names no file is an error (DR-6).
 func missingRepoFiles(repo string, lines []string) ([]Finding, error) {
 	names := repoFiles(section(lines, "### 12.1", "#"))
 	if len(names) == 0 {
@@ -251,16 +58,36 @@ func missingRepoFiles(repo string, lines []string) ([]Finding, error) {
 	return found, nil
 }
 
-// repoFiles returns the files of the §12.1 list: the backticked names of its first sentence,
-// outside parentheses. A parenthesis explains a file, and the sentences after the list name what
-// does not exist or which commands to run, so neither names a required file.
+// repoFiles returns the files of the §12.1 list: the backticked names of its first paragraph,
+// outside parentheses, except those of a sentence that opens with "No". A parenthesis explains a
+// file, a "No" sentence names what does not exist, and the paragraphs after the list name commands,
+// so none of them names a required file. The whole paragraph is read, so a full stop inside the
+// list, such as "e.g.", never drops the files after it.
 func repoFiles(sec []string) []string {
-	list := firstSentence(stripParens(strings.Join(sec, "\n")))
 	var names []string
-	for _, m := range backtickPattern.FindAllStringSubmatch(list, -1) {
-		names = append(names, m[1])
+	for _, s := range sentences(stripParens(strings.Join(firstParagraph(sec), "\n"))) {
+		if words := strings.Fields(s); len(words) > 0 && words[0] == "No" {
+			continue
+		}
+		for _, m := range backtickPattern.FindAllStringSubmatch(s, -1) {
+			names = append(names, m[1])
+		}
 	}
 	return names
+}
+
+// firstParagraph returns the lines of sec from its first non-blank line up to the next blank line.
+func firstParagraph(sec []string) []string {
+	start := 0
+	for start < len(sec) && strings.TrimSpace(sec[start]) == "" {
+		start++
+	}
+	for end := start; end < len(sec); end++ {
+		if strings.TrimSpace(sec[end]) == "" {
+			return sec[start:end]
+		}
+	}
+	return sec[start:]
 }
 
 // stripParens removes every parenthesised span of s, nested ones included.
@@ -280,18 +107,22 @@ func stripParens(s string) string {
 	return b.String()
 }
 
-// firstSentence returns s up to the first full stop outside backticks that ends a sentence.
-func firstSentence(s string) string {
+// sentences splits s at every full stop outside backticks that is followed by a space, a line
+// break or the end of s.
+func sentences(s string) []string {
+	var out []string
 	inTick := false
+	from := 0
 	for i := 0; i < len(s); i++ {
 		switch {
 		case s[i] == '`':
 			inTick = !inTick
 		case s[i] == '.' && !inTick && (i+1 == len(s) || s[i+1] == ' ' || s[i+1] == '\n'):
-			return s[:i]
+			out = append(out, s[from:i])
+			from = i + 1
 		}
 	}
-	return s
+	return append(out, s[from:])
 }
 
 // section returns the lines after the heading that starts with head, up to the next line that

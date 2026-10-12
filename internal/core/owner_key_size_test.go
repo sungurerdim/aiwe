@@ -3,6 +3,7 @@ package core
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,8 +13,16 @@ import (
 	"time"
 )
 
-// ownerKeyTestHex is a well-formed owner key: 64 hex characters, 32 bytes.
-var ownerKeyTestHex = strings.Repeat("5a", ownerKeySize)
+// ownerKeyTestHex returns a well-formed owner key: 64 hex characters, 32 bytes.
+func ownerKeyTestHex() string { return strings.Repeat("5a", ownerKeySize) }
+
+// TestMarkerShapeText catches errMarkerShape naming a size other than maxMarkerBytes: its text is
+// a const literal, so a change to the limit would leave a refusal that states the old size.
+func TestMarkerShapeText(t *testing.T) {
+	if got, want := errMarkerShape.Error(), fmt.Sprintf("not a plain file of at most %d bytes", maxMarkerBytes); got != want {
+		t.Errorf("errMarkerShape = %q; want %q", got, want)
+	}
+}
 
 // ownerKeyTestState makes a state root with an owner-only key through OpenOwner and returns the
 // state root and the key's path.
@@ -39,15 +48,15 @@ func TestOwnerKeySize(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			state, key := ownerKeyTestState(t)
-			if err := os.WriteFile(key, []byte(ownerKeyTestHex+strings.Repeat(" ", c.spaces)), 0o600); err != nil {
+			if err := os.WriteFile(key, []byte(ownerKeyTestHex()+strings.Repeat(" ", c.spaces)), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			k, err := loadOwnerKey(state)
 			if c.ok && (err != nil || !bytes.Equal(k, bytes.Repeat([]byte{0x5a}, ownerKeySize))) {
-				t.Errorf("loadOwnerKey of a %d-byte key = %x, %v; want the key 5a…5a", len(ownerKeyTestHex)+c.spaces, k, err)
+				t.Errorf("loadOwnerKey of a %d-byte key = %x, %v; want the key 5a…5a", len(ownerKeyTestHex())+c.spaces, k, err)
 			}
 			if !c.ok && (err == nil || !strings.Contains(err.Error(), "hex-encoded bytes")) {
-				t.Errorf("loadOwnerKey of a %d-byte key = %x, %v; want a refusal of its shape", len(ownerKeyTestHex)+c.spaces, k, err)
+				t.Errorf("loadOwnerKey of a %d-byte key = %x, %v; want a refusal of its shape", len(ownerKeyTestHex())+c.spaces, k, err)
 			}
 		})
 	}

@@ -39,16 +39,13 @@ func checkEscapeRefused(t *testing.T, repo, rel string) {
 	if body, err := readRepoFile(repo, rel); !errors.Is(err, errPathEscapesRepo) {
 		t.Errorf("readRepoFile(%q) = %q, %v; want %v", rel, body, err, errPathEscapesRepo)
 	}
-	if body, present, err := readRepoFileIfPresent(repo, rel); !errors.Is(err, errPathEscapesRepo) {
-		t.Errorf("readRepoFileIfPresent(%q) = %q, %v, %v; want %v", rel, body, present, err, errPathEscapesRepo)
-	}
 	if present, err := fileExists(repo, rel); !errors.Is(err, errPathEscapesRepo) {
 		t.Errorf("fileExists(%q) = %v, %v; want %v", rel, present, err, errPathEscapesRepo)
 	}
 }
 
 // TestRepoIO catches a repository read that reaches outside the repository, through `..` or a
-// link, or that reads an escape as an absent file (DR-13).
+// link, or that reads an escape as an absent file (DR-6).
 func TestRepoIO(t *testing.T) {
 	t.Run("reads a file inside the repository", func(t *testing.T) {
 		repo, _ := repoWithOutside(t)
@@ -64,9 +61,6 @@ func TestRepoIO(t *testing.T) {
 
 	t.Run("reports an absent file as absent, never as an error", func(t *testing.T) {
 		repo, _ := repoWithOutside(t)
-		if body, present, err := readRepoFileIfPresent(repo, "docs/SPEC.md"); err != nil || present || body != nil {
-			t.Fatalf("readRepoFileIfPresent(docs/SPEC.md) = %q, %v, %v; want absent", body, present, err)
-		}
 		if present, err := fileExists(repo, "docs/SPEC.md"); err != nil || present {
 			t.Fatalf("fileExists(docs/SPEC.md) = %v, %v; want false", present, err)
 		}
@@ -182,17 +176,14 @@ func TestRepoIONotRegular(t *testing.T) {
 			path := filepath.Join(repo, "SPEC.md")
 			tc.make(t, path)
 			err := repoIOTestWithin(t, path, func() error {
-				_, present, err := readRepoFileIfPresent(repo, "SPEC.md")
-				if err == nil && !present {
-					return errors.New("read as absent")
-				}
+				_, err := readRepoFile(repo, "SPEC.md")
 				return err
 			})
 			if tc.wantErr && (err == nil || !strings.Contains(err.Error(), "SPEC.md")) {
-				t.Fatalf("readRepoFileIfPresent(SPEC.md) = %v; want an error that names SPEC.md", err)
+				t.Fatalf("readRepoFile(SPEC.md) = %v; want an error that names SPEC.md", err)
 			}
 			if !tc.wantErr && err != nil {
-				t.Fatalf("readRepoFileIfPresent(SPEC.md) = %v; want a file at the cap read", err)
+				t.Fatalf("readRepoFile(SPEC.md) = %v; want a file at the cap read", err)
 			}
 		})
 	}

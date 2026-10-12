@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// ConfigMasked replaces the value of a secret-shaped setting in every config show output (DR-35).
+// ConfigMasked replaces the value of a secret-shaped setting in every config show output (DR-10).
 const ConfigMasked = "[masked]"
 
 // ConfigRow is one line of config show: a setting, its value as printed and its origin.
@@ -82,7 +82,7 @@ func rootRows(roots Roots, getenv func(string) string) []ConfigRow {
 }
 
 // shownValue returns value, or ConfigMasked when the setting's name or env variable is
-// secret-shaped or the value is a URL that may carry a password (DR-35); an empty value stays empty.
+// secret-shaped or the value is a URL that may carry a password (DR-10); an empty value stays empty.
 // A dotted name is checked in its env form, so db.url reads as DB_URL.
 func shownValue(s ConfigSetting, value string) string {
 	name := strings.ToUpper(strings.ReplaceAll(s.Name, ".", "_"))

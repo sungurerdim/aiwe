@@ -142,7 +142,7 @@ func sweepTestSplitID(t *testing.T, self ProcessID) (string, uint64) {
 const sweepTestOtherBoot = "0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0"
 
 // TestSweep catches a temp directory with a dead owner left after the sweep, or a reused pid
-// taken as a live owner (DR-36, U13).
+// taken as a live owner (DR-11).
 func TestSweep(t *testing.T) {
 	ctx := context.Background()
 	self := sweepTestSelf(t)
@@ -202,7 +202,7 @@ func TestSweep(t *testing.T) {
 
 // TestSweepHandBuiltStart catches the temp dir of a running owner removed by a sweep of another
 // owner because the owner's ProcessID was built by hand from its pid and a wall-clock start, not by
-// CurrentProcess (DR-25, U13). A start that cannot be compared exactly counts as a live owner.
+// CurrentProcess (DR-11). A start that cannot be compared exactly counts as a live owner.
 func TestSweepHandBuiltStart(t *testing.T) {
 	ctx := context.Background()
 	pid := sweepTestLiveChild(t)
@@ -240,7 +240,7 @@ func sweepTestUnreadablePID() (int, bool) {
 }
 
 // TestSweepStartUnreadable catches the temp dir of an owner whose start cannot be read removed by
-// the sweep: such an owner counts as alive and its dir stays (U13, fail-closed).
+// the sweep: such an owner counts as alive and its dir stays (fail-closed).
 func TestSweepStartUnreadable(t *testing.T) {
 	self := sweepTestSelf(t)
 	check := func(t *testing.T, owner ProcessID, why string) {
@@ -279,7 +279,7 @@ func TestSweepStartUnreadable(t *testing.T) {
 }
 
 // TestSweepStartTick catches a reused pid taken as a live owner on Linux: the start is compared by
-// the boot id and the clock tick of /proc/<pid>/stat, with no tolerance (U13).
+// the boot id and the clock tick of /proc/<pid>/stat, with no tolerance.
 func TestSweepStartTick(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("start ticks and boot_id are Linux sources")
@@ -321,7 +321,7 @@ func sweepTestField(t *testing.T, rep SweepReport, name string) int {
 }
 
 // TestSweepUnownedOrphan catches a registered temp dir of a dead owner that fails the ownership
-// check and is then neither removed nor reported (DR-36, DR-13): a crash before the marker, a
+// check and is then neither removed nor reported (DR-11, DR-6): a crash before the marker, a
 // dangling link inside, a link out of the root.
 func TestSweepUnownedOrphan(t *testing.T) {
 	ctx := context.Background()

@@ -30,7 +30,7 @@ const clockTick = time.Second / clockTicks
 // maxStartTicks is the largest start tick a time.Duration holds; a larger one would wrap.
 const maxStartTicks = uint64(math.MaxInt64 / clockTick)
 
-// processStart returns the OS start time of pid and whether the process runs (U13). A pid that
+// processStart returns the OS start time of pid and whether the process runs. A pid that
 // names no process, or a zombie, is not running; any other failure is an error, which the caller
 // treats as a live owner (fail-closed). On Linux the time is the boot time of /proc/stat plus the
 // start tick; it moves with every step of the wall clock, so liveness compares startID instead.
@@ -79,7 +79,7 @@ func bootTime() (time.Time, error) {
 }
 
 // startID returns the exact start identity of pid, the boot id and the start tick of
-// /proc/<pid>/stat, and whether the process runs (U13). Neither moves with the wall clock, so it
+// /proc/<pid>/stat, and whether the process runs. Neither moves with the wall clock, so it
 // is compared exactly.
 func startID(pid int) (string, bool, error) {
 	if !exactStartID {

@@ -162,7 +162,7 @@ func find(cmds []Command, words []string) (Command, []string, error) {
 		Found: fmt.Sprintf("%q", strings.Join(words, " ")), Next: "run " + Product + " --help"}
 }
 
-// help lists every registered command with its one-line purpose (DR-23).
+// help lists every registered command with its one-line purpose (DR-16).
 func help(cmds []Command) Result[any] {
 	entries := make([]helpEntry, 0, len(cmds))
 	var b strings.Builder

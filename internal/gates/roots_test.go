@@ -190,7 +190,7 @@ func TestRoots(t *testing.T) {
 	})
 }
 
-// TestRootsEnv catches a check process that inherits a secret-shaped variable (DR-35, SPEC §6.5):
+// TestRootsEnv catches a check process that inherits a secret-shaped variable (DR-10, SPEC §6.5):
 // the gate step gets the secret-free environment of core.CleanEnv, and a plain variable still
 // reaches it.
 func TestRootsEnv(t *testing.T) {

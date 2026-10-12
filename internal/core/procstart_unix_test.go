@@ -20,7 +20,7 @@ func procTestState(state string) string {
 }
 
 // TestParseProcStat catches a start tick read from the wrong field of /proc/<pid>/stat, or from a
-// command name that holds spaces or ')', and a live process read as not running (U13).
+// command name that holds spaces or ')', and a live process read as not running.
 func TestParseProcStat(t *testing.T) {
 	cases := []struct {
 		name string
@@ -43,7 +43,7 @@ func TestParseProcStat(t *testing.T) {
 }
 
 // TestParseProcStatNotRunning catches a zombie or dead process read as running: a pid in state Z
-// or X has exited, so its start must never vouch for a live holder (U13).
+// or X has exited, so its start must never vouch for a live holder.
 func TestParseProcStatNotRunning(t *testing.T) {
 	cases := []struct {
 		name string
@@ -64,7 +64,7 @@ func TestParseProcStatNotRunning(t *testing.T) {
 // TestParseProcStatMalformed catches a malformed /proc/<pid>/stat read as a start: a truncated
 // line, an empty input, no command name, a ')' with no '(' before it, a field 22 that is not a
 // tick count, or one past the range of a time.Duration, which would wrap into a false start, must
-// each be an error, never a start (U13, fail-closed).
+// each be an error, never a start (fail-closed).
 func TestParseProcStatMalformed(t *testing.T) {
 	fields := strings.Fields(procTestStatLine)
 	cases := []struct {

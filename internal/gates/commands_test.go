@@ -106,7 +106,7 @@ func commandsTestRow(o core.Outcome) (core.OutcomeRow, bool) {
 
 // TestGatesCommand pins that `aiwe gates gate` takes its own repo and step params, runs the gate
 // of <repo>/gate.json, and maps each gate result to one named outcome of the table: a red or
-// incomplete gate never exits 0 (BC-1, DR-10).
+// incomplete gate never exits 0 (DR-6).
 func TestGatesCommand(t *testing.T) {
 	commandsTestSetRoots(t)
 	green1, green2, red, missing := runnerTestSteps(t)
@@ -141,7 +141,7 @@ func TestGatesCommand(t *testing.T) {
 		},
 		{
 			name:        "red gate exits with the red code",
-			catches:     "a gate with a failing step that exits 0 or is not reported red (DR-10)",
+			catches:     "a gate with a failing step that exits 0 or is not reported red (DR-6)",
 			steps:       []GateStep{green1, red, green2},
 			args:        func(repo string) []string { return []string{"--repo", repo} },
 			wantCode:    core.StatusRed.ExitCode(),
@@ -151,7 +151,7 @@ func TestGatesCommand(t *testing.T) {
 		},
 		{
 			name:        "gate with a step that cannot start is incomplete and exits non-zero",
-			catches:     "an unrun step that lets the gate exit 0 (DR-10, DR-13)",
+			catches:     "an unrun step that lets the gate exit 0 (DR-6)",
 			steps:       []GateStep{green1, missing},
 			args:        func(repo string) []string { return []string{"--repo", repo} },
 			wantCode:    -1,
@@ -160,7 +160,7 @@ func TestGatesCommand(t *testing.T) {
 		},
 		{
 			name:        "gate run for one step is incomplete and exits non-zero",
-			catches:     "a --step run refused for its own param, or a partial run that exits 0 (DR-10)",
+			catches:     "a --step run refused for its own param, or a partial run that exits 0 (DR-6)",
 			steps:       []GateStep{green1, green2},
 			args:        func(repo string) []string { return []string{"--repo", repo, "--step", green2.ID} },
 			wantCode:    -1,
@@ -191,7 +191,7 @@ func TestGatesCommand(t *testing.T) {
 			}
 			row, ok := commandsTestRow(env.Outcome)
 			if !ok || row.Status != env.Status || row.Next == "" {
-				t.Errorf("%s: outcome %q is not a table row with status %q and a next action (BC-1)\n%s",
+				t.Errorf("%s: outcome %q is not a table row with status %q and a next action\n%s",
 					tc.catches, env.Outcome, env.Status, raw)
 			}
 		})
@@ -201,12 +201,12 @@ func TestGatesCommand(t *testing.T) {
 		_, redEnv, redRaw := commandsTestRun(t, "--repo", commandsTestRepo(t, []GateStep{green1, red}))
 		_, incEnv, incRaw := commandsTestRun(t, "--repo", commandsTestRepo(t, []GateStep{green1, missing}))
 		if redEnv.Outcome == incEnv.Outcome {
-			t.Fatalf("a red and an incomplete gate share the outcome %q, so a reader cannot tell them apart (BC-1)\n%s\n%s",
+			t.Fatalf("a red and an incomplete gate share the outcome %q, so a reader cannot tell them apart\n%s\n%s",
 				redEnv.Outcome, redRaw, incRaw)
 		}
 		for _, o := range []core.Outcome{redEnv.Outcome, incEnv.Outcome} {
 			if o == core.OutcomeOK || o == core.OutcomeError || o == core.OutcomeUsage {
-				t.Errorf("gate outcome %q is a generic core outcome, not a named gate outcome (BC-1)", o)
+				t.Errorf("gate outcome %q is a generic core outcome, not a named gate outcome", o)
 			}
 		}
 	})
@@ -217,7 +217,7 @@ func TestGatesCommand(t *testing.T) {
 		steps   []GateStep
 		args    func(repo string) []string
 		want    core.Status
-		// found is text the §5.10 detail must name.
+		// found is text the §5.3 detail must name.
 		found string
 	}{
 		{
@@ -230,7 +230,7 @@ func TestGatesCommand(t *testing.T) {
 		},
 		{
 			name:    "repository without gate.json is an error, never a green gate",
-			catches: "a repository with no gate.json that exits 0 as if its gate held (DR-13)",
+			catches: "a repository with no gate.json that exits 0 as if its gate held (DR-6)",
 			steps:   nil,
 			args:    func(repo string) []string { return []string{"--repo", repo} },
 			want:    core.StatusError,
@@ -252,7 +252,7 @@ func TestGatesCommand(t *testing.T) {
 			prefix := string(env.Outcome) + ": expected "
 			if !strings.HasPrefix(env.Detail, prefix) || !strings.Contains(env.Detail, "; found ") ||
 				!strings.Contains(env.Detail, "; next: ") || !strings.Contains(commandsTestWithoutRepo(env.Detail, repo), tc.found) {
-				t.Errorf("%s: detail %q is not \"<outcome>: expected <x>; found <y>; next: <action>\" naming %q (SPEC §5.10)",
+				t.Errorf("%s: detail %q is not \"<outcome>: expected <x>; found <y>; next: <action>\" naming %q (SPEC §5.3)",
 					tc.catches, env.Detail, tc.found)
 			}
 		})
@@ -260,7 +260,7 @@ func TestGatesCommand(t *testing.T) {
 }
 
 // TestGatesCommandWorkers catches `aiwe gates gate` running its test step without the measured
-// worker count in the report, or without the source of its concurrent job count (DR-7).
+// worker count in the report, or without the source of its concurrent job count (DR-3).
 func TestGatesCommandWorkers(t *testing.T) {
 	commandsTestSetRoots(t)
 	_, test, _, _ := runnerTestSteps(t)
@@ -281,7 +281,7 @@ func TestGatesCommandWorkers(t *testing.T) {
 }
 
 // TestGateCommandStream catches step output missing from stderr, streamed without its
-// `--- step <id>` header, or mixed into the JSON envelope on stdout (SPEC §5, DR-38).
+// `--- step <id>` header, or mixed into the JSON envelope on stdout (SPEC §5, §7.8).
 func TestGateCommandStream(t *testing.T) {
 	commandsTestSetRoots(t)
 	release := filepath.Join(t.TempDir(), "release")
@@ -356,7 +356,7 @@ func TestGateCommandNoOwner(t *testing.T) {
 		t.Fatalf("outcome %q status %q exit %d, want the named refusal root_unsafe\n%s", env.Outcome, env.Status, code, out)
 	}
 	if row, ok := commandsTestRow(env.Outcome); !ok || row.Next == "" {
-		t.Errorf("outcome %q is not a table row with a next action (BC-1)\n%s", env.Outcome, out)
+		t.Errorf("outcome %q is not a table row with a next action\n%s", env.Outcome, out)
 	}
 	if _, err := os.Stat(record); !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("catches a step run with no engine owner: stat %q: %v", record, err)

@@ -40,7 +40,7 @@ func DefaultFootprintCeilings() FootprintCeilings {
 }
 
 // Footprint measures the state and cache roots and counts the registered temp directories of dead
-// owners, including those that fail the ownership checks (DR-13, DR-36). Links are counted as
+// owners, including those that fail the ownership checks (DR-6, DR-11). Links are counted as
 // files and never followed.
 func (o *Owner) Footprint(ctx context.Context) (Footprint, error) {
 	var f Footprint

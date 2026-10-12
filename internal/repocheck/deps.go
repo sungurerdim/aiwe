@@ -6,14 +6,14 @@ import (
 	"strings"
 )
 
-// ruleModuleNotAllowed is the rule name of check repo/deps (DR-41).
+// ruleModuleNotAllowed is the rule name of check repo/deps (DR-21).
 const ruleModuleNotAllowed = "module_not_allowed"
 
-// mcpSDKModule is the official MCP Go SDK, the one module outside golang.org/x that DR-41 allows.
+// mcpSDKModule is the official MCP Go SDK, the one module outside golang.org/x that DR-21 allows.
 const mcpSDKModule = "github.com/modelcontextprotocol/go-sdk"
 
 // Deps checks the modules linked into the binary, as `go list -deps -json ./cmd/...` prints its
-// packages, against the allow-list of DR-41: the standard library, golang.org/x/* and the MCP Go
+// packages, against the allow-list of DR-21: the standard library, golang.org/x/* and the MCP Go
 // SDK. A module that only an allowed third-party module imports is one "these require" and passes;
 // each other module a package of the main module imports is a module_not_allowed finding whose
 // Path is the module path.
@@ -38,7 +38,7 @@ func Deps(goList []byte) ([]Finding, error) {
 }
 
 // notAllowedFindings returns one module_not_allowed finding per module that a package of the main
-// module imports directly and DR-41 does not allow.
+// module imports directly and DR-21 does not allow.
 func notAllowedFindings(pkgs []listedPackage, byPath map[string]listedPackage) ([]Finding, error) {
 	seen := map[string]bool{}
 	var found []Finding
@@ -60,7 +60,7 @@ func notAllowedFindings(pkgs []listedPackage, byPath map[string]listedPackage) (
 	return found, nil
 }
 
-// refusedModules returns the third-party modules that p imports directly and DR-41 does not allow.
+// refusedModules returns the third-party modules that p imports directly and DR-21 does not allow.
 func refusedModules(byPath map[string]listedPackage, p listedPackage) ([]string, error) {
 	var mods []string
 	for _, imp := range p.Imports {
@@ -93,7 +93,7 @@ func thirdPartyModule(byPath map[string]listedPackage, imp string) (string, erro
 	return p.Module.Path, nil
 }
 
-// allowedModule reports whether DR-41 allows mod by name. The golang.org/x match is per path
+// allowedModule reports whether DR-21 allows mod by name. The golang.org/x match is per path
 // element, so a look-alike such as golang.org/xx is refused.
 func allowedModule(mod string) bool {
 	return strings.HasPrefix(mod, "golang.org/x/") || mod == mcpSDKModule
@@ -117,8 +117,8 @@ type Prerequisite struct {
 	Install string
 }
 
-// installCommands maps each prerequisite to its install command per OS; the tools come from go.mod
-// and share one command.
+// installCommands maps each prerequisite to its install command per OS; the tools come from
+// tools/go.mod and share one command.
 func installCommands() map[string]map[string]string {
 	return map[string]map[string]string{
 		"git": {
@@ -134,17 +134,25 @@ func installCommands() map[string]map[string]string {
 	}
 }
 
+// toolsModFile is the tools module: its tool lines are the development tools, run with
+// `go tool -modfile=tools/go.mod` (SPEC §12.2).
+const toolsModFile = "tools/go.mod"
+
 // Doctor reports each prerequisite of this repository (SPEC §12.2): git, Go at least at the go.mod
-// version, and each `go tool` entry of go.mod resolving. A missing one carries its install command
-// for env.GOOS. A repository without a readable go.mod is an error.
+// version, and each tool line of tools/go.mod resolving. A missing one carries its install command
+// for env.GOOS. A repository without a readable go.mod or tools/go.mod is an error, and so is a
+// tool line in go.mod: the main module requires only what the binary links.
 func Doctor(env DoctorEnv) ([]Prerequisite, error) {
-	body, err := readRepoFile(env.Repo, "go.mod")
+	want, mainTools, err := readGoMod(env.Repo, "go.mod")
 	if err != nil {
-		return nil, fmt.Errorf("doctor: %w", err)
+		return nil, err
 	}
-	want, tools, err := parseGoMod(string(body))
+	if len(mainTools) > 0 {
+		return nil, fmt.Errorf("doctor: go.mod has tool lines %v; they belong in %s", mainTools, toolsModFile)
+	}
+	_, tools, err := readGoMod(env.Repo, toolsModFile)
 	if err != nil {
-		return nil, fmt.Errorf("doctor: go.mod: %w", err)
+		return nil, err
 	}
 	_, gitErr := env.LookPath("git")
 	report := []Prerequisite{
@@ -155,11 +163,24 @@ func Doctor(env DoctorEnv) ([]Prerequisite, error) {
 	for _, tool := range tools {
 		p := Prerequisite{Name: tool, Present: goOK && env.ResolveTool(tool) == nil}
 		if !p.Present {
-			p.Install = "go mod download"
+			p.Install = "go mod download -modfile=" + toolsModFile
 		}
 		report = append(report, p)
 	}
 	return report, nil
+}
+
+// readGoMod reads the module file rel of repo and returns its go directive and tool entries.
+func readGoMod(repo, rel string) (string, []string, error) {
+	body, err := readRepoFile(repo, rel)
+	if err != nil {
+		return "", nil, fmt.Errorf("doctor: %w", err)
+	}
+	want, tools, err := parseGoMod(string(body))
+	if err != nil {
+		return "", nil, fmt.Errorf("doctor: %s: %w", rel, err)
+	}
+	return want, tools, nil
 }
 
 // prerequisite builds the entry of name, with its install command for goos when it is missing.

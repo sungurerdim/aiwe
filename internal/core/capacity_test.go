@@ -9,7 +9,7 @@ import (
 	"github.com/sungurerdim/aiwe/internal/core"
 )
 
-// TestCapacity pins DR-7: workers = measured cores ÷ concurrent jobs, minimum 1, and the chosen
+// TestCapacity pins DR-3: workers = measured cores ÷ concurrent jobs, minimum 1, and the chosen
 // value is printed with the limit that bound it. An unmeasured core count is unknown, never 0.
 func TestCapacity(t *testing.T) {
 	known := func(n int64) core.Measured[int64] { return core.Measured[int64]{Value: n, Known: true} }

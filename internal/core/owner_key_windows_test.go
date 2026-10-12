@@ -60,3 +60,14 @@ func TestOwnerKeyUnreadableSD(t *testing.T) {
 		})
 	}
 }
+
+// ownerKeyTestSID returns the SID value of an SDDL principal, given as a SID string or an alias
+// such as LA, BA or SY; Windows resolves the alias.
+func ownerKeyTestSID(t *testing.T, s string) string {
+	t.Helper()
+	sid, err := windows.StringToSid(s)
+	if err != nil {
+		t.Fatalf("SDDL principal %q: %v", s, err)
+	}
+	return sid.String()
+}

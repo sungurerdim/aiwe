@@ -162,7 +162,7 @@ func TestMeasured(t *testing.T) {
 	})
 
 	t.Run("absent field read as a measured value", func(t *testing.T) {
-		// Absence is not evidence (DR-13): a missing key stays unknown.
+		// Absence is not evidence (DR-6): a missing key stays unknown.
 		var got measuredUsage
 		if err := json.Unmarshal([]byte(`{"tokensIn":120}`), &got); err != nil {
 			t.Fatalf("json.Unmarshal error = %v, want nil", err)

@@ -12,7 +12,7 @@ import (
 // stillActive is the exit code GetExitCodeProcess reports for a process that has not exited.
 const stillActive = 259
 
-// processStart returns the OS start time of pid and whether the process runs (U13). A pid that
+// processStart returns the OS start time of pid and whether the process runs. A pid that
 // names no process is not running; any other failure is an error, which the caller treats as a
 // live owner (fail-closed).
 func processStart(pid int) (_ time.Time, _ bool, err error) {

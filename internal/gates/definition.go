@@ -1,4 +1,4 @@
-// Package gates runs a declared gate step by step and reports each step (DR-10).
+// Package gates runs a declared gate step by step and reports each step (DR-6).
 package gates
 
 import (

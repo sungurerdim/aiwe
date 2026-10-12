@@ -1,42 +1,36 @@
 # aiwe
 
-aiwe — AI workflow engine: orchestrate all your AI subscriptions and agents, from issue to verified, merged code.
+aiwe turns a goal issue into verified, merged code, using the AI subscriptions and API keys you already have. It runs
+on Windows, macOS and Linux with zero configuration, through each provider's own CLI or API, never through a proxy.
+Its primary interface is an MCP server that the user's harness session starts. It is a public open-source product.
 
-You set the goal; aiwe delivers verified, merged code using the subscriptions and API keys you
-already have from supported providers, in the shares you choose. Work runs as small, checked units,
-each handled by a role-specific agent; the author never approves its own work, and every test and
-gate runs once, mechanically. aiwe uses only each provider's official CLI or API — no proxies — on
-Windows, macOS and Linux, with zero configuration.
-
-**Status: pre-release, design phase.** There is no code yet. The design is
-[docs/SPEC.md](docs/SPEC.md); the delivery plan is its §14.
+**Status: pre-release.** The design is [docs/SPEC.md](docs/SPEC.md). The milestones are in its §13; the tracker
+holds the units.
 
 ## Features
 
 - Each agent starts with a small, clean context.
 - Nothing is left behind on disk.
 - Every run is measured for time, cost and quality.
-- A goal is split by aiwe's architect role or by your own session from aiwe's template, and every
-  unit is validated mechanically before work starts.
+- Every unit is validated mechanically before work starts.
 
 ## Supported providers
 
-`aiwe adapters list` prints the compiled adapter list. aiwe reaches a provider only through its
-official interface: the provider's own CLI, logged in by you, or an API key in an environment
-variable. aiwe holds no credential: it never stores, caches, encrypts, prompts for or manages a
-credential, API key, token or secret. It never reads, proxies or rewrites subscription credentials
-or OAuth traffic.
+`aiwe adapters list` prints the compiled adapter list. aiwe reaches a provider only through its official interface:
+the provider's own CLI, logged in by you, or an API key in an environment variable. aiwe holds no credential. It never
+stores, caches, prompts for or proxies a credential, and never alters subscription traffic (SPEC DR-19).
 
 ## Risk
 
-The first releases run agents at sandbox level `env-scrub`: a run gets no secret and no git
-credential helper, and only aiwe pushes, but the agent still runs with your rights, as in other
-coding agent tools. Stronger sandbox levels come later ([docs/SPEC.md](docs/SPEC.md) §6.7).
+The first releases run agents at sandbox level `env-scrub`. A run gets no secret and no git credential helper, and
+only aiwe pushes. The agent still runs with your rights, as in other coding agent tools. Stronger sandbox levels come
+later (SPEC §6.7).
 
-## Install
+## Install and first run
 
-Not released yet. The first release is `1.0.0`, after Gate 3 of the delivery plan
-([docs/SPEC.md](docs/SPEC.md) §14).
+Not released yet. `v0.1.0` ships when the M-Usable milestone closes (SPEC §12.3, L9). Until then, build from source
+with `go build ./cmd/aiwe`. Register the MCP server in your harness with the entry that `aiwe mcp snippet` prints
+(SPEC §6.3).
 
 ## License
 

@@ -18,7 +18,7 @@ func TestSourceRules(t *testing.T) {
 	cfg := repocheck.SourceRulesConfig{Product: "zentra", ProductFile: "internal/core/product.go"}
 
 	t.Run("known-good sources pass", func(t *testing.T) {
-		// Guards against a check so broad that the allowed forms (SPEC §5.4, DR-25) turn it red.
+		// Guards against a check so broad that the allowed forms (SPEC §5.3, DR-17) turn it red.
 		good := []repocheck.SourceFile{
 			sourceRulesFile("internal/core/product.go",
 				"package core",
@@ -48,7 +48,7 @@ func TestSourceRules(t *testing.T) {
 				"	_ = n",
 				`	return filepath.Join(home, "internal", "core")`,
 				"}"),
-			// The owner may remove recursively through an *os.Root in every form (DR-25).
+			// The owner may remove recursively through an *os.Root in every form (DR-11).
 			sourceRulesFile("internal/core/remove.go",
 				"package core",
 				`import "os"`,
@@ -66,7 +66,7 @@ func TestSourceRules(t *testing.T) {
 				"package engine",
 				`import "os"`,
 				"func sweep(root *os.Root, name string) error { return root.Remove(name) }"),
-			// The owner keeps every RemoveAll selector, whatever its receiver (DR-25).
+			// The owner keeps every RemoveAll selector, whatever its receiver (DR-11).
 			sourceRulesFile("internal/core/remove.go",
 				"package core",
 				`import "os"`,
@@ -98,7 +98,7 @@ func TestSourceRules(t *testing.T) {
 		rule string
 		line int
 	}{
-		// Each machine path is split so this file passes machine_path itself (DR-25).
+		// Each machine path is split so this file passes machine_path itself (DR-17).
 		{"Windows home path with a Turkish user name", sourceRulesFile("internal/engine/cache.go", "package engine",
 			`const cacheDir = "C`+`:\\Users\\Ayşe\\AppData\\Local\\cache"`), "machine_path", 2},
 		{"Linux home path", sourceRulesFile("internal/engine/cache.go", "package engine",
@@ -361,7 +361,7 @@ func TestSourceRules(t *testing.T) {
 	}
 	for _, tc := range bad {
 		t.Run(tc.name, func(t *testing.T) {
-			// Guards against a known-bad source that passes repo/source-rules (DR-25, SPEC §5.4).
+			// Guards against a known-bad source that passes repo/source-rules (DR-17, SPEC §5.3).
 			got := repocheck.SourceRules(cfg, []repocheck.SourceFile{tc.file})
 			for _, f := range got {
 				// line 0 means the test does not pin the line, only the file and the rule.
@@ -454,7 +454,7 @@ func TestSourceRulesAllowedForms(t *testing.T) {
 	}
 	for _, tc := range allowed {
 		t.Run(tc.name, func(t *testing.T) {
-			// Guards against a rule so broad that an allowed form (SPEC §5.6, §5.8, §5.12, §6.2) turns
+			// Guards against a rule so broad that an allowed form (SPEC §5.6, §5.12, §6.2) turns
 			// repo/source-rules red.
 			if got := repocheck.SourceRules(cfg, []repocheck.SourceFile{tc.file}); len(got) != 0 {
 				t.Fatalf("SourceRules(%s) = %+v, want no finding", tc.file.Path, got)
@@ -464,7 +464,7 @@ func TestSourceRulesAllowedForms(t *testing.T) {
 }
 
 // TestSourceRulesOwnTestFile guards against a fixture in this file that holds a machine path, which
-// turns repo/source-rules red on this repository's own tree (DR-25).
+// turns repo/source-rules red on this repository's own tree (DR-17).
 func TestSourceRulesOwnTestFile(t *testing.T) {
 	cfg := repocheck.SourceRulesConfig{Product: "zentra", ProductFile: "internal/core/product.go"}
 	body, err := os.ReadFile("source_rules_test.go")

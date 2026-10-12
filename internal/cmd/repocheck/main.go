@@ -23,7 +23,7 @@ const (
 	outcomeRed        core.Outcome = "red"
 	outcomeIncomplete core.Outcome = "incomplete"
 
-	// productFile is the one file that may hold the product name (DR-25).
+	// productFile is the one file that may hold the product name (DR-17).
 	productFile = "internal/core/platform.go"
 )
 
@@ -132,7 +132,7 @@ func runAll(ctx context.Context, in core.Input) (core.Result[any], error) {
 }
 
 // runCheck runs c on repo; an absent input is not_measured and an error is the result error,
-// never green (DR-13).
+// never green (DR-6).
 func runCheck(ctx context.Context, c check, repo string) checkResult {
 	m, err := c.run(ctx, repo)
 	switch {
@@ -146,7 +146,7 @@ func runCheck(ctx context.Context, c check, repo string) checkResult {
 	return checkResult{Check: c.name, Result: resultGreen, Detail: m.detail}
 }
 
-// runCIShape checks the shape of the CI workflow of repo and reports its counts (DR-42). The
+// runCIShape checks the shape of the CI workflow of repo and reports its counts (DR-22). The
 // reads go through an os.Root at repo, so a workflows link out of the repository is an error.
 func runCIShape(_ context.Context, repo string) (measured, error) {
 	root, err := os.OpenRoot(repo)
@@ -213,12 +213,12 @@ func describe(r checkResult) string {
 	return line
 }
 
-// runRules checks repo against the rules its spec states (SPEC §3, §12.1).
+// runRules checks that repo holds the repository files of SPEC §12.1 (L2).
 func runRules(_ context.Context, repo string) ([]repocheck.Finding, error) {
 	return repocheck.Rules(repo)
 }
 
-// runSize checks the size of every Go file of repo (SPEC §5.9).
+// runSize checks the size of every Go file of repo (SPEC §5.13).
 func runSize(_ context.Context, repo string) ([]repocheck.Finding, error) {
 	files, err := repocheck.GoFiles(repo)
 	if err != nil {
@@ -227,7 +227,7 @@ func runSize(_ context.Context, repo string) ([]repocheck.Finding, error) {
 	return repocheck.Size(files), nil
 }
 
-// runSourceRules checks every Go file of repo against the source rules (DR-25, SPEC §5.6).
+// runSourceRules checks every Go file of repo against the source rules (DR-17, SPEC §5.6).
 func runSourceRules(_ context.Context, repo string) ([]repocheck.Finding, error) {
 	files, err := repocheck.GoFiles(repo)
 	if err != nil {
@@ -241,7 +241,7 @@ func runSourceRules(_ context.Context, repo string) ([]repocheck.Finding, error)
 	return found, nil
 }
 
-// runBoundaries compares the imports of repo with the module table (DR-24, SPEC §6.1).
+// runBoundaries compares the imports of repo with the module table (DR-17, SPEC §6.1).
 func runBoundaries(ctx context.Context, repo string) ([]repocheck.Finding, error) {
 	out, err := repocheck.RunGo(ctx, repo, "list", "-deps", "-json", "./...")
 	if err != nil {
@@ -254,7 +254,7 @@ func runBoundaries(ctx context.Context, repo string) ([]repocheck.Finding, error
 	return repocheck.Boundaries(edges, out)
 }
 
-// runDeps checks the modules linked into the binaries of repo against the allow-list (DR-41).
+// runDeps checks the modules linked into the binaries of repo against the allow-list (DR-21).
 func runDeps(ctx context.Context, repo string) ([]repocheck.Finding, error) {
 	out, err := repocheck.RunGo(ctx, repo, "list", "-deps", "-json", "./cmd/...")
 	if err != nil {

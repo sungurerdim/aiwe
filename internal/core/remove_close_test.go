@@ -110,7 +110,7 @@ func TestRemoveDirEntryCloseError(t *testing.T) {
 }
 
 // TestSweepRemovalCloseError catches a failed close on the sweep path lost before the caller of
-// Sweep, or miscounted in its report (§5.15, DR-13). A close that fails while the directory of a dead
+// Sweep, or miscounted in its report (§5.15, DR-6). A close that fails while the directory of a dead
 // owner is checked or removed, whether it passed the ownership check or is an empty orphan, must be
 // returned by Sweep. The report follows one rule: a directory whose close failed is never counted
 // Removed, even when it is gone, nor Refused, even when it is kept; it is counted once, as Failed.
