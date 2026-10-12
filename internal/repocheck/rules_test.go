@@ -36,7 +36,7 @@ func rulesSpec() string {
 }
 
 // oldTablesSpec is rulesSpec plus the tables an earlier rules check read: a §3 table with an empty
-// Serves cell and a test whose source exists, a §12.2 step gate.json lacks, and a §14 Files cell.
+// Serves cell and a test whose source exists, a §12.2 step gate.json lacks, and a delivery-plan Files cell.
 func oldTablesSpec() string {
 	return strings.Join(joinLines(
 		[]string{
@@ -117,7 +117,7 @@ func rulesSpecWithout(body ...string) string {
 
 func TestRules(t *testing.T) {
 	t.Run("a SPEC without the old tables passes", func(t *testing.T) {
-		// Guards against a rules check that still needs the §3, §12.2 or §14 tables: a spec that
+		// Guards against a rules check that still needs the §3, §12.2 or delivery-plan tables: a spec that
 		// has only the §12.1 list, in a repository that holds every listed file, is green.
 		got, err := repocheck.Rules(rulesRepoSpec(t, rulesSpec(), nil))
 		if err != nil || len(got) != 0 {
@@ -161,6 +161,32 @@ func TestRules(t *testing.T) {
 		for _, name := range []string{"CHANGELOG.md", "/dist/", "gomod", "github-actions", "zentra adapters list"} {
 			if hasFinding(got, "missing_repo_file", name) {
 				t.Errorf("Rules = %+v, want no finding for %s", got, name)
+			}
+		}
+	})
+
+	t.Run("a full stop inside the list does not end it", func(t *testing.T) {
+		// Guards against a list read only up to its first full stop: an abbreviation such as
+		// "e.g." ends the first sentence early, yet the files after it in the same paragraph are
+		// still required, so a deleted workflow file is a finding, not a pass.
+		spec := rulesSpecWithout(
+			"### 12.1 Repository files",
+			"`LICENSE` e.g. `README.md` · `go.mod`. See also `.github/workflows/ci.yml` (the only",
+			"workflow). No issue form; no `CHANGELOG.md`.",
+			"",
+			"`README.md`, in order: `zentra adapters list`.",
+		)
+		skip := map[string]bool{"go.mod": true, ".github/workflows/ci.yml": true}
+		got, err := repocheck.Rules(rulesRepoSpec(t, spec, skip))
+		if err != nil {
+			t.Fatalf("Rules error = %v, want nil", err)
+		}
+		if len(got) != len(skip) {
+			t.Errorf("Rules = %+v, want exactly %d findings", got, len(skip))
+		}
+		for f := range skip {
+			if !hasFinding(got, "missing_repo_file", f) {
+				t.Errorf("Rules = %+v, want a missing_repo_file finding for %s", got, f)
 			}
 		}
 	})

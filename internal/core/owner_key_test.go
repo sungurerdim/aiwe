@@ -346,7 +346,7 @@ func ownerKeyTestOwnerOnly(t *testing.T, p string, protected bool) {
 func ownerKeyTestRefused(t *testing.T, what, p string, o *Owner, err error, dir, foreign bool) {
 	t.Helper()
 	if !errors.Is(err, ErrRootUnsafe) || ErrorResult(err).Outcome != "root_unsafe" {
-		t.Errorf("OpenOwner with %s %s: owner %t, error %v; want %v (§5.10)", p, what, o != nil, err, ErrRootUnsafe)
+		t.Errorf("OpenOwner with %s %s: owner %t, error %v; want %v (§5.15)", p, what, o != nil, err, ErrRootUnsafe)
 		return
 	}
 	if next := outcomeRow("root_unsafe").Next; !strings.Contains(next, "other user") || strings.Contains(next, "detail names the step") {
