@@ -11,8 +11,9 @@ import (
 
 // refuseMounts fails with ErrNotOwned when an entry under dir of the sub-root sub, at any depth, is
 // a mount point (mountPointAt), named under owned; it reads through sub, never follows a link and
-// never descends into a mount point, so no data on a mounted file system is removed (#136).
-func refuseMounts(sub *os.Root, owned, dir string) (err error) {
+// never descends into a mount point, so no data on a mounted file system is removed (#136). The
+// refusal names outcome: what the removal removed before it.
+func refuseMounts(sub *os.Root, owned, dir, outcome string) (err error) {
 	d, err := sub.Open(dir)
 	if err != nil {
 		return err
@@ -25,9 +26,9 @@ func refuseMounts(sub *os.Root, owned, dir string) (err error) {
 		case merr != nil:
 			err = merr
 		case mount:
-			err = fmt.Errorf("%w: %q is a mount point; nothing removed", ErrNotOwned, filepath.Join(owned, filepath.FromSlash(p)))
+			err = fmt.Errorf("%w: %q is a mount point; %s", ErrNotOwned, filepath.Join(owned, filepath.FromSlash(p)), outcome)
 		case ents[i].Type() == fs.ModeDir:
-			err = refuseMounts(sub, owned, p)
+			err = refuseMounts(sub, owned, p, outcome)
 		}
 	}
 	return err
