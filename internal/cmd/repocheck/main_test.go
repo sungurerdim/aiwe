@@ -295,3 +295,61 @@ func TestRepocheckAllWorkflowLink(t *testing.T) {
 		t.Fatalf("repocheck all exit code = 0 with ci-shape reading outside the repository; output %q", out.String())
 	}
 }
+
+// TestRepocheckCommitMsg catches a commit-msg run that passes a Closes line without its Effect
+// line, a Closes line to another repository than origin, or a Closes line when origin cannot be
+// read (SPEC §12.3).
+func TestRepocheckCommitMsg(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Fatalf("git is not on PATH: %v", err)
+	}
+	repo := t.TempDir()
+	for _, args := range [][]string{{"init", "-q"}, {"remote", "add", "origin", "git@github.com:octo-org/widget.git"}} {
+		if out, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	noOrigin := t.TempDir()
+	if out, err := exec.Command("git", "-C", noOrigin, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	const closes = "fix: the gate step reports its exit code\n\nEffect: 3 → 0\nCloses octo-org/widget#7\n"
+	tests := []struct {
+		name string
+		msg  string
+		args []string
+		ok   bool
+		rule string
+	}{
+		{"Closes to origin with an Effect line", closes, []string{"--repo", repo}, true, ""},
+		{"Closes without an Effect line", "fix: the gate step\n\nCloses octo-org/widget#7\n",
+			[]string{"--repo", repo}, false, "missing_effect"},
+		{"Closes to another repository", "fix: the gate step\n\nEffect: 3 → 0\nCloses octo-org/gadget#7\n",
+			[]string{"--repo", repo}, false, "closes_other_repo"},
+		{"Closes with no origin remote", closes, []string{"--repo", noOrigin}, false, "closes_repo_unknown"},
+		{"Closes with no --repo", closes, nil, false, "closes_repo_unknown"},
+		{"Refs with no --repo", "fix: the gate step\n\nRefs octo-org/widget#7\n", nil, true, ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			f, err := os.Create(filepath.Join(t.TempDir(), "COMMIT_EDITMSG"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.WriteString(tc.msg); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.Seek(0, io.SeekStart); err != nil {
+				t.Fatal(err)
+			}
+			stdin := os.Stdin
+			os.Stdin = f
+			t.Cleanup(func() { os.Stdin = stdin; _ = f.Close() })
+			var out bytes.Buffer
+			code := core.RunCLI(t.Context(), commands(), append([]string{"commit-msg"}, tc.args...), &out, io.Discard)
+			if tc.ok != (code == 0) || !strings.Contains(out.String(), tc.rule) {
+				t.Fatalf("commit-msg %v = exit %d, output %q; want ok %v and rule %q", tc.args, code, out.String(), tc.ok, tc.rule)
+			}
+		})
+	}
+}
