@@ -6,7 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io"
+	"slices"
 	"strings"
 	"testing"
 
@@ -195,5 +199,104 @@ func TestRunCLIStream(t *testing.T) {
 	}
 	if got := stream.String(); !strings.Contains(got, line) {
 		t.Errorf("streamed output did not reach the stream writer: %q", got)
+	}
+}
+
+// failingRegistry is one command, "gates gate", whose Run returns err or, for a nil err, panics.
+func failingRegistry(err error) []core.Command {
+	return []core.Command{{Module: "gates", Object: "gates", Verb: "gate", Params: []string{"format"},
+		Purpose: "fail with the error the test names",
+		Run: func(_ context.Context, _ core.Input) (core.Result[any], error) {
+			if err == nil {
+				core.Assert(false, "a programmer error inside the command")
+			}
+			return core.Result[any]{}, err
+		}}}
+}
+
+// TestCLIFailClosed catches a panic that escapes the result envelope, an error that exits as a
+// decided red or no_change, and a text envelope that names the outcome twice (SPEC §5.3, §5.10).
+func TestCLIFailClosed(t *testing.T) {
+	t.Run("recovery set up after argument splitting or format parsing", func(t *testing.T) {
+		f, err := parser.ParseFile(token.NewFileSet(), "cli.go", nil, 0)
+		if err != nil {
+			t.Fatalf("parse cli.go: %v", err)
+		}
+		var body []ast.Stmt
+		for _, d := range f.Decls {
+			if fd, ok := d.(*ast.FuncDecl); ok && fd.Name.Name == "RunCLI" {
+				body = fd.Body.List
+			}
+		}
+		if body == nil {
+			t.Fatal("cli.go has no RunCLI")
+		}
+		calls := func(n ast.Node, names ...string) bool {
+			found := false
+			ast.Inspect(n, func(n ast.Node) bool {
+				if c, ok := n.(*ast.CallExpr); ok {
+					if id, ok := c.Fun.(*ast.Ident); ok && slices.Contains(names, id.Name) {
+						found = true
+					}
+				}
+				return !found
+			})
+			return found
+		}
+		for i, s := range body {
+			if d, ok := s.(*ast.DeferStmt); ok && calls(d, "recover") {
+				return
+			}
+			if calls(s, "split", "outputFormat") {
+				t.Fatalf("RunCLI statement %d splits or parses arguments before the deferred recover: "+
+					"a panic there escapes the envelope", i+1)
+			}
+		}
+		t.Fatal("RunCLI has no deferred recover")
+	})
+
+	t.Run("panic in a command escapes the envelope", func(t *testing.T) {
+		var out bytes.Buffer
+		code := core.RunCLI(context.Background(), failingRegistry(nil), []string{"gates", "gate", "--format", "json"},
+			&out, io.Discard)
+		var env struct{ Status, Outcome string }
+		if err := json.Unmarshal(out.Bytes(), &env); err != nil || code != 1 || env.Outcome != "error" {
+			t.Errorf("panicking command exits %d with %q, want exit 1 and one JSON envelope with outcome error",
+				code, out.String())
+		}
+	})
+
+	for _, outcome := range []core.Outcome{"red", "no_change", "ok"} {
+		t.Run("error with outcome "+string(outcome)+" exits as a decided result", func(t *testing.T) {
+			err := &core.Error{Outcome: outcome, Expected: "a readable gate.json", Found: "a locked file",
+				Next: "close the editor that holds it"}
+			var out bytes.Buffer
+			code := core.RunCLI(context.Background(), failingRegistry(err), []string{"gates", "gate", "--format", "json"},
+				&out, io.Discard)
+			var env struct{ Status, Outcome string }
+			if jerr := json.Unmarshal(out.Bytes(), &env); jerr != nil {
+				t.Fatalf("output %q is not one JSON envelope: %v", out.String(), jerr)
+			}
+			if code != 1 || env.Status != "error" || env.Outcome != "error" {
+				t.Errorf("an error with outcome %q exits %d with status %q and outcome %q, want exit 1, error, error: "+
+					"an error means the command could not decide", outcome, code, env.Status, env.Outcome)
+			}
+		})
+	}
+
+	for _, outcome := range []core.Outcome{core.OutcomeUsage, core.OutcomeError} {
+		t.Run("text envelope names the outcome "+string(outcome)+" twice", func(t *testing.T) {
+			err := fmt.Errorf("read gate.json: %w", &core.Error{Outcome: outcome, Expected: "a readable file",
+				Found: "a locked file", Next: "close the editor that holds it"})
+			var out bytes.Buffer
+			core.RunCLI(context.Background(), failingRegistry(err), []string{"gates", "gate"}, &out, io.Discard)
+			line := strings.TrimSuffix(out.String(), "\n")
+			if n := strings.Count(line, string(outcome)+": "); n != 1 || !strings.HasPrefix(line, string(outcome)+": ") {
+				t.Errorf("text envelope %q names %q %d times, want once, at the start", line, outcome, n)
+			}
+			if !strings.Contains(line, "read gate.json") || !strings.Contains(line, "expected a readable file") {
+				t.Errorf("text envelope %q lost the context or the message of the error", line)
+			}
+		})
 	}
 }

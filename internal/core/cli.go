@@ -28,16 +28,18 @@ type helpEntry struct {
 
 // RunCLI runs one command line against cmds and writes its one result envelope to out; it returns
 // the process exit code. When any --format json is given, every refusal is printed as JSON too. A
-// command's progress output streams to stream, which the binary sets to stderr (SPEC §5).
+// command's progress output streams to stream, which the binary sets to stderr (SPEC §5). A panic
+// anywhere, argument splitting and format parsing included, prints one error envelope and exits 1.
 func RunCLI(ctx context.Context, cmds []Command, args []string, out, stream io.Writer) (code int) {
-	c := split(args)
-	format, err := outputFormat(c.Flags)
+	format := FormatText
 	defer func() {
 		if r := recover(); r != nil {
 			code = write(out, format, Result[any]{Status: StatusError, Outcome: OutcomeError,
 				Detail: fmt.Sprintf("crash: %v", r)})
 		}
 	}()
+	c := split(args)
+	format, err := outputFormat(c.Flags)
 	if err != nil {
 		return write(out, format, ErrorResult(err))
 	}

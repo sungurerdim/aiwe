@@ -3,6 +3,7 @@ package core
 import (
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // The outcomes the core itself names; every other outcome is a row of Outcomes.
@@ -31,7 +32,6 @@ func Outcomes() []OutcomeRow {
 		{Outcome: "red", Status: StatusRed, Next: "fix the failing step, then run the gate again"},
 		{Outcome: "incomplete", Status: StatusError,
 			Next: "run every gate step, and fix each step the report marks not_measured, then run the gate again"},
-		{Outcome: "no_change", Status: StatusNoChange, Next: "nothing to do: the target already holds"},
 		{Outcome: "param_duplicate", Status: StatusError, Err: ErrParamDuplicate,
 			Next: "remove the second definition of the parameter from the dictionary"},
 		{Outcome: "param_undeclared", Status: StatusError, Err: ErrParamUndeclared,
@@ -113,11 +113,12 @@ func outcomeRow(o Outcome) OutcomeRow {
 }
 
 // classify returns the outcome row of err: a *Error by its outcome, a sentinel by errors.Is, and
-// anything else as an error. An error never maps to ok.
+// anything else as an error. An error means the command could not decide (SPEC §5.3), so it never
+// maps to a decided status: ok, red or no_change.
 func classify(err error) OutcomeRow {
 	var e *Error
 	if errors.As(err, &e) {
-		if r := outcomeRow(e.Outcome); r.Status != StatusOK {
+		if r := outcomeRow(e.Outcome); r.Status == StatusError || r.Status == StatusUsage {
 			return r
 		}
 		return outcomeRow(OutcomeError)
@@ -132,8 +133,26 @@ func classify(err error) OutcomeRow {
 
 // ErrorResult maps err to its result: the outcome, status and exit code come from the outcome table.
 // The detail is one line: an error that is not a *Error, such as a wrapped OS error that names a
-// path, has each LF, CR and tab escaped (#223).
+// path, has each LF, CR and tab escaped (#223). A wrapped *Error's "<outcome>: " moves to the start
+// of the detail, so the text envelope names the outcome once (SPEC §5.10).
 func ErrorResult(err error) Result[any] {
 	r := classify(err)
-	return Result[any]{Status: r.Status, Outcome: r.Outcome, Detail: lineEscape(err.Error())}
+	return Result[any]{Status: r.Status, Outcome: r.Outcome, Detail: lineEscape(outcomeFirst(err))}
+}
+
+// outcomeFirst returns the message of err with the "<outcome>: " of its first *Error moved to the
+// front; the context the callers added stays, in order.
+func outcomeFirst(err error) string {
+	msg := err.Error()
+	var e *Error
+	if !errors.As(err, &e) {
+		return msg
+	}
+	inner := e.Error()
+	i := strings.LastIndex(msg, inner)
+	if i <= 0 {
+		return msg
+	}
+	prefix := string(e.Outcome) + ": "
+	return prefix + msg[:i] + strings.TrimPrefix(inner, prefix) + msg[i+len(inner):]
 }
