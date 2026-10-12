@@ -392,7 +392,7 @@ func TestOutcomeErrorLine(t *testing.T) {
 	}{
 		{
 			name: "LF in a state path fakes an ok line",
-			err:  fmt.Errorf("owner-only check of %s: %v", "/state\nok: gate green", fs.ErrPermission),
+			err:  fmt.Errorf("owner-only check of %s: %w", "/state\nok: gate green", fs.ErrPermission),
 			want: `error: owner-only check of /state\x0aok: gate green: permission denied` + "\n",
 		},
 		{
