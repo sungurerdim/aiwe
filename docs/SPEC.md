@@ -229,8 +229,7 @@ development tools (§12.2) are never user prerequisites. The MCP layer is the of
   Homebrew). A package-manager install prints the manager's update command instead. A Release install updates at MCP
   start, at most once a day, with one checker at a time (a lease, §6.6). The checker downloads the latest release and
   verifies the Ed25519 signature `checksums.txt.sig` of `checksums.txt` with the public key embedded in the binary
-  (`crypto/ed25519`). It then checks the archive digest and switches on the next start. Before `v0.1.0` aiwe is built
-  from source.
+  (`crypto/ed25519`), checks the archive digest and switches on the next start. Before `v0.1.0`: build from source.
 - `aiwe version` prints the injected version without the `v` prefix (§17), else `unknown`. A command that targets a
   repository without a stored gate runs onboarding first (§7.1).
 - MCP surface: `aiwe mcp snippet` prints a config entry that calls the binary by name; `instructions` (≤ 40 lines,
@@ -309,9 +308,7 @@ Problem and Done criteria and the file-set overlaps · `[M]` a second failure st
 `owner-action` issue · `[M]` valid units become sub-issues with native blocked-by links (L8); an unchanged rerun is
 `no_change`. **Session path**: the user's session writes each unit from the template and runs `aiwe unit check`;
 intake parses it again.
-### 7.3 Unit lifecycle — `aiwe work --repo R [--unit N | --goal G]`
-Skeleton path (M-Skeleton).
-
+### 7.3 Unit lifecycle — `aiwe work --repo R [--unit N | --goal G]`, skeleton path (M-Skeleton)
 | Step | Kind | What happens |
 |---|---|---|
 | 1 intake | M | Read the issue through the tracker port and the intake filter (DR-20); parse it (§8.4). Skip `owner-action` and blocked issues. |
@@ -578,8 +575,10 @@ units (O4).
 **Resolution** (DR-15), from the unit's type and labels, its file set, its diff paths after collect and §8.2: `aiwe
 plan` or a plan artefact → architect, auditor · another artefact → engineer, auditor · type `documentation` or only
 document paths → doc-writer, auditor (a non-document path → `role_unresolved`) · any other unit → engineer, auditor,
-with test-author first for a risky unit (L17: Severity `critical` or `high`) · a diff path in the security or UI table adds security-reviewer or ux-reviewer · the same red signature
-twice adds debugger · an ambiguous already-done check runs scout.
+with test-author first for a risky unit (L17) · a diff path in the security or UI table adds security-reviewer or
+ux-reviewer · the same red signature twice adds debugger · an ambiguous already-done check runs scout. A **risky
+unit** (L17) has Severity `critical` or `high`, or a file-set path that is in the security table (§8.2) or has a
+segment containing `identity`, `authz`, `delete`, `purge`, `migrat`, `routing`, `router` or `matching` (default).
 
 | Role | Purpose | May not (gate) | Tier |
 |---|---|---|---|
@@ -821,7 +820,7 @@ Each decision keeps its id.
 | L14 | Self-update only for a binary installed from a GitHub Release, one checker at a time, verified by an Ed25519 signature on `checksums.txt` (§6.3, §12.3); the owner creates the key pair (an `owner-action` issue) (lead, 2026-10-12). | valid |
 | L15 | A check red, then green on rerun opens a blocking `owner-action` issue; closing it clears the flag (§7.4) (lead, 2026-10-12). | valid |
 | L16 | Tiers are mechanical, with no provider-specific tier names (§8.1 point 7) (lead, 2026-10-12). | valid |
-| L17 | A unit is risky when its Severity is critical or high; a risky unit runs test-author first and gets a separate review (lead, 2026-10-12). | valid |
+| L17 | A risky unit, decided mechanically (§9.1 **Risky unit**), runs test-author first and gets a separate review (lead, 2026-10-12). | valid |
 | Q1 | License: MIT. | valid |
 | Q2 | Product name aiwe, read from one constant (DR-17). | valid |
 | Q3 | Nothing is published before the trust milestone; the first version is `1.0.0`. | superseded by L9 |
