@@ -8,6 +8,7 @@ import (
 	"strings"
 	"syscall"
 	"unicode"
+	"unicode/utf16"
 	"unicode/utf8"
 	"unsafe"
 )
@@ -118,7 +119,8 @@ func isBatchLauncher(path string) bool {
 // Go quotes argv for CommandLineToArgvW, which cmd.exe does not follow (SPEC §5.20), so every
 // word is put in double quotes, where cmd.exe takes & | < > ( ) ^ , ; = literally. An argument
 // cmd.exe would still change inside quotes is refused. /d skips AutoRun commands, /v:OFF keeps !
-// literal on this command line and /s strips exactly the outer pair of quotes.
+// literal on this command line and /s strips exactly the outer pair of quotes. A line longer
+// than cmdLineMaxLength is refused: cmd.exe would run nothing and exit 1.
 func batchCommandLine(shell, script string, args []string) (string, error) {
 	var b strings.Builder
 	b.WriteString(`"` + shell + `" /d /e:ON /v:OFF /s /c "`)
@@ -132,8 +134,17 @@ func batchCommandLine(shell, script string, args []string) (string, error) {
 		b.WriteString(quoteBatchWord(word))
 	}
 	b.WriteByte('"')
-	return b.String(), nil
+	line := b.String()
+	if n := len(utf16.Encode([]rune(line))); n > cmdLineMaxLength {
+		return "", fmt.Errorf("batch launcher %q: the cmd.exe command line is %d UTF-16 units, over cmd.exe's limit of %d: refused",
+			script, n, cmdLineMaxLength)
+	}
+	return line, nil
 }
+
+// cmdLineMaxLength is the longest command line, in UTF-16 units, that cmd.exe runs; one unit more
+// and it runs nothing and exits 1 (measured on 2026-10-12).
+const cmdLineMaxLength = 8191
 
 // batchBestFit holds the characters that a Windows ANSI code page (874, 932, 936, 949, 950,
 // 1250-1258) maps to " % or ! by best fit, measured with WideCharToMultiByte; a program that reads
