@@ -3,7 +3,9 @@ package gates
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -164,5 +166,95 @@ func TestStepStreamRunes(t *testing.T) {
 	if w.Len() == 0 || strings.Contains(w.String(), `\x`) {
 		t.Fatalf("catches a long line held back or cut inside a rune: streamed %d bytes, escapes %v",
 			w.Len(), strings.Contains(w.String(), `\x`))
+	}
+}
+
+// failTailWriter accepts every write except one that carries the helper's last line, as a
+// terminal that fails while the step's held tail is written at its end. It has no WriteString, so
+// every write reaches Write.
+type failTailWriter struct{ buf bytes.Buffer }
+
+func (w *failTailWriter) Write(p []byte) (int, error) {
+	if bytes.Contains(p, []byte("tail ")) {
+		return 0, errors.New("terminal closed")
+	}
+	return w.buf.Write(p)
+}
+
+// TestStepStreamTailWriteFails catches a failed terminal write of the held last line that turns a
+// measured step into not_measured: the exit code was measured and the runner keeps the raw output
+// (DR-13), so the step keeps its result and the detail notes the failed write (#223).
+func TestStepStreamTailWriteFails(t *testing.T) {
+	t.Setenv(streamEscapeEnv(), "1")
+	for _, tc := range []struct {
+		name     string
+		wantExit int
+		want     Result
+	}{
+		{name: "green step", wantExit: 0, want: ResultGreen},
+		{name: "red step", wantExit: 1, want: ResultRed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			step := GateStep{ID: "tail", Command: []string{os.Args[0], "-test.run=^$"}, Required: true,
+				Expect: Expect{ExitCode: tc.wantExit}}
+			def := Definition{FormatVersion: 1, Steps: []GateStep{step}}
+			report, err := (&Runner{Output: &failTailWriter{}, Owner: rootsTestOwner(t)}).Run(context.Background(), def, t.TempDir(), nil)
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			got := report.Steps[0]
+			if got.Result != tc.want || got.ExitCode != 0 || !strings.Contains(got.Detail, "terminal closed") {
+				t.Fatalf("step = %+v, want result %s, exit code 0 and a detail that notes the failed write", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestStepStreamHeldBytes catches a write whose complete line is streamed while the long rest of
+// it, past streamLineLimit, is held back until the step ends (DR-38).
+func TestStepStreamHeldBytes(t *testing.T) {
+	var w bytes.Buffer
+	s, err := newStepStream(&w, GateStep{ID: "held"})
+	if err != nil {
+		t.Fatalf("newStepStream: %v", err)
+	}
+	rest := strings.Repeat("x", 70000)
+	if _, err := s.Write([]byte("a\n" + rest)); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if want := "--- step held\na\n" + rest; w.String() != want {
+		t.Fatalf("catches held bytes past the line limit: streamed %d bytes, want %d", w.Len(), len(want))
+	}
+}
+
+// TestStepStreamByteWrites catches a stream that scans every held byte on each write: a step that
+// writes one byte at a time then costs time quadratic in its line length. Each byte written onto
+// a held line of 60000 bytes must cost about as much as a byte written onto an empty one.
+func TestStepStreamByteWrites(t *testing.T) {
+	const writes = 2000
+	cost := func(held int) time.Duration {
+		best := time.Duration(1 << 62)
+		for range 5 {
+			s, err := newStepStream(io.Discard, GateStep{ID: "bytes"})
+			if err != nil {
+				t.Fatalf("newStepStream: %v", err)
+			}
+			if _, err := s.Write(bytes.Repeat([]byte("x"), held)); err != nil {
+				t.Fatalf("Write(held): %v", err)
+			}
+			start := time.Now()
+			for range writes {
+				if _, err := s.Write([]byte("x")); err != nil {
+					t.Fatalf("Write(byte): %v", err)
+				}
+			}
+			best = min(best, time.Since(start))
+		}
+		return best
+	}
+	empty, held := cost(0), cost(60000)
+	if held > 10*empty+time.Millisecond {
+		t.Fatalf("catches a write that scans the held line: %d byte writes took %v onto a held line, %v onto an empty one",
+			writes, held, empty)
 	}
 }

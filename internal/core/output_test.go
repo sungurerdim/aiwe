@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io/fs"
 	"strings"
 	"testing"
@@ -391,8 +390,8 @@ func TestOutcomeErrorLine(t *testing.T) {
 		want string
 	}{
 		{
-			name: "LF in a state path fakes an ok line",
-			err:  fmt.Errorf("owner-only check of %s: %w", "/state\nok: gate green", fs.ErrPermission),
+			name: "LF in a state path of a flattened, non-wrapping error fakes an ok line",
+			err:  errors.New("owner-only check of /state\nok: gate green: " + fs.ErrPermission.Error()),
 			want: `error: owner-only check of /state\x0aok: gate green: permission denied` + "\n",
 		},
 		{
