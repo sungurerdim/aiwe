@@ -32,10 +32,10 @@ func gitTestNewRepo(t *testing.T) gitTestRepo {
 	gitTestRaw(t, r.dir, "config", "user.email", "ada.lovelace@example.com")
 	gitTestRaw(t, r.dir, "config", "commit.gpgsign", "false")
 	gitTestRaw(t, r.dir, "config", "core.autocrlf", "false")
-	gitTestWrite(t, filepath.Join(r.dir, "README.md"), "# aiwe\n\nSürüm 1.0\n")
+	gitTestWrite(t, filepath.Join(r.dir, "README.md"), "# "+core.Product+"\n\nSürüm 1.0\n")
 	gitTestRaw(t, r.dir, "add", "README.md")
 	gitTestRaw(t, r.dir, "commit", "-q", "-m", "docs: first readme")
-	gitTestWrite(t, filepath.Join(r.dir, "README.md"), "# aiwe\n\nGüncel sürüm 2.0\n")
+	gitTestWrite(t, filepath.Join(r.dir, "README.md"), "# "+core.Product+"\n\nGüncel sürüm 2.0\n")
 	return r
 }
 
@@ -132,7 +132,7 @@ func TestGitOptions(t *testing.T) {
 		hooks := strings.TrimSpace(res.Stdout)
 		gitTestCheckHooksDir(t, r.dir, repoHooks, hooks)
 		if want := filepath.ToSlash(filepath.Join(home, "hooks")); hooks != want {
-			t.Errorf("core.hooksPath in a core.Git call = %q, want %q under the AIWE_HOME state root", hooks, want)
+			t.Errorf("core.hooksPath in a core.Git call = %q, want %q under the %s state root", hooks, want, platformOverride("HOME"))
 		}
 	})
 
@@ -147,7 +147,7 @@ func TestGitOptions(t *testing.T) {
 			{"show", "HEAD"},
 		}
 		gitTestRaw(t, r.dir, "commit", "-q", "-a", "-m", "docs: second readme")
-		gitTestWrite(t, filepath.Join(r.dir, "README.md"), "# aiwe\n\nGüncel sürüm 3.0\n")
+		gitTestWrite(t, filepath.Join(r.dir, "README.md"), "# "+core.Product+"\n\nGüncel sürüm 3.0\n")
 		for _, args := range cases {
 			res, err := core.Git(t.Context(), r.dir, args...)
 			if err != nil {
@@ -222,7 +222,7 @@ func TestGitOptions(t *testing.T) {
 			}
 			gitTestRaw(t, r.dir, "add", "README.md")
 			gitTestArm(t, r, "commit", "-q", "-m", "docs: armed hook check")
-			gitTestWrite(t, filepath.Join(r.dir, "README.md"), "# aiwe\n\nGüncel sürüm 4.0\n")
+			gitTestWrite(t, filepath.Join(r.dir, "README.md"), "# "+core.Product+"\n\nGüncel sürüm 4.0\n")
 			gitTestRaw(t, r.dir, "add", "README.md")
 			if _, err := core.Git(t.Context(), r.dir, "commit", "-q", "-m", "docs: engine commit"); err != nil {
 				t.Fatalf("core.Git commit: %v", err)
@@ -272,7 +272,7 @@ func TestGitOptions(t *testing.T) {
 func gitTestHome(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
-	t.Setenv("AIWE_HOME", home)
+	t.Setenv(platformOverride("HOME"), home)
 	return home
 }
 
@@ -305,7 +305,7 @@ func TestGitRefusesLeadingOption(t *testing.T) {
 		}
 		gitTestRaw(t, r.dir, "add", "README.md")
 		gitTestArm(t, r, "-c", "core.hooksPath=.githooks", "commit", "-q", "-m", "docs: armed hook check")
-		gitTestWrite(t, filepath.Join(r.dir, "README.md"), "# aiwe\n\nGüncel sürüm 5.0\n")
+		gitTestWrite(t, filepath.Join(r.dir, "README.md"), "# "+core.Product+"\n\nGüncel sürüm 5.0\n")
 		gitTestRaw(t, r.dir, "add", "README.md")
 		_, err := core.Git(t.Context(), r.dir, "-c", "core.hooksPath=.githooks", "commit", "-q", "-m", "docs: engine commit")
 		if ran := gitTestRan(t, r.marker); ran != "" {

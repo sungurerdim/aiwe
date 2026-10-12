@@ -9,6 +9,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/sungurerdim/aiwe/internal/core"
 )
 
 // TestVersion builds the real binary the way GoReleaser does: its default
@@ -36,18 +38,18 @@ func TestVersion(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			bin := filepath.Join(t.TempDir(), "aiwe")
+			bin := filepath.Join(t.TempDir(), core.Product)
 			if runtime.GOOS == "windows" {
 				bin += ".exe"
 			}
-			build := exec.Command(goBin, "build", "-trimpath", "-ldflags", tc.ldflags, "-o", bin, ".")
+			build := exec.CommandContext(t.Context(), goBin, "build", "-trimpath", "-ldflags", tc.ldflags, "-o", bin, ".")
 			if out, err := build.CombinedOutput(); err != nil {
 				t.Fatalf("go build: %v\n%s", err, out)
 			}
 
 			stdout, stderr, code := runBin(t, bin, "version", "--format", "json")
 			if code != 0 {
-				t.Fatalf("aiwe version --format json exit code = %d, want 0; stderr %q", code, stderr)
+				t.Fatalf("%s version --format json exit code = %d, want 0; stderr %q", core.Product, code, stderr)
 			}
 			var env struct {
 				Status string `json:"status"`
@@ -56,7 +58,7 @@ func TestVersion(t *testing.T) {
 				} `json:"data"`
 			}
 			if err := json.Unmarshal([]byte(stdout), &env); err != nil {
-				t.Fatalf("aiwe version --format json is not one result envelope: %v; stdout %q", err, stdout)
+				t.Fatalf("%s version --format json is not one result envelope: %v; stdout %q", core.Product, err, stdout)
 			}
 			if env.Status != "ok" {
 				t.Fatalf("envelope status = %q, want %q; stdout %q", env.Status, "ok", stdout)
@@ -70,10 +72,10 @@ func TestVersion(t *testing.T) {
 
 			text, stderr, code := runBin(t, bin, "version")
 			if code != 0 {
-				t.Fatalf("aiwe version exit code = %d, want 0; stderr %q", code, stderr)
+				t.Fatalf("%s version exit code = %d, want 0; stderr %q", core.Product, code, stderr)
 			}
 			if !strings.Contains(text, tc.want) {
-				t.Fatalf("aiwe version text output %q misses %q", text, tc.want)
+				t.Fatalf("%s version text output %q misses %q", core.Product, text, tc.want)
 			}
 		})
 	}
@@ -81,7 +83,7 @@ func TestVersion(t *testing.T) {
 
 func runBin(t *testing.T, bin string, args ...string) (stdout, stderr string, code int) {
 	t.Helper()
-	cmd := exec.Command(bin, args...)
+	cmd := exec.CommandContext(t.Context(), bin, args...)
 	var out, errOut bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errOut

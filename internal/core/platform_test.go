@@ -132,18 +132,18 @@ func TestPlatform(t *testing.T) {
 			ovState + sep + ".." + sep + "elsewhere"},
 		{"override with a trailing .. element accepted instead of refused", ovState + sep + "x" + sep + ".."},
 		{"override with a slash-separated .. element accepted instead of refused", ovState + "/../elsewhere"},
-		{"network share override with forward slashes accepted as a root", "//fileserver/share/aiwe"},
+		{"network share override with forward slashes accepted as a root", "//fileserver/share/" + core.Product},
 		{"network share override with backslashes accepted as a root", `\\fileserver\share`},
-		{"network share override in long-path form accepted as a root", `\\?\UNC\fileserver\share\aiwe`},
-		{"drive root override with a forward slash accepted as a root", "C:/"},
-		{"drive root override with a backslash accepted as a root", `C:\`},
+		{"network share override in long-path form accepted as a root", `\\?\UNC\fileserver\share\` + core.Product},
+		{"drive root override with a forward slash accepted as a root", winDrive + "/"},
+		{"drive root override with a backslash accepted as a root", winDrive + `\`},
 		{"file system root override accepted as a root", "/"},
 		// \??\ is the NT object-manager prefix; Windows reads it as absolute, so it is a device
 		// form like \\?\ and is refused like it.
-		{`NT device override \??\ with a drive accepted as a root`, `\??\C:\Users\zeynep\aiwe`},
-		{`NT device override \??\UNC with a network share accepted as a root`, `\??\UNC\fileserver\share\aiwe`},
+		{`NT device override \??\ with a drive accepted as a root`, `\??\` + winHome + `\` + core.Product},
+		{`NT device override \??\UNC with a network share accepted as a root`, `\??\UNC\fileserver\share\` + core.Product},
 		// Declared fail-closed: a local long-path override is refused, not followed (SPEC §6.4).
-		{`local long-path override \\?\ with a drive accepted as a root`, `\\?\C:\Users\zeynep\aiwe`},
+		{`local long-path override \\?\ with a drive accepted as a root`, `\\?\` + winHome + `\` + core.Product},
 	} {
 		for _, suffix := range []string{"HOME", "CACHE", "TMP"} {
 			t.Run(tc.name+" ("+platformOverride(suffix)+")", func(t *testing.T) {
@@ -212,9 +212,9 @@ func platformConventionChecks(t *testing.T) {
 	temp := filepath.Join("/tmp", p)
 	for _, bad := range []struct{ name, value string }{
 		{"a .. element", base + sep + "a" + sep + ".." + sep + ".." + sep + "elsewhere"},
-		{"a network share", "//fileserver/share/aiwe"},
+		{"a network share", "//fileserver/share/" + core.Product},
 		{"a network share with backslashes", `\\fileserver\share`},
-		{`an NT device form \??\`, `\??\C:\Users\zeynep\AppData\Local`},
+		{`an NT device form \??\`, `\??\` + winHome + `\AppData\Local`},
 	} {
 		for _, tc := range []struct {
 			goos, variable string
@@ -380,15 +380,15 @@ func platformTrailingSpaceOrDot(t *testing.T) {
 		{"a trailing dot then space", base + sep + "a. "},
 		{"a trailing space then dot", base + sep + "a ."},
 		{"several trailing dots", base + sep + "a..."},
-		{"a trailing dot in a middle component", base + sep + "a." + sep + "aiwe"},
-		{"a trailing space in a middle component", base + sep + "a " + sep + "aiwe"},
+		{"a trailing dot in a middle component", base + sep + "a." + sep + core.Product},
+		{"a trailing space in a middle component", base + sep + "a " + sep + core.Product},
 		{"a trailing dot before a trailing separator", base + sep + "a." + sep},
 		{"a Unicode component with a trailing dot", base + sep + "Masaüstü."},
 		{"a Unicode component with a trailing space", base + sep + "çalışma "},
 	}
 	if sep != "/" {
 		stripped = append(stripped, struct{ name, value string }{
-			"a trailing dot with forward slashes", filepath.ToSlash(base) + "/a./aiwe"})
+			"a trailing dot with forward slashes", filepath.ToSlash(base) + "/a./" + core.Product})
 	}
 	for _, tc := range stripped {
 		for _, suffix := range []string{"HOME", "CACHE", "TMP"} {
@@ -404,11 +404,11 @@ func platformTrailingSpaceOrDot(t *testing.T) {
 		}
 	}
 	kept := []struct{ goos, name, value string }{
-		{"windows", "a . element", base + sep + "." + sep + "aiwe"},
-		{"windows", "a dot inside a component", base + sep + "aiwe.v2"},
-		{"windows", "a leading dot", base + sep + ".aiwe"},
+		{"windows", "a . element", base + sep + "." + sep + core.Product},
+		{"windows", "a dot inside a component", base + sep + core.Product + ".v2"},
+		{"windows", "a leading dot", base + sep + "." + core.Product},
 		{"windows", "a space inside a component", base + sep + "Program Data"},
-		{"windows", "a leading space", base + sep + " aiwe"},
+		{"windows", "a leading space", base + sep + " " + core.Product},
 		{"windows", "a Unicode component", base + sep + "Masaüstü"},
 		{"linux", "a trailing dot", base + sep + "a."},
 		{"linux", "a trailing space", base + sep + "a "},
