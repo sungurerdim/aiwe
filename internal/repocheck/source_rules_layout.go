@@ -17,7 +17,7 @@ import (
 const repocheckMainPath = "internal/cmd/repocheck/main.go"
 
 // ioImports are the imports that do process, file or network IO (SPEC §5.6).
-func ioImports() []string { return []string{"os", "os/exec", "net", "net/http"} }
+func ioImports() []string { return []string{"os", "os/exec", "io/ioutil", "net", "net/http"} }
 
 // ioCoreFiles are the core files of units 0.3, 0.20, 0.5, 0.6, 0.18 and 0.21 without their OS
 // suffix; they and their _<os> variants may import IO (SPEC §5.6, §14).
@@ -78,31 +78,70 @@ func (c *sourceChecker) checkEnvReads(file *ast.File) {
 	if c.path == envFile || c.isTestFile() {
 		return
 	}
-	ast.Inspect(file, c.visitEnvRead)
+	ast.Inspect(file, pkgUses{c: c, rule: ruleEnvRead, pkg: "os", names: envReads()}.visit)
 }
 
-// visitEnvRead flags n when it is os.<read> under any import name or, under a dot import of os, a
-// bare <read>; the selected name of a selector is never visited as a bare identifier.
-func (c *sourceChecker) visitEnvRead(n ast.Node) bool {
+// ruleRootRead flags a plain os read by path outside rootReadFiles (SPEC §5.6).
+const ruleRootRead = "root_read"
+
+// rootReads are the os functions that read a file by path and follow a link out of a root;
+// os.DirFS hands out such reads.
+func rootReads() []string { return []string{"ReadFile", "Open", "OpenFile", "Stat", "DirFS"} }
+
+// ioutilReads are the io/ioutil functions that read by path, as rootReads do.
+func ioutilReads() []string { return []string{"ReadFile", "ReadDir"} }
+
+// rootReadFiles read by a path that is not under a repository root: procstart_unix.go and
+// process_procfs_io.go read fixed /proc paths, remove.go stats the roots it compares, owner_key.go
+// reads its state-root ledger.
+func rootReadFiles() []string {
+	return []string{"internal/core/procstart_unix.go", "internal/core/process_procfs_io.go",
+		"internal/core/remove.go", "internal/core/owner_key.go"}
+}
+
+// checkRootReads flags each plain os read by path outside rootReadFiles and test files; a file
+// under a repository or state root is read through an *os.Root, which keeps links inside it
+// (SPEC §5.6).
+func (c *sourceChecker) checkRootReads(file *ast.File) {
+	if slices.Contains(rootReadFiles(), c.path) || c.isTestFile() {
+		return
+	}
+	ast.Inspect(file, pkgUses{c: c, rule: ruleRootRead, pkg: "os", names: rootReads()}.visit)
+	ast.Inspect(file, pkgUses{c: c, rule: ruleRootRead, pkg: "io/ioutil", names: ioutilReads()}.visit)
+}
+
+// pkgUses flags each use of one of names from the package with import path pkg, called or taken
+// as a value.
+type pkgUses struct {
+	c     *sourceChecker
+	rule  string
+	pkg   string
+	names []string
+}
+
+// visit flags n when it is <pkg>.<name> under any import name or, under a dot import of pkg, a
+// bare <name>; the selected name of a selector is never visited as a bare identifier.
+func (u pkgUses) visit(n ast.Node) bool {
 	switch n := n.(type) {
 	case *ast.SelectorExpr:
-		if x, ok := n.X.(*ast.Ident); ok && c.imports[x.Name] == "os" && slices.Contains(envReads(), n.Sel.Name) {
-			c.add(ruleEnvRead, n.Pos())
+		if x, ok := n.X.(*ast.Ident); ok && u.c.imports[x.Name] == u.pkg && slices.Contains(u.names, n.Sel.Name) {
+			u.c.add(u.rule, n.Pos())
 		}
-		ast.Inspect(n.X, c.visitEnvRead)
+		ast.Inspect(n.X, u.visit)
 		return false
 	case *ast.Ident:
-		if c.imports[".os"] == "os" && slices.Contains(envReads(), n.Name) {
-			c.add(ruleEnvRead, n.Pos())
+		if u.c.imports["."+u.pkg] == u.pkg && slices.Contains(u.names, n.Name) {
+			u.c.add(u.rule, n.Pos())
 		}
 	}
 	return true
 }
 
-// checkIOImports flags each IO import, aliased or grouped, in a file that may not import IO, and
-// each environment read outside envFile, which is process IO too.
+// checkIOImports flags each IO import, aliased or grouped, in a file that may not import IO, each
+// environment read outside envFile, which is process IO too, and each plain read by path.
 func (c *sourceChecker) checkIOImports(file *ast.File) {
 	c.checkEnvReads(file)
+	c.checkRootReads(file)
 	if c.mayImportIO() {
 		return
 	}
