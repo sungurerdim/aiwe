@@ -75,8 +75,8 @@ func commands() []core.Command {
 			Purpose: "name each missing prerequisite with its install command", Run: runDoctor},
 		{Module: "repocheck", Object: "all", Params: params,
 			Purpose: "run every repository check and report each result", Run: runAll},
-		{Module: "repocheck", Object: "commit-msg", Params: []string{"format"},
-			Purpose: "check the commit message on stdin against Conventional Commits", Run: runCommitMsg},
+		{Module: "repocheck", Object: "commit-msg", Params: params,
+			Purpose: "check the commit message on stdin against SPEC §12.3", Run: runCommitMsg},
 	}
 	for _, c := range checks() {
 		cmds = append(cmds, core.Command{Module: "repocheck", Object: c.name, Params: params,
@@ -163,8 +163,10 @@ func runCIShape(_ context.Context, repo string) (measured, error) {
 }
 
 // runCommitMsg checks the commit message on stdin, as the commit-msg hook and the CI step pass it
-// (SPEC §4, §12.2); a message that is not UTF-8 is an error, never green.
-func runCommitMsg(_ context.Context, _ core.Input) (core.Result[any], error) {
+// (SPEC §4, §12.2, §12.3); a message that is not UTF-8 is an error, never green. The repository
+// slug a Closes line must name comes from the origin remote of --repo; with no --repo, or an
+// origin that cannot be read, it is unknown and a Closes line is a finding (fail closed).
+func runCommitMsg(ctx context.Context, in core.Input) (core.Result[any], error) {
 	body, err := io.ReadAll(os.Stdin)
 	if err != nil {
 		return core.Result[any]{}, fmt.Errorf("commit-msg: read stdin: %w", err)
@@ -174,7 +176,13 @@ func runCommitMsg(_ context.Context, _ core.Input) (core.Result[any], error) {
 		return core.Result[any]{}, fmt.Errorf("commit-msg: %w", err)
 	}
 	res := checkResult{Check: "commit-msg", Result: resultGreen}
-	if found := repocheck.CommitMessage(msg); len(found) > 0 {
+	slug := ""
+	if repo := in.Params["repo"]; repo != "" {
+		if url, err := repocheck.OriginURL(ctx, repo); err == nil {
+			slug = repocheck.RepoSlug(url)
+		}
+	}
+	if found := repocheck.CommitMessage(msg, slug); len(found) > 0 {
 		res.Result, res.Findings = resultRed, found
 	}
 	return summarize([]checkResult{res}), nil

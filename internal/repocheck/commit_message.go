@@ -17,6 +17,9 @@ const (
 	ruleHeaderLength       = "header_length"
 	ruleBodyLineLength     = "body_line_length"
 	ruleMissingIssueRef    = "missing_issue_ref"
+	ruleMissingEffect      = "missing_effect"
+	ruleClosesOtherRepo    = "closes_other_repo"
+	ruleClosesRepoUnknown  = "closes_repo_unknown"
 )
 
 // The length limits of a commit message in runes, not bytes (SPEC §12.3).
@@ -38,14 +41,31 @@ var headerPattern = regexp.MustCompile(`^([a-z]+)(?:\([^()\s]+\))?!?: \S`)
 // breakingFooterPattern matches a BREAKING CHANGE footer token in any case.
 var breakingFooterPattern = regexp.MustCompile(`(?i)^breaking[ -]change:`)
 
-// issueRefPattern matches the issue line every commit carries: Refs or Closes <owner>/<repo>#N.
-var issueRefPattern = regexp.MustCompile(`^(?:Refs|Closes) [A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9._-]+#[1-9][0-9]*$`)
+// issueRefPattern matches the issue line every commit carries: Refs or Closes <owner>/<repo>#N; it
+// captures the keyword and the <owner>/<repo>.
+var issueRefPattern = regexp.MustCompile(`^(Refs|Closes) ([A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9._-]+)#[1-9][0-9]*$`)
+
+// effectPattern matches the Effect line a closing commit carries: Effect: <before> → <after>.
+var effectPattern = regexp.MustCompile(`^Effect: \S.* → \S`)
+
+// slugPattern matches an <owner>/<repo> slug.
+var slugPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9._-]+$`)
+
+// remotePathPatterns capture the path of a remote URL: the URL form (https, ssh, git) and the
+// scp-like ssh form user@host:path.
+var remotePathPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`^(?:https?|ssh|git)://[^/\s]+/(\S+)$`),
+	regexp.MustCompile(`^[^@/\s]+@[^:/\s]+:(\S+)$`),
+}
+
+// codeSpanPattern matches a line that is one back-quoted code span.
+var codeSpanPattern = regexp.MustCompile("^`[^`]+`$")
 
 // trailerPattern matches a git trailer line: a token, a colon, one space and a value.
 var trailerPattern = regexp.MustCompile(`^(?:[A-Za-z][A-Za-z0-9-]*|BREAKING CHANGE): \S`)
 
 // urlPattern matches a URL anywhere in a line.
-var urlPattern = regexp.MustCompile(`https?://\S`)
+var urlPattern = regexp.MustCompile(`https?://\S+`)
 
 // commitTypes are the types a header may carry: the Conventional Commits types that svu and the
 // release notes read (SPEC §12.3); feat and fix bump the version, the others do not.
@@ -62,9 +82,10 @@ type messageLine struct {
 // CommitMessage checks one commit message against Conventional Commits and SPEC §12.3: a header of
 // a known type and at most 50 runes, one blank line before the body, body lines of at most 72 runes
 // (URLs, trailers and quoted command or output lines exempt), a BREAKING CHANGE footer in upper
-// case, and a Refs or Closes <owner>/<repo>#N line. Comment lines and everything below the
-// scissors line are dropped first, as git drops them.
-func CommitMessage(msg string) []Finding {
+// case, a Refs or Closes <owner>/<repo>#N line, and for a Closes line an Effect line and the slug of
+// the repository the commit lands in. An empty slug is unknown: a Closes line is then a finding.
+// Comment lines and everything below the scissors line are dropped first, as git drops them.
+func CommitMessage(msg, slug string) []Finding {
 	lines := messageLines(msg)
 	start := slices.IndexFunc(lines, func(l messageLine) bool { return strings.TrimSpace(l.text) != "" })
 	if start < 0 {
@@ -82,31 +103,95 @@ func CommitMessage(msg string) []Finding {
 		}
 	}
 	found = append(found, checkBodyLines(rest)...)
-	if !slices.ContainsFunc(rest, func(l messageLine) bool { return issueRefPattern.MatchString(l.text) }) {
+	return append(found, checkIssueLines(rest, slug)...)
+}
+
+// checkIssueLines checks the issue lines of body: one Refs or Closes line at least; a Closes line
+// names the repository slug and comes with an Effect line.
+func checkIssueLines(body []messageLine, slug string) []Finding {
+	var found []Finding
+	refs, closes := false, false
+	for _, l := range body {
+		m := issueRefPattern.FindStringSubmatch(l.text)
+		if m == nil {
+			continue
+		}
+		refs = true
+		if m[1] != "Closes" {
+			continue
+		}
+		closes = true
+		switch {
+		case slug == "":
+			found = append(found, Finding{Rule: ruleClosesRepoUnknown, Path: commitMessagePath, Line: l.n})
+		case !strings.EqualFold(m[2], slug):
+			found = append(found, Finding{Rule: ruleClosesOtherRepo, Path: commitMessagePath, Line: l.n})
+		}
+	}
+	if !refs {
 		found = append(found, Finding{Rule: ruleMissingIssueRef, Path: commitMessagePath})
+	}
+	if closes && !slices.ContainsFunc(body, func(l messageLine) bool { return effectPattern.MatchString(l.text) }) {
+		found = append(found, Finding{Rule: ruleMissingEffect, Path: commitMessagePath})
 	}
 	return found
 }
 
-// checkBodyLines returns a finding for each body line over 72 runes that is not exempt: a line
-// with a URL, a line of the closing trailer block, a line inside a ``` fence, or a quoted command
-// or output line (indented by four spaces or a tab, quoted with "> ", or opening with a back quote).
+// RepoSlug returns the <owner>/<repo> of a git remote URL in the https, ssh or scp-like form, or ""
+// when the URL holds none.
+func RepoSlug(remoteURL string) string {
+	u := strings.TrimSpace(remoteURL)
+	for _, p := range remotePathPatterns {
+		m := p.FindStringSubmatch(u)
+		if m == nil {
+			continue
+		}
+		path := strings.TrimSuffix(strings.TrimSuffix(m[1], "/"), ".git")
+		if slugPattern.MatchString(path) {
+			return path
+		}
+		return ""
+	}
+	return ""
+}
+
+// checkBodyLines returns a finding for each body line over 72 runes that is not exempt: a line of
+// the closing trailer block, a line between a matched opening and closing ``` fence line, a line
+// that is 72 runes or less once its URLs are removed, or a quoted command or output line (indented
+// by four spaces or a tab, or one back-quoted code span). Fence lines themselves are checked.
 func checkBodyLines(body []messageLine) []Finding {
 	trailers := trailerBlock(body)
+	fenced := fencedLines(body)
 	var found []Finding
-	fenced := false
 	for i, l := range body {
-		fence := strings.HasPrefix(l.text, "```")
-		if fence {
-			fenced = !fenced
-		}
-		if fence || fenced || i >= trailers || utf8.RuneCountInString(l.text) <= maxBodyLineRunes ||
-			urlPattern.MatchString(l.text) || isQuoted(l.text) {
+		prose := urlPattern.ReplaceAllString(l.text, "")
+		if fenced[i] || i >= trailers || utf8.RuneCountInString(prose) <= maxBodyLineRunes || isQuoted(l.text) {
 			continue
 		}
 		found = append(found, Finding{Rule: ruleBodyLineLength, Path: commitMessagePath, Line: l.n})
 	}
 	return found
+}
+
+// fencedLines marks the lines of body between a ``` fence line and the next one; a fence with no
+// closing line marks nothing.
+func fencedLines(body []messageLine) []bool {
+	fenced := make([]bool, len(body))
+	open := -1
+	for i, l := range body {
+		if !strings.HasPrefix(l.text, "```") {
+			continue
+		}
+		if open < 0 {
+			open = i
+			continue
+		}
+		for j := open + 1; j < i; j++ {
+			fenced[j] = true
+		}
+		open = -1
+	}
+	return fenced
 }
 
 // trailerBlock returns the index in body where the closing trailer block starts: the last
@@ -133,8 +218,7 @@ func trailerBlock(body []messageLine) int {
 
 // isQuoted reports whether line is a quoted command or output line.
 func isQuoted(line string) bool {
-	return strings.HasPrefix(line, "    ") || strings.HasPrefix(line, "\t") ||
-		strings.HasPrefix(line, "> ") || strings.HasPrefix(line, "`")
+	return strings.HasPrefix(line, "    ") || strings.HasPrefix(line, "\t") || codeSpanPattern.MatchString(line)
 }
 
 // messageLines returns the lines git keeps of msg: no comment line and nothing from the scissors

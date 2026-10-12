@@ -36,14 +36,27 @@ func MachineDoctorEnv(ctx context.Context, repo string) DoctorEnv {
 // RunGo runs the go command with args in dir through core.Start and returns its standard output;
 // a start failure or a non-zero exit is an error that carries the standard error.
 func RunGo(ctx context.Context, dir string, args ...string) ([]byte, error) {
+	return runProgram(ctx, dir, "go", args...)
+}
+
+// OriginURL returns the URL of the origin remote of the repository at repo, as
+// `git remote get-url origin` prints it; no origin remote, or no git, is an error.
+func OriginURL(ctx context.Context, repo string) (string, error) {
+	out, err := runProgram(ctx, repo, "git", "remote", "get-url", "origin")
+	return strings.TrimSpace(string(out)), err
+}
+
+// runProgram runs program with args in dir through core.Start and returns its standard output; a
+// start failure or a non-zero exit is an error that carries the standard error.
+func runProgram(ctx context.Context, dir, program string, args ...string) ([]byte, error) {
 	var stdout, stderr bytes.Buffer
-	child, err := core.Start(ctx, core.ChildSpec{Argv: append([]string{"go"}, args...), Dir: dir,
+	child, err := core.Start(ctx, core.ChildSpec{Argv: append([]string{program}, args...), Dir: dir,
 		Env: core.Environ(), Stdout: &stdout, Stderr: &stderr})
 	if err != nil {
 		return nil, err
 	}
 	if err := child.Wait(); err != nil {
-		return nil, fmt.Errorf("go %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
+		return nil, fmt.Errorf("%s %s: %w: %s", program, strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
 	}
 	return stdout.Bytes(), nil
 }
