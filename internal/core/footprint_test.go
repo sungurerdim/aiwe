@@ -52,9 +52,9 @@ func footprintTestOpen(t *testing.T, r core.OwnedRoots, self core.ProcessID) *co
 	return o
 }
 
-func footprintTestMeasure(t *testing.T, o *core.Owner) core.Footprint {
+func footprintTestMeasure(ctx context.Context, t *testing.T, o *core.Owner) core.Footprint {
 	t.Helper()
-	f, err := o.Footprint(context.Background())
+	f, err := o.Footprint(ctx)
 	if err != nil {
 		t.Fatalf("Footprint: %v", err)
 	}
@@ -62,9 +62,9 @@ func footprintTestMeasure(t *testing.T, o *core.Owner) core.Footprint {
 }
 
 // footprintTestDead returns the identity of a child process that has already exited.
-func footprintTestDead(t *testing.T) core.ProcessID {
+func footprintTestDead(ctx context.Context, t *testing.T) core.ProcessID {
 	t.Helper()
-	cmd := exec.Command(os.Args[0], "-test.run=^$")
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^$")
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start child: %v", err)
 	}
@@ -125,13 +125,13 @@ func TestFootprint(t *testing.T) {
 			}
 		}, 0},
 		{"leaves one behind and exits", func(t *testing.T, r core.OwnedRoots) {
-			o := footprintTestOpen(t, r, footprintTestDead(t))
+			o := footprintTestOpen(t, r, footprintTestDead(ctx, t))
 			if _, err := o.CreateOwned(ctx, core.TempRoot, "run-bc2"); err != nil {
 				t.Fatal(err)
 			}
 		}, 1},
 		{"leaves two behind, removes one", func(t *testing.T, r core.OwnedRoots) {
-			o := footprintTestOpen(t, r, footprintTestDead(t))
+			o := footprintTestOpen(t, r, footprintTestDead(ctx, t))
 			for i := range 3 {
 				d, err := o.CreateOwned(ctx, core.TempRoot, "run-bc2")
 				if err != nil {
@@ -156,7 +156,7 @@ func TestFootprint(t *testing.T) {
 			r := footprintTestRoots(t)
 			tc.run(t, r)
 			o := footprintTestOpen(t, r, footprintTestSelf(t))
-			f := footprintTestMeasure(t, o)
+			f := footprintTestMeasure(ctx, t, o)
 			if f.TempOrphans != tc.wantOrphans {
 				t.Fatalf("TempOrphans = %d, want %d", f.TempOrphans, tc.wantOrphans)
 			}
@@ -174,7 +174,7 @@ func TestFootprint(t *testing.T) {
 			if _, err := o.Sweep(ctx); err != nil {
 				t.Fatalf("Sweep: %v", err)
 			}
-			after := footprintTestMeasure(t, o)
+			after := footprintTestMeasure(ctx, t, o)
 			if after.TempOrphans != 0 {
 				t.Fatalf("TempOrphans after sweep = %d, want 0", after.TempOrphans)
 			}
@@ -187,10 +187,10 @@ func TestFootprint(t *testing.T) {
 	t.Run("state and cache bytes and files are counted", func(t *testing.T) {
 		r := footprintTestRoots(t)
 		o := footprintTestOpen(t, r, footprintTestSelf(t))
-		before := footprintTestMeasure(t, o)
+		before := footprintTestMeasure(ctx, t, o)
 		footprintTestWriteFiles(t, filepath.Join(r.State, "projects", "github.com", "acme", "app"), 3, 1000)
 		footprintTestWriteFiles(t, filepath.Join(r.Cache, "bare", "objects"), 5, 2048)
-		after := footprintTestMeasure(t, o)
+		after := footprintTestMeasure(ctx, t, o)
 		if got := after.StateFiles - before.StateFiles; got != 3 {
 			t.Errorf("state files grew by %d, want 3", got)
 		}
@@ -243,13 +243,13 @@ func TestFootprint(t *testing.T) {
 		t.Run("ceiling on "+tc.name, func(t *testing.T) {
 			r := footprintTestRoots(t)
 			o := footprintTestOpen(t, r, footprintTestSelf(t))
-			at := footprintTestMeasure(t, o)
+			at := footprintTestMeasure(ctx, t, o)
 			c := tc.limit(at)
 			if err := at.Check(c); err != nil {
 				t.Fatalf("Check at the ceiling = %v, want nil", err)
 			}
 			tc.fill(t, r)
-			over := footprintTestMeasure(t, o)
+			over := footprintTestMeasure(ctx, t, o)
 			if err := over.Check(c); !errors.Is(err, core.ErrFootprintExceeded) {
 				t.Fatalf("Check one over the ceiling = %v, want %v", err, core.ErrFootprintExceeded)
 			}
@@ -274,11 +274,12 @@ func footprintTestLink(t *testing.T, target, link string) {
 // TestFootprintUnownedOrphan catches a registered temp dir of a dead owner that fails the
 // ownership check and is left out of TempOrphans, so the ceiling of 0 stays green (DR-11, DR-6).
 func TestFootprintUnownedOrphan(t *testing.T) {
+	ctx := context.Background()
 	r := footprintTestRoots(t)
 	base := filepath.Dir(r.Temp)
 	create := func() core.OwnedDir {
 		t.Helper()
-		d, err := footprintTestOpen(t, r, footprintTestDead(t)).CreateOwned(context.Background(), core.TempRoot, "run-20261010-0003")
+		d, err := footprintTestOpen(t, r, footprintTestDead(ctx, t)).CreateOwned(ctx, core.TempRoot, "run-20261010-0003")
 		if err != nil {
 			t.Fatalf("CreateOwned: %v", err)
 		}
@@ -301,7 +302,7 @@ func TestFootprintUnownedOrphan(t *testing.T) {
 	escaping := create()
 	footprintTestLink(t, r.Home, filepath.Join(escaping.Path(), "home"))
 
-	f := footprintTestMeasure(t, footprintTestOpen(t, r, footprintTestSelf(t)))
+	f := footprintTestMeasure(ctx, t, footprintTestOpen(t, r, footprintTestSelf(t)))
 	if f.TempOrphans != 3 {
 		t.Errorf("TempOrphans = %d, want 3 (no marker, dangling link, link out of the root)", f.TempOrphans)
 	}

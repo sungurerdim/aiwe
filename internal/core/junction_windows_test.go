@@ -48,7 +48,11 @@ func JunctionForTest(t *testing.T, target, link string) {
 	if err != nil {
 		t.Fatalf("open the junction dir %s: %v", link, err)
 	}
-	defer windows.CloseHandle(h)
+	defer func() {
+		if err := windows.CloseHandle(h); err != nil {
+			t.Errorf("close the junction dir %s: %v", link, err)
+		}
+	}()
 	var n uint32
 	if err := windows.DeviceIoControl(h, windows.FSCTL_SET_REPARSE_POINT, &buf[0], uint32(len(buf)), nil, 0, &n, nil); err != nil {
 		t.Fatalf("junction %s -> %s: %v", link, target, err)
@@ -78,7 +82,9 @@ func TestJunctionMetacharName(t *testing.T) {
 		if err != nil {
 			t.Fatalf("find %s: %v", link, err)
 		}
-		windows.FindClose(h)
+		if err := windows.FindClose(h); err != nil {
+			t.Fatalf("close the find handle of %s: %v", link, err)
+		}
 		if fd.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT == 0 || fd.Reserved0 != windows.IO_REPARSE_TAG_MOUNT_POINT {
 			t.Errorf("%s: attributes %#x, reparse tag %#x; want a junction (tag %#x)", link, fd.FileAttributes, fd.Reserved0, uint32(windows.IO_REPARSE_TAG_MOUNT_POINT))
 		}
