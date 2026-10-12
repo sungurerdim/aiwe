@@ -158,10 +158,11 @@ read or set; Windows argv lives only in `core/process_windows.go` (§17).
 the only `OwnedRoot` values; only `CreateOwned` makes an `OwnedDir`. `RemoveOwned` refuses (`not_owned`) unless all
 hold (L6): the real path is under the temp or cache root; no link leaves that root; the marker is present; the walk
 never descends into a mount point. The state root and user directories stay outside (Q14). A temp or cache root that
-is or contains the home, the state root, a canonical repository or a file-system root, that is a link or junction, or
-that is not owner-only is `root_unsafe`; so is any root another user can read, write or owns. The fix never names a
-directory for delete. A state root is `root_unsafe` (L18) when it is a file-system root, is or contains the home or a
-repository, or lies inside a repository work tree.
+is or contains the home, the state root, an onboarded local repository or a file-system root, is a link or junction,
+or is not owner-only is `root_unsafe`, as is any root another user can read, write or owns; a bare clone in the cache
+root is aiwe's own data, not protected. The fix never names a directory for delete. A state root is `root_unsafe`
+(L18) when it is a file-system root, is or contains the home or an onboarded local repository, or lies inside an
+onboarded local repository's work tree.
 ### 5.17 Static analysis
 `go vet` alone caught none of five tested classes (§17). Gate step `lint` runs golangci-lint with `exhaustive`,
 `nilaway` (a module plugin that may report false positives), `errcheck`, `errorlint`, `contextcheck`, `containedctx`,
