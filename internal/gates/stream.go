@@ -38,15 +38,19 @@ func newStepStream(w io.Writer, step GateStep) (*stepStream, error) {
 	return s, nil
 }
 
-// Write takes p into the stream and writes each complete line, escaped. A line longer than
-// streamLineLimit is written up to its last whole rune.
+// Write takes p into the stream and writes each complete line, escaped. Held bytes that reach
+// streamLineLimit are written up to their last whole rune. Only p is scanned for a newline: the
+// held bytes hold none, so a step that writes one byte at a time costs linear time.
 func (s *stepStream) Write(p []byte) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	n := 0
+	if i := bytes.LastIndexByte(p, '\n'); i >= 0 {
+		n = len(s.pending) + i + 1
+	}
 	s.pending = append(s.pending, p...)
-	n := bytes.LastIndexByte(s.pending, '\n') + 1
-	if n == 0 && len(s.pending) >= streamLineLimit {
-		n = wholeRunes(s.pending)
+	if len(s.pending)-n >= streamLineLimit {
+		n += wholeRunes(s.pending[n:])
 	}
 	if n == 0 {
 		return len(p), nil
