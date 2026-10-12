@@ -332,20 +332,32 @@ func ownerKeyTestAllowed(t *testing.T, p, sddl string) (allowed []string, flags,
 func ownerKeyTestOwnerOnly(t *testing.T, p string, protected bool) {
 	t.Helper()
 	user, sddl := ownerKeyTestSDDL(t, p)
-	trusted := map[string]bool{user: true, "SY": true, "S-1-5-18": true, "BA": true,
-		"S-1-5-32-544": true, "CO": true, "S-1-3-0": true}
+	// SDDL prints a well-known principal as an alias, such as LA for the RID-500 user the GitHub
+	// runner uses, so each principal is compared by its SID value.
+	trusted := map[string]bool{user: true, "S-1-5-18": true, "S-1-5-32-544": true, "S-1-3-0": true}
 	allowed, flags, owner := ownerKeyTestAllowed(t, p, sddl)
-	if !trusted[owner] {
+	if !trusted[ownerKeyTestSID(t, owner)] {
 		t.Errorf("%s is owned by %s; want the current user (%s), SYSTEM or Administrators", p, owner, user)
 	}
 	if protected && !strings.Contains(flags, "P") {
 		t.Errorf("%s inherits its parent's ACEs (DACL flags %q, SDDL %s); want inheritance cut", p, flags, sddl)
 	}
 	for _, sid := range allowed {
-		if !trusted[sid] {
+		if !trusted[ownerKeyTestSID(t, sid)] {
 			t.Errorf("%s allows %s (SDDL %s); want only the current user, SYSTEM and Administrators", p, sid, sddl)
 		}
 	}
+}
+
+// ownerKeyTestReal returns the real path of p, the spelling a refusal detail names: a temp dir given
+// as an 8.3 short name or in another letter case resolves to its long, on-disk name.
+func ownerKeyTestReal(t *testing.T, p string) string {
+	t.Helper()
+	rp, err := realPath(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rp
 }
 
 // ownerKeyTestRefused fails the test when OpenOwner of p, an open or foreign root or owner key, is
@@ -418,7 +430,7 @@ func TestOwnerKeyACL(t *testing.T) {
 		r := removeTestRoots(t, ownerKeyTestPermissiveParent(t))
 		removeTestMkdir(t, r.State)
 		o, err := OpenOwner(r, self)
-		ownerKeyTestRefused(t, "inheriting Authenticated Users modify", r.State, o, err, true, false)
+		ownerKeyTestRefused(t, "inheriting Authenticated Users modify", ownerKeyTestReal(t, r.State), o, err, true, false)
 		if removeTestExists(t, filepath.Join(r.State, ownerKeyFile)) {
 			t.Errorf("OpenOwner refused %s yet wrote a key into it", r.State)
 		}
@@ -437,7 +449,7 @@ func TestOwnerKeyACL(t *testing.T) {
 			target := filepath.Join(r.State, c.target)
 			ownerKeyTestGrant(t, target, c.perm)
 			o, err := OpenOwner(r, self)
-			ownerKeyTestRefused(t, "granting Authenticated Users "+c.perm, target, o, err, c.target != ownerKeyFile, false)
+			ownerKeyTestRefused(t, "granting Authenticated Users "+c.perm, ownerKeyTestReal(t, target), o, err, c.target != ownerKeyFile, false)
 		})
 	}
 }
