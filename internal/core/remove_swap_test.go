@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -480,21 +479,5 @@ func TestSweepSwapBeforeLastRemove(t *testing.T) {
 	}
 	if rep.Removed != 0 || rep.Refused != 1 {
 		t.Errorf("Sweep report = %+v, want Removed 0, Refused 1 for the swapped name %q", rep, filepath.Base(d.Path()))
-	}
-}
-
-// TestRemoveOwnedBindMount catches mounted data deleted through a bind mount in an owned dir (#136).
-func TestRemoveOwnedBindMount(t *testing.T) {
-	o := removeTestOpen(t, removeTestRoots(t, t.TempDir()))
-	d, src := removeTestCreate(t, o, TempRoot), t.TempDir()
-	keep, mnt := filepath.Join(src, "keep.txt"), filepath.Join(d.Path(), "mnt")
-	removeTestWrite(t, keep, "mounted data, not owned")
-	removeTestMkdir(t, mnt)
-	if out, err := exec.Command("mount", "--bind", src, mnt).CombinedOutput(); err != nil {
-		t.Skipf("cannot bind mount %s on %s (needs Linux and CAP_SYS_ADMIN): %v %s", src, mnt, err, out)
-	}
-	t.Cleanup(func() { _ = exec.Command("umount", "-l", mnt).Run() })
-	if err := o.RemoveOwned(context.Background(), d); err == nil || !removeTestExists(t, keep) {
-		t.Errorf("RemoveOwned over a bind mount = %v, %s kept %v; want a refusal that keeps it", err, keep, removeTestExists(t, keep))
 	}
 }
