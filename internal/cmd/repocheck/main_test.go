@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -240,5 +242,46 @@ func TestRepocheckAll(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestRepocheckAllWorkflowLink catches a ci-shape check that follows a .github/workflows link out
+// of the repository and measures the outside ci.yml instead of refusing it (#214).
+func TestRepocheckAllWorkflowLink(t *testing.T) {
+	t.Setenv("GOPROXY", "off")
+	t.Setenv("GOTOOLCHAIN", "local")
+	t.Setenv("GOFLAGS", "-mod=readonly")
+	repo := writeFixture(t)
+	outside := t.TempDir()
+	ci := "name: ci\non: [push]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: go test ./...\n"
+	if err := os.WriteFile(filepath.Join(outside, "ci.yml"), []byte(ci), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(repo, ".github"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(repo, ".github", "workflows")
+	if runtime.GOOS == "windows" {
+		// A junction needs no privilege, so the case runs on Windows too.
+		if out, err := exec.CommandContext(t.Context(), "cmd", "/c", "mklink", "/J", link, outside).CombinedOutput(); err != nil {
+			t.Fatalf("mklink /J %s %s: %v: %s", link, outside, err, out)
+		}
+	} else if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	code := core.RunCLI(t.Context(), commands(), []string{"all", "--repo", repo, "--format", "json"}, &out, io.Discard)
+	var rep allReport
+	if err := json.Unmarshal(out.Bytes(), &rep); err != nil {
+		t.Fatalf("repocheck all --format json is not one result envelope: %v; output %q", err, out.String())
+	}
+	for _, c := range rep.Data.Checks {
+		if c.Check == "ci-shape" && c.Result != "error" {
+			t.Fatalf("ci-shape result = %q through a workflows link out of the repository, want error; output %q",
+				c.Result, out.String())
+		}
+	}
+	if code == 0 {
+		t.Fatalf("repocheck all exit code = 0 with ci-shape reading outside the repository; output %q", out.String())
 	}
 }
