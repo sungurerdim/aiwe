@@ -69,7 +69,7 @@ credentials (DR-19); reading logs, sessions or bills of tools aiwe did not run (
 general pull-request review; a network MCP transport; deleting a directory aiwe did not create (DR-11); rotating
 consumer accounts of one provider (O7); quota forecasts; benchmark harnesses. Deferred with a trigger: §15.
 ## 3. Design rules
-One sentence and one enforcement each (L2). "Gate step" = a step of `gate.json` (§12.2); `repo/<check>` = a check in
+One enforcement each (L2). "Gate step" = a step of `gate.json` (§12.2); `repo/<check>` = a check in
 gate step `repo`. Test paths are relative to `internal/`.
 
 | # | Rule | Enforcement |
@@ -160,7 +160,8 @@ hold (L6): the real path is under the temp or cache root; no link leaves that ro
 never descends into a mount point. The state root and user directories stay outside (Q14). A temp or cache root that
 is or contains the home, the state root, a canonical repository or a file-system root, that is a link or junction, or
 that is not owner-only is `root_unsafe`; so is any root another user can read, write or owns. The fix never names a
-directory for delete.
+directory for delete. A state root is `root_unsafe` (L18) when it is a file-system root, is or contains the home or a
+repository, or lies inside a repository work tree.
 ### 5.17 Static analysis
 `go vet` alone caught none of five tested classes (§17). Gate step `lint` runs golangci-lint with `exhaustive`,
 `nilaway` (a module plugin that may report false positives), `errcheck`, `errorlint`, `contextcheck`, `containedctx`,
@@ -471,8 +472,7 @@ Escalation moves up the list. No run recomputes the list.
    (Q6); the run records the level it got.
 6. **Role fit**: shipped data per role (`roles/`) names the measured fields its quality uses and their weights
    (writing roles: coding index first; planning: intelligence index first; judging: both), its required capabilities
-   (tool use, context window) and a floor score. A writing role never takes a candidate below its floor. The model
-   with the best score never runs at its lowest effort level.
+   (tool use, context window) and a floor score. A writing role never takes a candidate below its floor.
 7. **Quality**: the candidate's own first-try green rate once it has ≥ 10 runs in that role (default); before that its
    role-fit score from the public prior. **Tiers** are mechanical (L16): `base` = the cheapest candidate above the
    role floor; `raised` = the upper half by role-fit score; `top` = the best score. A role starts at its card tier
@@ -821,6 +821,7 @@ Each decision keeps its id.
 | L15 | A check red, then green on rerun opens a blocking `owner-action` issue; closing it clears the flag (§7.4) (lead, 2026-10-12). | valid |
 | L16 | Tiers are mechanical, with no provider-specific tier names (§8.1 point 7) (lead, 2026-10-12). | valid |
 | L17 | A risky unit, decided mechanically (§9.1 **Risky unit**), runs test-author first and gets a separate review (lead, 2026-10-12). | valid |
+| L18 | #234's refusal of a state root inside a repository work tree stays; state files never enter a work tree (lead, 2026-10-12). | valid |
 | Q1 | License: MIT. | valid |
 | Q2 | Product name aiwe, read from one constant (DR-17). | valid |
 | Q3 | Nothing is published before the trust milestone; the first version is `1.0.0`. | superseded by L9 |
