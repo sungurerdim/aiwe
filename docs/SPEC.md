@@ -313,9 +313,12 @@ units 0.3, 0.20, 0.5, 0.6, 0.18 and 0.21 (§14), with their `_<os>` variants, ma
 A file under a repository or state root is read through an `*os.Root` (`os.OpenRoot`,
 `os.OpenInRoot`), never by path: a path read follows a link inside the root out of it.
 `filepath.Clean` does not fix gosec G304; it removes `..` but no link. Outside test files, only
-`core/procstart_unix.go` (fixed `/proc` paths), `core/remove.go` (the roots it compares) and
-`core/owner_key.go` (its ledger) call `os.ReadFile`, `os.Open`, `os.OpenFile` or `os.Stat`.
-Enforced: check `repo/source-rules` (rule `root_read`). The root refuses a symlink or junction
+`core/procstart_unix.go` and `core/process_procfs_io.go` (fixed `/proc` paths), `core/remove.go`
+(the roots it compares) and `core/owner_key.go` (its ledger) call `os.ReadFile`, `os.Open`,
+`os.OpenFile`, `os.Stat`, `os.DirFS`, `ioutil.ReadFile` or `ioutil.ReadDir`. Enforced: check
+`repo/source-rules` (rule `root_read`; `io/ioutil` is an IO import). The rule does not cover
+`os.ReadDir`, `template.ParseFiles` or `parser.ParseFile` with a nil source; none is in the tree
+(lead decision, #214). The root refuses a symlink or junction
 whose target is absolute, even when the target is inside the root. It cannot see a hardlink: a
 hardlink inside the root to a file outside it, on the same volume, is read.
 
