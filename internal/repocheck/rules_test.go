@@ -36,7 +36,7 @@ func rulesSpec() string {
 }
 
 // oldTablesSpec is rulesSpec plus the tables an earlier rules check read: a §3 table with an empty
-// Serves cell and a test whose source exists, a §12.2 step gate.json lacks, and a §14 Files cell.
+// Serves cell and a test whose source exists, a §12.2 step gate.json lacks, and a delivery-plan Files cell.
 func oldTablesSpec() string {
 	return strings.Join(joinLines(
 		[]string{
@@ -117,7 +117,7 @@ func rulesSpecWithout(body ...string) string {
 
 func TestRules(t *testing.T) {
 	t.Run("a SPEC without the old tables passes", func(t *testing.T) {
-		// Guards against a rules check that still needs the §3, §12.2 or §14 tables: a spec that
+		// Guards against a rules check that still needs the §3, §12.2 or delivery-plan tables: a spec that
 		// has only the §12.1 list, in a repository that holds every listed file, is green.
 		got, err := repocheck.Rules(rulesRepoSpec(t, rulesSpec(), nil))
 		if err != nil || len(got) != 0 {

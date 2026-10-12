@@ -6,14 +6,14 @@ import (
 	"strings"
 )
 
-// ruleModuleNotAllowed is the rule name of check repo/deps (DR-41).
+// ruleModuleNotAllowed is the rule name of check repo/deps (DR-21).
 const ruleModuleNotAllowed = "module_not_allowed"
 
-// mcpSDKModule is the official MCP Go SDK, the one module outside golang.org/x that DR-41 allows.
+// mcpSDKModule is the official MCP Go SDK, the one module outside golang.org/x that DR-21 allows.
 const mcpSDKModule = "github.com/modelcontextprotocol/go-sdk"
 
 // Deps checks the modules linked into the binary, as `go list -deps -json ./cmd/...` prints its
-// packages, against the allow-list of DR-41: the standard library, golang.org/x/* and the MCP Go
+// packages, against the allow-list of DR-21: the standard library, golang.org/x/* and the MCP Go
 // SDK. A module that only an allowed third-party module imports is one "these require" and passes;
 // each other module a package of the main module imports is a module_not_allowed finding whose
 // Path is the module path.
@@ -38,7 +38,7 @@ func Deps(goList []byte) ([]Finding, error) {
 }
 
 // notAllowedFindings returns one module_not_allowed finding per module that a package of the main
-// module imports directly and DR-41 does not allow.
+// module imports directly and DR-21 does not allow.
 func notAllowedFindings(pkgs []listedPackage, byPath map[string]listedPackage) ([]Finding, error) {
 	seen := map[string]bool{}
 	var found []Finding
@@ -60,7 +60,7 @@ func notAllowedFindings(pkgs []listedPackage, byPath map[string]listedPackage) (
 	return found, nil
 }
 
-// refusedModules returns the third-party modules that p imports directly and DR-41 does not allow.
+// refusedModules returns the third-party modules that p imports directly and DR-21 does not allow.
 func refusedModules(byPath map[string]listedPackage, p listedPackage) ([]string, error) {
 	var mods []string
 	for _, imp := range p.Imports {
@@ -93,7 +93,7 @@ func thirdPartyModule(byPath map[string]listedPackage, imp string) (string, erro
 	return p.Module.Path, nil
 }
 
-// allowedModule reports whether DR-41 allows mod by name. The golang.org/x match is per path
+// allowedModule reports whether DR-21 allows mod by name. The golang.org/x match is per path
 // element, so a look-alike such as golang.org/xx is refused.
 func allowedModule(mod string) bool {
 	return strings.HasPrefix(mod, "golang.org/x/") || mod == mcpSDKModule

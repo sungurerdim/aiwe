@@ -252,7 +252,7 @@ func TestGatesCommand(t *testing.T) {
 			prefix := string(env.Outcome) + ": expected "
 			if !strings.HasPrefix(env.Detail, prefix) || !strings.Contains(env.Detail, "; found ") ||
 				!strings.Contains(env.Detail, "; next: ") || !strings.Contains(commandsTestWithoutRepo(env.Detail, repo), tc.found) {
-				t.Errorf("%s: detail %q is not \"<outcome>: expected <x>; found <y>; next: <action>\" naming %q (SPEC §5.10)",
+				t.Errorf("%s: detail %q is not \"<outcome>: expected <x>; found <y>; next: <action>\" naming %q (SPEC §5.3)",
 					tc.catches, env.Detail, tc.found)
 			}
 		})

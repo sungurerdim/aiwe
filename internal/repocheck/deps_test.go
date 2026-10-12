@@ -24,7 +24,7 @@ const (
 
 func TestDeps(t *testing.T) {
 	t.Run("allow-listed modules and the modules they require pass", func(t *testing.T) {
-		// Guards against a check that rejects what DR-41 allows: the standard library,
+		// Guards against a check that rejects what DR-21 allows: the standard library,
 		// golang.org/x/*, the MCP Go SDK, and a module only the SDK requires.
 		out := goListOutput(t,
 			stdPackage("fmt"),
