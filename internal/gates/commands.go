@@ -24,7 +24,7 @@ func Commands() []core.Command {
 
 // runGate runs the gate of <repo>/gate.json, or only the steps --step names, and maps the gate
 // result to one outcome: green is ok, red is red, anything else is incomplete. A red or
-// incomplete gate never exits 0 (BC-1, DR-10).
+// incomplete gate never exits 0 (BC-1, DR-6).
 func runGate(ctx context.Context, in core.Input) (core.Result[any], error) {
 	repo, ok := in.Params["repo"]
 	if !ok {

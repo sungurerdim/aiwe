@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// The rule names and limits of check repo/size (SPEC §5.9, Q23).
+// The rule names and limits of check repo/size (SPEC §5.13, Q23).
 const (
 	ruleFileTooLong = "file_too_long"
 	ruleFuncTooLong = "func_too_long"
@@ -18,7 +18,7 @@ const (
 	maxFuncLines   = 60
 )
 
-// Size checks each file against the size limits of SPEC §5.9: a source file holds at most 400
+// Size checks each file against the size limits of SPEC §5.13: a source file holds at most 400
 // lines, a test file at most 500, and a function outside a test file at most 60, counted from its
 // func keyword through its closing brace. A test file is bounded by its file limit alone (Q23). A
 // file that does not parse is a parse_error finding, so no function goes uncounted.

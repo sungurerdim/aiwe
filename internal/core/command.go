@@ -33,7 +33,7 @@ type Command struct {
 	Object string
 	Verb   string
 	Params []string
-	// Purpose is the one-line purpose that --help prints next to the command name (DR-23).
+	// Purpose is the one-line purpose that --help prints next to the command name (DR-16).
 	Purpose string
 	Run     func(ctx context.Context, in Input) (Result[any], error)
 }

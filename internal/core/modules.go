@@ -4,7 +4,7 @@ import "path"
 
 // Module is one row of the module table: a package, its single responsibility, the packages it
 // may import and the goals it serves. This table is the only copy (SPEC §6.1, SSOT); check
-// repo/boundaries compares it with the real imports (DR-24).
+// repo/boundaries compares it with the real imports (DR-17).
 type Module struct {
 	Package        string
 	Responsibility string

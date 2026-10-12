@@ -41,7 +41,7 @@ func declFile(path, header string, n int) repocheck.SourceFile {
 
 func TestSize(t *testing.T) {
 	t.Run("files and functions at the limits pass", func(t *testing.T) {
-		// Guards against an off-by-one: SPEC §5.9 limits are inclusive.
+		// Guards against an off-by-one: SPEC §5.13 limits are inclusive.
 		good := []repocheck.SourceFile{
 			linesFile("internal/core/text.go", 400),
 			linesFile("internal/core/text_test.go", 500),
@@ -75,7 +75,7 @@ func TestSize(t *testing.T) {
 	}
 
 	t.Run("a test function has no line limit", func(t *testing.T) {
-		// Guards against the 60-line limit reaching test functions: SPEC §5.9 and Q23 limit only
+		// Guards against the 60-line limit reaching test functions: SPEC §5.13 and Q23 limit only
 		// non-test functions, and a test file is bounded by its 500-line file limit alone.
 		for _, n := range []int{61, 400} {
 			f := testFuncFile("internal/core/flow_test.go", n)

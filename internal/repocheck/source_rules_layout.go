@@ -11,7 +11,7 @@ import (
 )
 
 // The layout rules of check repo/source-rules: IO imports, file names, architecture and
-// configuration defaults (SPEC §5.6, §5.8, §5.12, §12.2).
+// configuration defaults (SPEC §5.6, §5.12, §12.2).
 
 // repocheckMainPath is the entry point of repocheck, which may import os (SPEC §5.6).
 const repocheckMainPath = "internal/cmd/repocheck/main.go"
@@ -19,8 +19,8 @@ const repocheckMainPath = "internal/cmd/repocheck/main.go"
 // ioImports are the imports that do process, file or network IO (SPEC §5.6).
 func ioImports() []string { return []string{"os", "os/exec", "io/ioutil", "net", "net/http"} }
 
-// ioCoreFiles are the core files of units 0.3, 0.20, 0.5, 0.6, 0.18 and 0.21 without their OS
-// suffix; they and their _<os> variants may import IO (SPEC §5.6, §14).
+// ioCoreFiles are the core files, without their OS suffix, that may import IO; their _<os>
+// variants may too (SPEC §5.6).
 func ioCoreFiles() []string {
 	return []string{"platform", "modules", "env", "outcomes", "config", "log", "remove", "owner_key",
 		"sweep", "footprint", "process", "launcher", "git", "procstart", "realpath"}
@@ -63,17 +63,17 @@ func withoutOS(stem string) string {
 	return stem
 }
 
-// ruleEnvRead flags a process environment read outside envFile (SPEC §5.4).
+// ruleEnvRead flags a process environment read outside envFile (SPEC §5.3).
 const ruleEnvRead = "env_read"
 
-// envFile is the only file that reads the process environment (SPEC §5.4).
+// envFile is the only file that reads the process environment (SPEC §5.3).
 const envFile = "internal/core/env.go"
 
 // envReads are the os functions that read the process environment.
 func envReads() []string { return []string{"Environ", "Getenv", "LookupEnv"} }
 
 // checkEnvReads flags each os environment read, called or taken as a value, aliased or under a dot
-// import of os, outside envFile and test files (SPEC §5.4).
+// import of os, outside envFile and test files (SPEC §5.3).
 func (c *sourceChecker) checkEnvReads(file *ast.File) {
 	if c.path == envFile || c.isTestFile() {
 		return
@@ -153,7 +153,7 @@ func (c *sourceChecker) checkIOImports(file *ast.File) {
 	}
 }
 
-// checkFileName flags a file name that is not snake_case (SPEC §5.8) and one whose last suffix,
+// checkFileName flags a file name that is not snake_case and one whose last suffix,
 // after _test, names an architecture, which makes the file architecture-specific (SPEC §12.2).
 func (c *sourceChecker) checkFileName() {
 	name := path.Base(c.path)

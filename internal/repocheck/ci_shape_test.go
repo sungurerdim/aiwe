@@ -93,7 +93,7 @@ func lineOf(t *testing.T, body, text string) int {
 // TestCIShape catches a CI step without a `# why:` comment, a `uses:` reference that is not a full
 // commit SHA, a trigger other than pull_request, push with branches [main] and workflow_dispatch,
 // or a concurrency other than group ci-${{ github.ref }} cancelled for pull requests only, that
-// passes repo/ci-shape (DR-42, SPEC §12.2).
+// passes repo/ci-shape (DR-22, SPEC §12.2).
 func TestCIShape(t *testing.T) {
 	t.Run("accepts the prescribed shape and counts its jobs and steps", func(t *testing.T) {
 		rep := ciShapeOf(t, ciFixture)

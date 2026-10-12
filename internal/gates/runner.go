@@ -16,7 +16,7 @@ import (
 // Result is the result word of a gate or of one step.
 type Result string
 
-// The result words of a gate and its steps: green, red, incomplete or not_measured (DR-10, DR-13).
+// The result words of a gate and its steps: green, red, incomplete or not_measured (DR-6).
 const (
 	ResultGreen       Result = "green"
 	ResultRed         Result = "red"
@@ -26,11 +26,11 @@ const (
 
 const (
 	// exitUnknown is the exit code of a step that never exited: it was not run, could not start or
-	// was stopped. Unmeasured is never 0 (DR-13, DR-21).
+	// was stopped. Unmeasured is never 0 (DR-6).
 	exitUnknown = -1
-	// stepGrace is how long a step's leftover processes get to end before they are killed (DR-15).
+	// stepGrace is how long a step's leftover processes get to end before they are killed (DR-11).
 	stepGrace = 2 * time.Second
-	// testStepID is the step that runs the tests with the measured worker count (DR-7).
+	// testStepID is the step that runs the tests with the measured worker count (DR-3).
 	testStepID = "test"
 )
 
@@ -54,12 +54,12 @@ type GateReport struct {
 }
 
 // Runner runs the steps of a gate, one after another, each as a process tree (SPEC §5.20).
-// Capacity sets the test step's worker count (DR-7); without one the test step is not_measured.
+// Capacity sets the test step's worker count (DR-3); without one the test step is not_measured.
 // A green or red test step prints the count with its inputs as its detail. History holds each
 // step's recorded runs, oldest first, and sets the test step's limit (SPEC §7.8); Recorded holds
 // the recorded package durations that raise it (SPEC §5.13). Each step's output streams to Output
-// while it runs (DR-38); a nil Output streams nowhere. Each step runs in fresh state, cache and
-// temp roots and a secret-free environment (DR-35, SPEC §7.8): an owned directory of Owner under
+// while it runs (§7.8); a nil Output streams nowhere. Each step runs in fresh state, cache and
+// temp roots and a secret-free environment (DR-10, SPEC §7.8): an owned directory of Owner under
 // the temp root. A Runner with no Owner runs no step; each step is not_measured (SPEC §6.4).
 type Runner struct {
 	Capacity core.Capacity
@@ -70,11 +70,11 @@ type Runner struct {
 }
 
 // Run runs the steps of def in dir. A non-empty only names the steps to run; every other step is
-// reported not_measured and the gate is at best incomplete (DR-10, SPEC §7.8). Any red required
+// reported not_measured and the gate is at best incomplete (DR-6, SPEC §7.8). Any red required
 // step makes the gate red; otherwise any required step that is not green makes it incomplete. A
 // step that is not required runs and reports its own result, which leaves the gate result as it
 // is; its detail says it is not required. A gate in which no required step ran has no evidence and
-// is not_measured (DR-13). Run returns an error
+// is not_measured (DR-6). Run returns an error
 // only when it cannot decide: an empty gate or an unknown step name in only.
 func (r *Runner) Run(ctx context.Context, def Definition, dir string, only []string) (GateReport, error) {
 	if len(def.Steps) == 0 {
@@ -149,7 +149,7 @@ func (r *Runner) runStep(ctx context.Context, step GateStep, dir string, proof *
 	} else {
 		report = judgeStep(step, code, note, out.Bytes())
 	}
-	// The terminal write is not the measurement (DR-13): a failed write of the held last line keeps
+	// The terminal write is not the measurement (DR-6): a failed write of the held last line keeps
 	// the step's result, judged from the exit code and the raw output, and is noted in its detail.
 	if err := stream.Close(); err != nil {
 		report.Detail = joinDetail(report.Detail, err.Error())
@@ -170,10 +170,10 @@ func judgeStep(step GateStep, code int, note string, out []byte) StepReport {
 }
 
 // prepare returns the step as it runs and the note its report carries. Every other step runs as
-// declared. The test step runs with the worker count of DR-7 under the limit of SPEC §7.8 (its
+// declared. The test step runs with the worker count of DR-3 under the limit of SPEC §7.8 (its
 // declared limit, else StepLimit), raised to 2 × the longest recorded package (SPEC §5.13); the
 // note prints the count with its inputs. A test step with no chosen count cannot run: the count
-// is never assumed (DR-13).
+// is never assumed (DR-6).
 func (r *Runner) prepare(step GateStep, proof *Proof) (prepared GateStep, note string, err error) {
 	if step.ID != testStepID {
 		return step, "", nil
@@ -221,7 +221,7 @@ func execStep(ctx context.Context, step GateStep, spec core.ChildSpec) (int, *St
 
 // judgeDurations judges a test step that exited as declared by the package durations its
 // `go test -json` output reports, against the step's limit. Output that measured no package is
-// not_measured, never green (DR-13).
+// not_measured, never green (DR-6).
 func judgeDurations(step GateStep, code int, note string, out []byte) StepReport {
 	limit := time.Duration(step.TimeoutSeconds) * time.Second
 	current, err := ParsePackageDurations(out)

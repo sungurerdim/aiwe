@@ -31,7 +31,7 @@ type checkRoots struct {
 	base  string
 }
 
-// env returns the secret-free check environment of core.CleanEnv (DR-35, SPEC §6.5) with each root
+// env returns the secret-free check environment of core.CleanEnv (DR-10, SPEC §6.5) with each root
 // override pointed at its directory in the fresh roots. A parent override never reaches the check.
 func (c *checkRoots) env() []string {
 	cells := rootCells()
@@ -61,7 +61,7 @@ func isRootVar(name string, cells []rootCell) bool {
 	return false
 }
 
-// remove removes the fresh roots through their owner, the one owner of a recursive removal (DR-25).
+// remove removes the fresh roots through their owner, the one owner of a recursive removal (DR-11).
 func (c *checkRoots) remove(ctx context.Context) error {
 	return c.owner.RemoveOwned(context.WithoutCancel(ctx), c.owned)
 }

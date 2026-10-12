@@ -100,7 +100,7 @@ func gitTestArm(t *testing.T, r gitTestRepo, args ...string) {
 	}
 }
 
-// TestGitOptions guards DR-49 and SPEC §5.21: a run clone's .git/config, attributes or hooks must
+// TestGitOptions guards DR-10 and SPEC §5.21: a run clone's .git/config, attributes or hooks must
 // not make a core.Git call run a program, and every call carries the fixed options.
 func TestGitOptions(t *testing.T) {
 	home := gitTestHome(t)
@@ -252,7 +252,7 @@ func TestGitOptions(t *testing.T) {
 
 	t.Run("Git refuses a hooks directory that holds an entry", func(t *testing.T) {
 		// Catches a call that takes a non-empty engine hooks directory as core.hooksPath, where
-		// a planted file would run as a hook (fail-closed, DR-49).
+		// a planted file would run as a hook (fail-closed, DR-10).
 		stray := filepath.Join(gitTestHome(t), "hooks", "stray")
 		gitTestWrite(t, stray, gitTestHook("unused", "stray"))
 		r := gitTestNewRepo(t)

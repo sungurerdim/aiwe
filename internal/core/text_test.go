@@ -9,7 +9,7 @@ import (
 )
 
 func TestText(t *testing.T) {
-	// fixtures are the DR-27 fixtures: text in any human language must pass through unchanged.
+	// fixtures are the DR-18 fixtures: text in any human language must pass through unchanged.
 	// Invisible code points are written as escapes so the fixture is reviewable.
 	fixtures := []struct {
 		name string
@@ -52,7 +52,7 @@ func TestText(t *testing.T) {
 	t.Run("result does not depend on the locale", func(t *testing.T) {
 		for _, env := range locales {
 			t.Run(env["LANG"], func(t *testing.T) {
-				// Guards against text handling that reads LANG, LC_ALL or LC_CTYPE (DR-27).
+				// Guards against text handling that reads LANG, LC_ALL or LC_CTYPE (DR-18).
 				for k, v := range env {
 					t.Setenv(k, v)
 				}
@@ -84,7 +84,7 @@ func TestText(t *testing.T) {
 		}
 		for _, tc := range invalid {
 			t.Run(tc.name, func(t *testing.T) {
-				// Guards against invalid input passed on as text or silently replaced with U+FFFD (DR-13).
+				// Guards against invalid input passed on as text or silently replaced with U+FFFD (DR-6).
 				got, err := core.ReadText(tc.in)
 				if !errors.Is(err, core.ErrInvalidUTF8) {
 					t.Fatalf("ReadText(%q) error = %v, want core.ErrInvalidUTF8", tc.in, err)

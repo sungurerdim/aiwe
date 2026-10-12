@@ -24,10 +24,10 @@ type ownedTemp struct {
 	live bool
 }
 
-// Sweep removes every owned temp directory whose owner process is dead (DR-36); a pid that runs
+// Sweep removes every owned temp directory whose owner process is dead (DR-11); a pid that runs
 // under another start time is a reused pid, so its owner is dead too (U13), except a ProcessID
 // built by hand on Linux: it has no exact start identity, so its owner counts as alive while its
-// pid runs (DR-25). A registered directory of a dead owner that fails the ownership checks is
+// pid runs (DR-11). A registered directory of a dead owner that fails the ownership checks is
 // removed only when it is an empty directory, such as one left by a crash before its marker; any
 // other is kept and counted as Refused. Each directory is checked right before its removal, and a
 // file is never removed: a name swapped after the check is counted as Refused and its not_owned
@@ -113,7 +113,7 @@ func (h removalHooks) removeEmptyDir(rootPath, name string) (removed bool, err e
 }
 
 // removalHooks are the points of a removal where a test acts: each func, when set, runs at its
-// point; all are nil outside tests. An Owner holds them (SPEC §5.4).
+// point; all are nil outside tests. An Owner holds them (SPEC §5.3).
 type removalHooks struct {
 	ownedChecked func(name string)       // after the ownership check, before the removal starts
 	ownedMarker  func(name string)       // after the ownership Lstat, before the marker open

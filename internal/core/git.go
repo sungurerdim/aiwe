@@ -12,7 +12,7 @@ import (
 )
 
 // hooksDirName is the engine-owned empty directory under the state root that every git call
-// takes as its core.hooksPath, so no hook of a clone or of the user runs (DR-49).
+// takes as its core.hooksPath, so no hook of a clone or of the user runs (DR-10).
 const hooksDirName = "hooks"
 
 // GitResult is the outcome of one git call: its output and its exit code.
@@ -23,7 +23,7 @@ type GitResult struct {
 }
 
 // Git runs git with args in dir through Start, in a clean environment, with the repository's
-// programs off (DR-49, SPEC §5.21): fixed -c options before the subcommand, and
+// programs off (DR-10, SPEC §5.21): fixed -c options before the subcommand, and
 // --no-ext-diff --no-textconv after diff, log and show. A non-zero exit is an error; the result
 // still carries the output and the exit code. args[0] must be the subcommand: a leading option
 // would drop the diff flags or override a fixed option, so git is not started.

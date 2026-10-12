@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// withParallelism returns a copy of argv that runs with workers parallel packages (DR-7). Only a
+// withParallelism returns a copy of argv that runs with workers parallel packages (DR-3). Only a
 // `go test` argv changes: every `-p`, `-p=`, `--p` and `--p=` before `-args` is removed and one
 // `-p=workers` goes right after `test`. The test binary's own flags after `-args` stay as declared.
 func withParallelism(argv []string, workers int) []string {

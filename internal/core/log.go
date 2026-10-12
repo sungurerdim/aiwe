@@ -8,7 +8,7 @@ import (
 )
 
 // logKey reports whether key is a record key a caller may set; ts, level and event come from the
-// record itself (SPEC §5.11).
+// record itself (SPEC §5.3).
 func logKey(key string) bool {
 	switch key {
 	case "runId", "unit", "detail":
@@ -17,7 +17,7 @@ func logKey(key string) bool {
 	return false
 }
 
-// NewLog returns the one logger (SPEC §5.11): one JSON object per line through slog's JSON handler,
+// NewLog returns the one logger (SPEC §5.3): one JSON object per line through slog's JSON handler,
 // with the time under "ts" and the message under "event". A line carries only ts, level, event,
 // runId, unit and detail, each once; every other key, a group and a forged built-in key are
 // dropped. Every value is written as a string without C0 controls, DEL or C1 controls, so a line

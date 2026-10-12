@@ -15,7 +15,7 @@ import (
 	"github.com/sungurerdim/aiwe/internal/core"
 )
 
-// logTestKeys are the only keys a log line may carry (SPEC §5.11).
+// logTestKeys are the only keys a log line may carry (SPEC §5.3).
 func logTestKeys() map[string]bool {
 	return map[string]bool{"ts": true, "level": true, "runId": true, "unit": true, "event": true, "detail": true}
 }

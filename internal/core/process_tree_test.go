@@ -96,7 +96,7 @@ func TestProcessTree(t *testing.T) {
 		return // the case below runs only on Windows
 	}
 
-	// DR-15: the job kills what it holds when its last handle closes, so a tree never outlives an
+	// DR-11: the job kills what it holds when its last handle closes, so a tree never outlives an
 	// engine that exits, or crashes, without stopping it. The test starts the engine in a tree of
 	// its own, so cleanup still ends a leaf that escaped.
 	t.Run("a tree does not outlive the engine that started it", func(t *testing.T) {

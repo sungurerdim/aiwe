@@ -14,7 +14,7 @@ import (
 )
 
 // configTestEnv returns the env variable name of suffix, derived from the product constant
-// (DR-25).
+// (DR-17).
 func configTestEnv(suffix string) string {
 	return strings.ToUpper(core.Product) + "_" + suffix
 }

@@ -70,7 +70,7 @@ func (w *streamTestWriter) Write(p []byte) (int, error) {
 }
 
 // TestStream catches step output held back until the step ends instead of streamed while it runs
-// (DR-38, SPEC §7.8): the helper step ends green only when both its standard output and its
+// (§7.8): the helper step ends green only when both its standard output and its
 // standard error reach the runner's Output while it still runs, under a header that names the step.
 func TestStream(t *testing.T) {
 	release := filepath.Join(t.TempDir(), "release")
@@ -143,7 +143,7 @@ func TestStepStreamEscapes(t *testing.T) {
 }
 
 // TestStepStreamRunes catches a stream that escapes a rune split across two writes as invalid
-// bytes, or holds back a long line with no newline until the step ends (DR-38).
+// bytes, or holds back a long line with no newline until the step ends (§7.8).
 func TestStepStreamRunes(t *testing.T) {
 	var w bytes.Buffer
 	s, err := newStepStream(&w, GateStep{ID: "runes"})
@@ -183,7 +183,7 @@ func (w *failTailWriter) Write(p []byte) (int, error) {
 
 // TestStepStreamTailWriteFails catches a failed terminal write of the held last line that turns a
 // measured step into not_measured: the exit code was measured and the runner keeps the raw output
-// (DR-13), so the step keeps its result and the detail notes the failed write (#223).
+// (DR-6), so the step keeps its result and the detail notes the failed write (#223).
 func TestStepStreamTailWriteFails(t *testing.T) {
 	t.Setenv(streamEscapeEnv(), "1")
 	for _, tc := range []struct {
@@ -211,7 +211,7 @@ func TestStepStreamTailWriteFails(t *testing.T) {
 }
 
 // TestStepStreamHeldBytes catches a write whose complete line is streamed while the long rest of
-// it, past streamLineLimit, is held back until the step ends (DR-38).
+// it, past streamLineLimit, is held back until the step ends (§7.8).
 func TestStepStreamHeldBytes(t *testing.T) {
 	var w bytes.Buffer
 	s, err := newStepStream(&w, GateStep{ID: "held"})

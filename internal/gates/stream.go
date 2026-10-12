@@ -11,11 +11,11 @@ import (
 )
 
 // streamLineLimit is the longest line the stream holds back while it waits for the newline; a
-// longer line is written in pieces, so a step that prints no newline still streams (DR-38).
+// longer line is written in pieces, so a step that prints no newline still streams (§7.8).
 const streamLineLimit = 64 << 10
 
 // stepStream is the writer a step's standard output and standard error stream to while the step
-// runs (DR-38, SPEC §7.8), so a killed step never erases what it reported. Each line reaches w
+// runs (§7.8), so a killed step never erases what it reported. Each line reaches w
 // escaped by core.TextEscape, so step output cannot drive the owner's terminal (#223); only the
 // terminal stream is escaped, the runner keeps the raw bytes. The two streams write from two
 // goroutines; mu keeps each write whole.

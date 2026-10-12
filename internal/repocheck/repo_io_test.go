@@ -48,7 +48,7 @@ func checkEscapeRefused(t *testing.T, repo, rel string) {
 }
 
 // TestRepoIO catches a repository read that reaches outside the repository, through `..` or a
-// link, or that reads an escape as an absent file (DR-13).
+// link, or that reads an escape as an absent file (DR-6).
 func TestRepoIO(t *testing.T) {
 	t.Run("reads a file inside the repository", func(t *testing.T) {
 		repo, _ := repoWithOutside(t)

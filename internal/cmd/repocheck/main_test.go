@@ -217,7 +217,7 @@ func TestRepocheckAll(t *testing.T) {
 		}
 	})
 
-	// A check that read zero files measured nothing; green would be a fail-open (DR-13).
+	// A check that read zero files measured nothing; green would be a fail-open (DR-6).
 	for _, name := range []string{"size", "source-rules"} {
 		t.Run(name+" is not green when it reads zero Go files", func(t *testing.T) {
 			empty := t.TempDir()

@@ -15,7 +15,7 @@ import (
 	"github.com/sungurerdim/aiwe/internal/core"
 )
 
-// The rule names of check repo/source-rules (DR-25, DR-27, SPEC §5.4).
+// The rule names of check repo/source-rules (DR-17, DR-18, SPEC §5.3).
 const (
 	ruleMachinePath      = "machine_path"
 	ruleProductName      = "product_name"
@@ -31,7 +31,7 @@ const (
 )
 
 const (
-	// removeFile is the one file that may call os.RemoveAll (DR-25).
+	// removeFile is the one file that may call os.RemoveAll (DR-11).
 	removeFile = "internal/core/remove.go"
 	// configFile holds the one table of configuration defaults (SPEC §5.12).
 	configFile = "internal/core/config.go"
@@ -41,13 +41,13 @@ const (
 	configDefaultIndex = 2
 )
 
-// Compiled patterns; the only package-level variables besides sentinel errors (SPEC §5.4).
+// Compiled patterns; the only package-level variables besides sentinel errors (SPEC §5.3).
 var (
 	// machinePathPattern matches a drive-letter path or a Linux, Linux root or macOS home directory.
 	machinePathPattern = regexp.MustCompile(`(?:^|[^A-Za-z0-9])[A-Za-z]:[\\/]|(?:^|[^A-Za-z0-9._-])/(?:(?:home|Users)/[^/\s]|root(?:/|$))`)
 	// versionPattern matches a literal that is a whole semantic version, with or without a v.
 	versionPattern = regexp.MustCompile(`^v?[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$`)
-	// fileNamePattern matches a snake_case Go file name (SPEC §5.8).
+	// fileNamePattern matches a snake_case Go file name.
 	fileNamePattern = regexp.MustCompile(`^[a-z0-9]+(?:_[a-z0-9]+)*\.go$`)
 )
 
@@ -226,7 +226,7 @@ func (c *sourceChecker) checkLiteral(lit *ast.BasicLit, rules []literalRule) {
 
 // checkRemovals flags every RemoveAll selector outside removeFile, whatever its receiver, called or
 // taken as a value; with `import . "os"` a bare RemoveAll counts too. Without type information an
-// *os.Root receiver cannot be told apart, so the rule fails closed (DR-25).
+// *os.Root receiver cannot be told apart, so the rule fails closed (DR-11).
 func (c *sourceChecker) checkRemovals(file *ast.File) {
 	if c.path == removeFile {
 		return
@@ -252,7 +252,7 @@ func (c *sourceChecker) visitRemoval(n ast.Node) bool {
 	return true
 }
 
-// checkPackageVars flags every package-level variable that is not an allowed form (SPEC §5.4).
+// checkPackageVars flags every package-level variable that is not an allowed form (SPEC §5.3).
 func (c *sourceChecker) checkPackageVars(file *ast.File) {
 	for _, decl := range file.Decls {
 		gd, ok := decl.(*ast.GenDecl)

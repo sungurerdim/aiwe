@@ -17,9 +17,9 @@ import (
 // durationsTestModule is the module path of this repository, derived from the product constant.
 const durationsTestModule = "github.com/sungurerdim/" + core.Product
 
-// TestDurations pins the test step of SPEC §5.13 and DR-38: `go test -json` gives each package's
+// TestDurations pins the test step of SPEC §5.13 and DR-1: `go test -json` gives each package's
 // duration; the step limit is at least 2 × the longest recorded package and is never divided by
-// the worker count; `-p` comes from DR-7; a package whose current duration exceeds half the limit
+// the worker count; `-p` comes from DR-3; a package whose current duration exceeds half the limit
 // turns the commit gate red.
 func TestDurations(t *testing.T) {
 	t.Run("parse", testDurationsParse)
@@ -256,7 +256,7 @@ func durationsTestStep(t *testing.T, output string) GateStep {
 // step runs under the limit StepLimit gives (3 × p90 of its last 20 green durations, else 3 × the
 // base proof, at least 60 s), raised to 2 × the longest recorded package and never divided by the
 // worker count; its `go test -json` output gives the package durations; a package over half that
-// limit turns the gate red; an empty or unparsable duration list is not_measured (DR-13, DR-38).
+// limit turns the gate red; an empty or unparsable duration list is not_measured (DR-6, DR-1).
 func TestDurationsRunner(t *testing.T) {
 	const pkg = durationsTestModule + "/internal/gates"
 	green := func(d time.Duration) StepRun { return StepRun{Result: ResultGreen, Duration: d} }

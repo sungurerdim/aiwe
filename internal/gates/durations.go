@@ -27,7 +27,7 @@ type testEvent struct {
 // ParsePackageDurations reads `go test -json` output and returns each package's duration in the
 // order the packages ended. Test events are not packages. It refuses, never skips, a line that is
 // not a JSON event and a package end without Elapsed: an unmeasured duration is never 0. Output
-// that ends no package measured nothing and is refused, not read as an empty list (DR-13).
+// that ends no package measured nothing and is refused, not read as an empty list (DR-6).
 func ParsePackageDurations(out []byte) ([]PackageDuration, error) {
 	var durations []PackageDuration
 	for i, line := range bytes.Split(out, []byte("\n")) {
@@ -59,10 +59,10 @@ func isPackageEnd(action string) bool {
 	return action == "pass" || action == "fail" || action == "skip"
 }
 
-// PrepareTestStep returns step with one `-p=workers` flag (DR-7) and a limit of at least
-// 2 × the longest recorded package, rounded up to whole seconds (DR-38, SPEC §5.13). The limit is
+// PrepareTestStep returns step with one `-p=workers` flag (DR-3) and a limit of at least
+// 2 × the longest recorded package, rounded up to whole seconds (DR-1, SPEC §5.13). The limit is
 // never divided by the worker count. A limit of 0 stays 0: no limit beyond the gate's context.
-// workers is the chosen count of DR-7, at least 1; the caller never assumes one. The declared step
+// workers is the chosen count of DR-3, at least 1; the caller never assumes one. The declared step
 // is not changed.
 func PrepareTestStep(step GateStep, workers int, recorded []PackageDuration) GateStep {
 	step.Command = withParallelism(step.Command, workers)
@@ -83,7 +83,7 @@ func ceilSeconds(d time.Duration) int {
 
 // CheckPackageDurations turns the commit gate red when a package's current duration exceeds half
 // the step limit, naming each such package so it is split before it can time out (SPEC §5.13). A
-// limit of 0 or less, or no package, cannot be judged: not_measured, never green (DR-13).
+// limit of 0 or less, or no package, cannot be judged: not_measured, never green (DR-6).
 func CheckPackageDurations(limit time.Duration, current []PackageDuration) (Result, string) {
 	if limit <= 0 {
 		return ResultNotMeasured, "no step limit to judge package durations against"

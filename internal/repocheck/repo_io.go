@@ -72,7 +72,7 @@ func readRepoFile(repo, rel string) ([]byte, error) {
 }
 
 // readRepoFileIfPresent reads the repository-relative file rel and reports whether it exists; an
-// error other than absence is returned, never read as absence (DR-13).
+// error other than absence is returned, never read as absence (DR-6).
 func readRepoFileIfPresent(repo, rel string) ([]byte, bool, error) {
 	body, err := readRepoFile(repo, rel)
 	switch {
@@ -85,7 +85,7 @@ func readRepoFileIfPresent(repo, rel string) ([]byte, bool, error) {
 }
 
 // fileExists reports whether the repository-relative file rel exists; an error other than
-// absence is returned, never read as absence (DR-13).
+// absence is returned, never read as absence (DR-6).
 func fileExists(repo, rel string) (bool, error) {
 	err := inRepo(repo, rel, func(root *os.Root, name string) error {
 		_, serr := root.Stat(name)

@@ -85,7 +85,7 @@ func fixtureEdges() map[string][]string {
 
 func TestBoundaries(t *testing.T) {
 	t.Run("declared edges and own private packages pass", func(t *testing.T) {
-		// Guards against a check so broad that the allowed import forms of DR-24 turn it red.
+		// Guards against a check so broad that the allowed import forms of DR-17 turn it red.
 		out := goListOutput(t,
 			stdPackage("fmt"),
 			ownPackage("internal/core", "fmt"),
@@ -155,7 +155,7 @@ func TestBoundaries(t *testing.T) {
 	}
 
 	t.Run("empty go list output is an error, not a pass", func(t *testing.T) {
-		// Guards against absence read as evidence (DR-13): no package listed means nothing was checked.
+		// Guards against absence read as evidence (DR-6): no package listed means nothing was checked.
 		got, err := repocheck.Boundaries(fixtureEdges(), nil)
 		if err == nil {
 			t.Fatalf("Boundaries(empty) = %+v, nil error; want an error", got)

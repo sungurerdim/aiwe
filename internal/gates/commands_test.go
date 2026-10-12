@@ -106,7 +106,7 @@ func commandsTestRow(o core.Outcome) (core.OutcomeRow, bool) {
 
 // TestGatesCommand pins that `aiwe gates gate` takes its own repo and step params, runs the gate
 // of <repo>/gate.json, and maps each gate result to one named outcome of the table: a red or
-// incomplete gate never exits 0 (BC-1, DR-10).
+// incomplete gate never exits 0 (BC-1, DR-6).
 func TestGatesCommand(t *testing.T) {
 	commandsTestSetRoots(t)
 	green1, green2, red, missing := runnerTestSteps(t)
@@ -217,7 +217,7 @@ func TestGatesCommand(t *testing.T) {
 		steps   []GateStep
 		args    func(repo string) []string
 		want    core.Status
-		// found is text the §5.10 detail must name.
+		// found is text the §5.3 detail must name.
 		found string
 	}{
 		{
@@ -260,7 +260,7 @@ func TestGatesCommand(t *testing.T) {
 }
 
 // TestGatesCommandWorkers catches `aiwe gates gate` running its test step without the measured
-// worker count in the report, or without the source of its concurrent job count (DR-7).
+// worker count in the report, or without the source of its concurrent job count (DR-3).
 func TestGatesCommandWorkers(t *testing.T) {
 	commandsTestSetRoots(t)
 	_, test, _, _ := runnerTestSteps(t)
@@ -281,7 +281,7 @@ func TestGatesCommandWorkers(t *testing.T) {
 }
 
 // TestGateCommandStream catches step output missing from stderr, streamed without its
-// `--- step <id>` header, or mixed into the JSON envelope on stdout (SPEC §5, DR-38).
+// `--- step <id>` header, or mixed into the JSON envelope on stdout (SPEC §5, §7.8).
 func TestGateCommandStream(t *testing.T) {
 	commandsTestSetRoots(t)
 	release := filepath.Join(t.TempDir(), "release")

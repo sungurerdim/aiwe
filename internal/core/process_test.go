@@ -22,7 +22,7 @@ import (
 // The test binary runs itself as the child and the grandchild of a process tree. The role is set
 // through the environment; init answers it before the test framework starts.
 // processTestEnv returns the env variable name of suffix (ROLE, DIR, IGNORE_TERM), derived from
-// the product constant (DR-25).
+// the product constant (DR-17).
 func processTestEnv(suffix string) string {
 	return strings.ToUpper(core.Product) + "_PROCESS_TEST_" + suffix
 }
@@ -122,7 +122,7 @@ func runProcessHelper(role string) int {
 		}
 		beatProcessFile(filepath.Join(dir, "leaf.beat"))
 	case "engine":
-		// The engine starts a tree through core.Start and exits without stopping it; DR-15 says
+		// The engine starts a tree through core.Start and exits without stopping it; DR-11 says
 		// the tree does not outlive the engine.
 		child, err := core.Start(context.Background(), core.ChildSpec{
 			Argv: []string{os.Args[0]},

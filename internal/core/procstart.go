@@ -11,7 +11,7 @@ import (
 // ProcessID identifies a process across pid reuse: the pid and the OS start time (U13). Where the OS
 // keeps an exact start identity (exactStartID, Linux), id holds it and liveness compares it in
 // place of Start. CurrentProcess sets id. A ProcessID built by hand has none, so on Linux its pid
-// counts as alive while it runs, whatever Start says, and nothing of its owner is removed (DR-25).
+// counts as alive while it runs, whatever Start says, and nothing of its owner is removed (DR-11).
 type ProcessID struct {
 	PID   int
 	Start time.Time
@@ -64,7 +64,7 @@ func ownerAlive(p ProcessID) bool {
 // p.Start. On Windows and macOS the start is a stored value, read the same way at every call, so the
 // tolerance absorbs rounding only. Elsewhere it is read from /proc and moves with the wall clock, so
 // it is the widest Duration: a p built by hand whose pid runs always counts as a live owner and
-// nothing is removed (fail-closed, DR-25). On Linux CurrentProcess sets the exact identity, so the
+// nothing is removed (fail-closed, DR-11). On Linux CurrentProcess sets the exact identity, so the
 // tolerance applies only to a p built by hand.
 func startTolerance() time.Duration {
 	switch runtime.GOOS {
