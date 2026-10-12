@@ -1,6 +1,7 @@
 package repocheck
 
 import (
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -266,11 +267,74 @@ func TestCommitMessageLengths(t *testing.T) {
 			t.Fatalf("body_line_length findings %+v below the scissors line, want none", got)
 		}
 	})
+
+	t.Run("a Note line in the trailer block is checked for length", func(t *testing.T) {
+		msg := "fix: x\n\nBody.\n\nRefs octo-org/widget#1\n" + fill(t, "Note: ", 73) + "\n"
+		got := findings(msg, "body_line_length")
+		if len(got) != 1 || got[0].Line != 6 {
+			t.Fatalf("body_line_length findings %+v for Note trailer, want one at line 6", got)
+		}
+	})
+}
+
+// TestCommitMessageClosingKeywords catches a closing keyword that GitHub would act on but that is
+// not the strict whole-line Closes form, and honours the quoting and fence exemptions (SPEC §12.3).
+func TestCommitMessageClosingKeywords(t *testing.T) {
+	has := func(t *testing.T, msg, rule string, line int) {
+		t.Helper()
+		got := CommitMessage(msg, slug)
+		if !slices.ContainsFunc(got, func(f Finding) bool { return f.Rule == rule && f.Line == line }) {
+			t.Fatalf("CommitMessage(%q) = %+v, want a %s finding at line %d", msg, got, rule, line)
+		}
+	}
+	no := func(t *testing.T, msg, rule string) {
+		t.Helper()
+		got := CommitMessage(msg, slug)
+		if slices.ContainsFunc(got, func(f Finding) bool { return f.Rule == rule }) {
+			t.Fatalf("CommitMessage(%q) = %+v, want no %s finding", msg, got, rule)
+		}
+	}
+	const refLine = "\n\nRefs octo-org/widget#1\n"
+
+	t.Run("lowercase closes is not the strict form", func(t *testing.T) {
+		has(t, "fix: x"+refLine+"closes octo-org/widget#7\n", "closing_keyword_form", 4)
+	})
+
+	t.Run("bare number Fixes is not the strict form", func(t *testing.T) {
+		has(t, "fix: x\n\nFixes #7\n"+refLine, "closing_keyword_form", 3)
+	})
+
+	t.Run("inline closing keyword is not the strict form", func(t *testing.T) {
+		has(t, "fix: x\n\nThis fixes octo-org/widget#7 inline.\n"+refLine, "closing_keyword_form", 3)
+	})
+
+	t.Run("mixed case Resolved is not the strict form", func(t *testing.T) {
+		has(t, "fix: x\n\nResolved octo-org/widget#7\n"+refLine, "closing_keyword_form", 3)
+	})
+
+	t.Run("trailing text breaks the strict form", func(t *testing.T) {
+		has(t, "fix: x\n\nCloses octo-org/widget#7 trailing\n"+refLine, "closing_keyword_form", 3)
+	})
+
+	t.Run("indented closing keyword is exempt", func(t *testing.T) {
+		no(t, "fix: x\n\n    closes octo-org/widget#7\n"+refLine, "closing_keyword_form")
+	})
+
+	t.Run("strict Closes line is accepted", func(t *testing.T) {
+		if got := CommitMessage("fix: x\n\nEffect: a → b\nCloses octo-org/widget#7\n", slug); len(got) != 0 {
+			t.Fatalf("CommitMessage(strict Closes) = %+v, want no finding", got)
+		}
+	})
+
+	t.Run("Effect inside a fence does not satisfy Closes", func(t *testing.T) {
+		has(t, "fix: x\n\n```\nEffect: a → b\n```\nCloses octo-org/widget#7\n", "missing_effect", 0)
+	})
 }
 
 // TestRepoSlug catches a remote URL whose <owner>/<repo> is misread, so a Closes line to another
 // repository passes, and an unreadable URL that yields a slug instead of none (SPEC §12.3).
 func TestRepoSlug(t *testing.T) {
+	localPath := filepath.Join(t.TempDir(), "widget")
 	cases := []struct {
 		url  string
 		want string
@@ -287,7 +351,7 @@ func TestRepoSlug(t *testing.T) {
 		{"https://github.com/widget.git", ""},
 		{"https://github.com/octo org/widget.git", ""},
 		{"../widget", ""},
-		{"D:/repos/widget", ""},
+		{localPath, ""},
 	}
 	for _, tc := range cases {
 		if got := RepoSlug(tc.url); got != tc.want {
