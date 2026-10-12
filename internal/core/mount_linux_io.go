@@ -3,7 +3,7 @@
 package core
 
 import (
-	"fmt"
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -14,7 +14,7 @@ import (
 // mountPointAt reports whether name under the open directory dir is a mount point, a bind mount on
 // the same file system included: statx marks it as a mount root, or its mount differs from the one
 // of dir. name is never followed. A kernel that does not report the mount-root attribute (before
-// Linux 5.8) cannot rule a mount point out, so it fails with ErrNotOwned (#136).
+// Linux 5.8) cannot rule a mount point out, so it fails and refuseMounts refuses (#136).
 func mountPointAt(dir *os.File, name string) (bool, error) {
 	fd := int(dir.Fd())
 	flags := unix.AT_SYMLINK_NOFOLLOW | unix.AT_NO_AUTOMOUNT
@@ -27,8 +27,7 @@ func mountPointAt(dir *os.File, name string) (bool, error) {
 		return false, &fs.PathError{Op: "statx", Path: p, Err: err}
 	}
 	if st.Attributes_mask&unix.STATX_ATTR_MOUNT_ROOT == 0 {
-		return false, fmt.Errorf("%w: %q: the system does not report a mount root, so a mount point is unknown; nothing removed",
-			ErrNotOwned, p)
+		return false, &fs.PathError{Op: "statx", Path: p, Err: errors.New("the system does not report a mount root")}
 	}
 	if st.Attributes&unix.STATX_ATTR_MOUNT_ROOT != 0 {
 		return true, nil
