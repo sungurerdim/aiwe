@@ -47,7 +47,7 @@ linters:
           - gocognit
           - gosec
       # Windows API needs unsafe.Pointer.
-      - path: _windows\.go$
+      - path: _windows(_io)?\.go$
         linters:
           - gosec
         text: G103

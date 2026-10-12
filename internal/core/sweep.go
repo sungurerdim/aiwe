@@ -122,6 +122,9 @@ type removalHooks struct {
 	lastChecked  func(name string)       // after removeOnce checked the emptied name the last time
 	rmdirChecked func(name string)       // after removeDirEntry checked the held handle
 	closeFail    func(what string) error // an error to add at the close named what
+
+	// mountCheck, when set, stands in for mountPointAt (refuseMounts).
+	mountCheck func(dir *os.File, name string) (bool, error)
 }
 
 // hookAt runs the hook f with name when f is set.
@@ -189,10 +192,10 @@ func (h removalHooks) closeChecked(what string, c func() error) error {
 // that is not a plain name, or that is not a directory, such as one swapped for a link, fails with
 // ErrNotOwned at once. approved is the file info the ownership check approved, read through a
 // handle; a nil approved fails with ErrNotOwned and removes nothing. Every attempt removes only
-// that directory: a name that names another one fails with ErrNotOwned at once. A
-// failed attempt, such as a file another process holds open, is retried 5 times, 200 ms apart,
-// then fails with ErrResidueLocked (SPEC §6.4); the next sweep retries. A failed close is returned at
-// once, not retried.
+// that directory: a name that names another one fails with ErrNotOwned at once. A failed attempt,
+// such as a file another process holds open, is retried 5 times, 200 ms apart, then fails with
+// ErrResidueLocked (SPEC §6.4); the next sweep retries. A failed close is returned at once, not
+// retried; a refusal after a partial removal says so, never "nothing removed" (removeAttempt).
 func (h removalHooks) removeTree(ctx context.Context, rootPath, name string, approved fs.FileInfo) (err error) {
 	if !plainName(name, maxOwnedName) {
 		return fmt.Errorf("%w: remove %q: not an owned directory name", ErrNotOwned, name)
@@ -205,23 +208,42 @@ func (h removalHooks) removeTree(ctx context.Context, rootPath, name string, app
 		return fmt.Errorf("remove %q: %w", name, err)
 	}
 	defer func() { err = errors.Join(err, h.closeChecked("removal root", rt.Close)) }()
+	outcome := "nothing removed" // what a mount point refusal says was removed
 	for attempt := 1; ; attempt++ {
-		err = h.removeOnce(rt, name, approved)
-		if err == nil || errors.Is(err, ErrNotOwned) || errors.Is(err, errCloseFailed) {
+		var stop bool
+		if outcome, stop, err = h.removeAttempt(rt, rootPath, name, approved, outcome); stop {
 			return err
 		}
 		if attempt == removeAttempts {
 			break
 		}
-		t := time.NewTimer(removeWait)
-		select {
-		case <-ctx.Done():
-			t.Stop()
-			return errors.Join(fmt.Errorf("remove %q: %w", name, err), ctx.Err())
-		case <-t.C:
+		if cerr := waitRetry(ctx); cerr != nil {
+			return errors.Join(fmt.Errorf("remove %q: %w", name, err), cerr)
 		}
 	}
 	return fmt.Errorf("%w: remove %q: %d attempts %v apart: %w", ErrResidueLocked, name, removeAttempts, removeWait, err)
+}
+
+// removeAttempt runs one removeOnce and reports whether the removal stops (success, ErrNotOwned, a
+// failed close), with the outcome a later mount point refusal names: partial once entries went.
+func (h removalHooks) removeAttempt(rt *os.Root, rootPath, name string, approved fs.FileInfo, outcome string) (string, bool, error) {
+	began, err := h.removeOnce(rt, name, approved, outcome)
+	if began {
+		outcome = fmt.Sprintf("partial removal: an earlier attempt removed entries; the residue stays in %q", filepath.Join(rootPath, name))
+	}
+	return outcome, err == nil || errors.Is(err, ErrNotOwned) || errors.Is(err, errCloseFailed), err
+}
+
+// waitRetry waits removeWait before the next removal attempt, or returns the error of ctx when it ends first.
+func waitRetry(ctx context.Context) error {
+	t := time.NewTimer(removeWait)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
 }
 
 // removeOnce removes the entries of name, then its marker, then name itself, so a removal that
@@ -229,28 +251,30 @@ func (h removalHooks) removeTree(ctx context.Context, rootPath, name string, app
 // checked once without following it and must be the directory want describes, then opened once as
 // a sub-root that must be the same directory; the entries are removed through that sub-root, so a
 // name swapped after the check, such as for a link, is never followed and fails with ErrNotOwned.
-// name itself goes only while it is still that directory (removeDirEntry).
-func (h removalHooks) removeOnce(rt *os.Root, name string, want fs.FileInfo) error {
+// name itself goes only while it is still that directory (removeDirEntry). It reports whether it
+// began removing entries; outcome is what a mount point refusal says was removed (refuseMounts).
+func (h removalHooks) removeOnce(rt *os.Root, name string, want fs.FileInfo, outcome string) (bool, error) {
 	fi, err := approvedEntry(rt, name, want)
 	if fi == nil || err != nil {
-		return err
+		return false, err
 	}
 	hookAt(h.removeCheck, name)
 	sub, err := openChecked(rt, name, fi)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil
+		return false, nil
 	}
 	if err != nil {
-		return err
+		return false, err
 	}
-	if err := errors.Join(emptyOwned(sub, name, fi), sub.Close()); err != nil {
-		return err
+	began, err := h.emptyOwned(sub, name, fi, outcome)
+	if err := errors.Join(err, sub.Close()); err != nil {
+		return began, err
 	}
 	if err := sameEntry(rt, name, fi); err != nil {
-		return err
+		return began, err
 	}
 	hookAt(h.lastChecked, name)
-	return h.removeDirEntry(rt, name, fi)
+	return began, h.removeDirEntry(rt, name, fi)
 }
 
 // approvedEntry returns the file info of name under rt, read without following it. It returns nil
@@ -287,22 +311,27 @@ func openChecked(rt *os.Root, name string, fi fs.FileInfo) (*os.Root, error) {
 }
 
 // emptyOwned removes every entry of the sub-root sub, the marker last. It first proves that sub is
-// the directory fi describes, else it fails with ErrNotOwned and removes nothing.
-func emptyOwned(sub *os.Root, name string, fi fs.FileInfo) error {
+// the directory fi describes, then that no entry under it is a mount point (refuseMounts), else it
+// fails with ErrNotOwned and removes nothing; a refusal names outcome. It reports whether it began
+// removing entries.
+func (h removalHooks) emptyOwned(sub *os.Root, name string, fi fs.FileInfo, outcome string) (bool, error) {
 	d, err := sub.Open(".")
 	if err != nil {
-		return err
+		return false, err
 	}
 	di, err := d.Stat()
 	if err == nil && !os.SameFile(fi, di) {
 		err = fmt.Errorf("%w: %q was swapped after the check (a link is never followed)", ErrNotOwned, name)
+	}
+	if err == nil {
+		err = h.refuseMounts(sub, name, ".", outcome)
 	}
 	var names []string
 	if err == nil {
 		names, err = d.Readdirnames(-1)
 	}
 	if err := errors.Join(err, d.Close()); err != nil {
-		return err
+		return false, err
 	}
 	var errs []error
 	for _, n := range names {
@@ -311,12 +340,12 @@ func emptyOwned(sub *os.Root, name string, fi fs.FileInfo) error {
 		}
 	}
 	if err := errors.Join(errs...); err != nil {
-		return err
+		return true, err
 	}
 	if err := sub.Remove(markerFile); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return err
+		return true, err
 	}
-	return nil
+	return len(names) > 0, nil
 }
 
 // sameEntry fails with ErrNotOwned when name under rt, read without following it, is no longer the
