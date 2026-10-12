@@ -46,9 +46,11 @@ var breakingFooterPattern = regexp.MustCompile(`(?i)^breaking[ -]change:`)
 // captures the keyword and the <owner>/<repo>.
 var issueRefPattern = regexp.MustCompile(`^(Refs|Closes) ([A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9._-]+)#[1-9][0-9]*$`)
 
-// closingKeywordPattern matches any GitHub closing keyword followed by an issue reference, in any
-// case and anywhere in a line; the strict whole-line Closes form is the only allowed occurrence.
-var closingKeywordPattern = regexp.MustCompile(`(?i)\b(?:close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)\b\s*(?:[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9._-]+)?#[1-9][0-9]*`)
+// closingKeywordPattern matches any GitHub closing keyword, with or without a colon, followed by an
+// issue reference (#N, <owner>/<repo>#N, a GitHub issue URL or GH-N), in any case and anywhere in a
+// line; the strict whole-line Closes form is the only allowed occurrence.
+var closingKeywordPattern = regexp.MustCompile(`(?i)\b(?:close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)\b:?\s*` +
+	`(?:(?:[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9._-]+)?#[1-9][0-9]*|https?://github\.com/[^/\s]+/[^/\s]+/issues/[0-9]+|GH-[0-9]+)`)
 
 // effectPattern matches the Effect line a closing commit carries: Effect: <before> → <after>.
 var effectPattern = regexp.MustCompile(`^Effect: \S.* → \S`)
@@ -112,7 +114,7 @@ func CommitMessage(msg, slug string) []Finding {
 	found = append(found, checkBodyLines(rest)...)
 	fenced := fencedLines(rest)
 	found = append(found, checkIssueLines(rest, slug, fenced)...)
-	return append(found, checkClosingKeywords(rest)...)
+	return append(found, checkClosingKeywords(lines[start:])...)
 }
 
 // checkIssueLines checks the issue lines of body: one Refs or Closes line at least; a Closes line
@@ -154,14 +156,12 @@ func checkIssueLines(body []messageLine, slug string, fenced []bool) []Finding {
 	return found
 }
 
-// checkClosingKeywords reports any GitHub closing keyword that is not the strict whole-line
-// Closes <owner>/<repo>#N form. Quoted command or output lines are exempt (SPEC §12.3).
-func checkClosingKeywords(body []messageLine) []Finding {
+// checkClosingKeywords reports any GitHub closing keyword in lines, the header included, that is
+// not the strict whole-line Closes <owner>/<repo>#N form. No line is exempt: quoted and fenced
+// lines are exempt from the length limit only, and GitHub acts on a keyword in any line.
+func checkClosingKeywords(lines []messageLine) []Finding {
 	var found []Finding
-	for _, l := range body {
-		if isQuoted(l.text) {
-			continue
-		}
+	for _, l := range lines {
 		if issueRefPattern.MatchString(l.text) {
 			continue
 		}
@@ -191,16 +191,18 @@ func RepoSlug(remoteURL string) string {
 }
 
 // checkBodyLines returns a finding for each body line over 72 runes that is not exempt: a line of
-// the closing trailer block, a line between a matched opening and closing ``` fence line, a line
-// that is 72 runes or less once its URLs are removed, or a quoted command or output line (indented
-// by four spaces or a tab, or one back-quoted code span). Fence lines themselves are checked.
+// the closing trailer block other than a BREAKING CHANGE footer, which is prose, a line between a
+// matched opening and closing ``` fence line, a line that is 72 runes or less once its URLs are
+// removed, or a quoted command or output line (indented by four spaces or a tab, or one back-quoted
+// code span). Fence lines themselves are checked.
 func checkBodyLines(body []messageLine) []Finding {
 	trailers := trailerBlock(body)
 	fenced := fencedLines(body)
 	var found []Finding
 	for i, l := range body {
 		prose := urlPattern.ReplaceAllString(l.text, "")
-		if fenced[i] || i >= trailers || utf8.RuneCountInString(prose) <= maxBodyLineRunes || isQuoted(l.text) {
+		trailer := i >= trailers && !breakingFooterPattern.MatchString(l.text)
+		if fenced[i] || trailer || utf8.RuneCountInString(prose) <= maxBodyLineRunes || isQuoted(l.text) {
 			continue
 		}
 		found = append(found, Finding{Rule: ruleBodyLineLength, Path: commitMessagePath, Line: l.n})
