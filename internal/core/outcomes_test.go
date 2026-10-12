@@ -167,6 +167,29 @@ func TestOutcomes(t *testing.T) {
 		}
 	})
 
+	// #89: moving the outcome to the front dropped the text after the wrapped *Error.
+	t.Run("detail keeps the text after a wrapped core.Error", func(t *testing.T) {
+		e := &core.Error{Outcome: core.OutcomeUsage, Expected: "a gate file", Found: "none", Next: "run init"}
+		for _, tc := range []struct {
+			name string
+			err  error
+			tail string
+		}{
+			{"suffix after the cause", fmt.Errorf("read gate.json: %w (attempt 2)", e), " (attempt 2)"},
+			{"second joined error", errors.Join(fmt.Errorf("open: %w", e), errors.New("close state: access denied")), `\x0aclose state: access denied`},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				d := core.ErrorResult(tc.err).Detail
+				if !strings.HasPrefix(d, "usage: ") {
+					t.Errorf("Detail = %q, want the outcome %q first", d, "usage: ")
+				}
+				if !strings.HasSuffix(d, tc.tail) {
+					t.Errorf("Detail = %q, want it to end with %q", d, tc.tail)
+				}
+			})
+		}
+	})
+
 	// BC-1 (SPEC §13.1): an outcome string used in code is missing from the outcome table.
 	t.Run("BC-1 outcome string used in code missing from the outcome table", func(t *testing.T) {
 		used := outcomesUsedInSource(t, filepath.Join("..", ".."))
