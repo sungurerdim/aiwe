@@ -151,3 +151,40 @@ func TestSweepRemovalCloseError(t *testing.T) {
 		})
 	}
 }
+
+// TestRemoveDirEntryParentCloseOnLink catches a failed close of the held parent left without
+// errCloseFailed when the name no longer opens as the approved directory (§5.15): the approved
+// dir moves away and a link to it takes its name. The error must carry errCloseFailed on every
+// OS, and the approved dir must stay.
+func TestRemoveDirEntryParentCloseOnLink(t *testing.T) {
+	root := t.TempDir()
+	name := "run-20261012-0004"
+	dir, moved := filepath.Join(root, name), filepath.Join(root, "moved-away")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	rt, err := os.OpenRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := rt.Close(); err != nil {
+			t.Errorf("close root: %v", err)
+		}
+	})
+	fi, err := rt.Lstat(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(dir, moved); err != nil {
+		t.Fatal(err)
+	}
+	removeTestLink(t, moved, dir)
+	h := removalHooks{closeFail: testFailClose("held parent")}
+	if err := h.removeDirEntry(rt, name, fi); !errors.Is(err, errCloseFailed) || !errors.Is(err, errTestClose) {
+		t.Errorf("removeDirEntry on a link with a failing close of the held parent = %v, want %v from %v", err, errCloseFailed, errTestClose)
+	}
+	if !removeTestExists(t, moved) {
+		t.Errorf("approved dir %s removed through the link put under its name", moved)
+	}
+}
