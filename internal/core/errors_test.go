@@ -137,7 +137,7 @@ func TestErrors(t *testing.T) {
 		}
 	})
 
-	// SPEC §5.10: every outcome has a template; a core.Error without Next takes the table's action.
+	// SPEC §5.3: every outcome has a template; a core.Error without Next takes the table's action.
 	t.Run("outcome without its message template", func(t *testing.T) {
 		rows := core.Outcomes()
 		if len(rows) == 0 {

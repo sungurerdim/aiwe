@@ -113,7 +113,7 @@ func removeTestLink(t *testing.T, target, link string) {
 }
 
 // TestOwnedRemove catches recursive removal of a directory the engine did not create, register
-// and mark as its own (DR-25, §5.15).
+// and mark as its own (DR-11, §5.15).
 func TestOwnedRemove(t *testing.T) {
 	t.Run("created temp dir is removed with its contents", func(t *testing.T) {
 		base := filepath.Join(t.TempDir(), "çalışma-ağacı")

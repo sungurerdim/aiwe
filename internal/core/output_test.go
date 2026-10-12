@@ -106,7 +106,7 @@ func TestOutput(t *testing.T) {
 		})
 	}
 
-	// A refusal's detail is core.Error's message, which already starts with "<outcome>: " (SPEC §5.10);
+	// A refusal's detail is core.Error's message, which already starts with "<outcome>: " (SPEC §5.3);
 	// the text line names that outcome once (#143).
 	refusals := []struct {
 		name string
@@ -271,7 +271,7 @@ func TestOutput(t *testing.T) {
 		}
 	})
 
-	// A refusal is one line (SPEC §5.10): a newline or CR in Expected, Found or Next would fake a
+	// A refusal is one line (SPEC §5.3): a newline or CR in Expected, Found or Next would fake a
 	// second result line (#200).
 	lineFakes := []struct {
 		name string

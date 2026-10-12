@@ -14,7 +14,7 @@ import (
 )
 
 // Host-path fixtures keep the real layouts: a Linux home, a macOS home and a Windows profile on
-// a drive. They are built from parts, so no host path is a source literal (DR-25).
+// a drive. They are built from parts, so no host path is a source literal (DR-17).
 const (
 	posixRoot = "/"
 	linuxHome = posixRoot + "home/zeynep"
@@ -373,7 +373,7 @@ func envGitFill(t *testing.T, gitPath, dir string, env []string) string {
 
 // TestCleanEnvSecretsDropped pins the credential forms the #4 security review found kept: a name
 // ending in _PAT or _PASS, NPM_CONFIG__AUTH, GOOGLE_APPLICATION_CREDENTIALS, and a _URL value that
-// carries user:password@ (DR-35).
+// carries user:password@ (DR-10).
 func TestCleanEnvSecretsDropped(t *testing.T) {
 	tests := []struct {
 		name string

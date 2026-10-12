@@ -91,8 +91,8 @@ func TestLauncherBestFitBackslash(t *testing.T) {
 }
 
 // #105 fix round, finding 2: the record helper exited 0 whenever its variable was set, so
-// `AIWE_LAUNCHER_TEST_RECORD=<dir> go test ./internal/core/` passed with no test run (DR-13,
-// DR-28). The helper must act only on its own marker and fail on anything else.
+// `AIWE_LAUNCHER_TEST_RECORD=<dir> go test ./internal/core/` passed with no test run (DR-6,
+// DR-12). The helper must act only on its own marker and fail on anything else.
 func TestLauncherRecordHelper(t *testing.T) {
 	t.Run("the record variable without the marker does not pass the package silently", func(t *testing.T) {
 		record := t.TempDir()

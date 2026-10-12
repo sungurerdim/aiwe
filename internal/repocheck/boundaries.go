@@ -11,7 +11,7 @@ import (
 	"strings"
 )
 
-// The rule names of check repo/boundaries (DR-24, SPEC §6.1).
+// The rule names of check repo/boundaries (DR-17, SPEC §6.1).
 const (
 	rulePrivateImport  = "private_import"
 	ruleUndeclaredEdge = "undeclared_edge"
@@ -43,7 +43,7 @@ type listedPackage struct {
 func (p listedPackage) own() bool { return p.Module != nil && p.Module.Main }
 
 // decodeGoList reads the back-to-back JSON objects of `go list -deps -json`. No package listed is
-// an error: absence is not evidence that anything was checked (DR-13).
+// an error: absence is not evidence that anything was checked (DR-6).
 func decodeGoList(out []byte) ([]listedPackage, error) {
 	dec := json.NewDecoder(bytes.NewReader(out))
 	var pkgs []listedPackage

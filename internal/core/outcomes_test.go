@@ -190,8 +190,8 @@ func TestOutcomes(t *testing.T) {
 		}
 	})
 
-	// BC-1 (SPEC §13.1): an outcome string used in code is missing from the outcome table.
-	t.Run("BC-1 outcome string used in code missing from the outcome table", func(t *testing.T) {
+	// Guards against an outcome string used in code that is missing from the outcome table.
+	t.Run("outcome string used in code missing from the outcome table", func(t *testing.T) {
 		used := outcomesUsedInSource(t, filepath.Join("..", ".."))
 		for _, sentinel := range []string{"param_duplicate", "root_unresolved"} {
 			if !used[sentinel] {
@@ -206,7 +206,7 @@ func TestOutcomes(t *testing.T) {
 	})
 }
 
-// TestOutcomesUsed catches an outcome table row that no code path produces (SPEC §5.5): the table
+// TestOutcomesUsed catches an outcome table row that no code path produces (SPEC §5.1): the table
 // itself does not count as a producer.
 func TestOutcomesUsed(t *testing.T) {
 	used := outcomesUsedInSource(t, filepath.Join("..", ".."))

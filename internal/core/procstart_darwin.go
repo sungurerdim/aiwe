@@ -11,7 +11,7 @@ import (
 // procZombie is SZOMB, the p_stat of a process that has exited and waits for its parent.
 const procZombie = 5
 
-// processStart returns the OS start time of pid and whether the process runs (U13). A pid that
+// processStart returns the OS start time of pid and whether the process runs. A pid that
 // names no process, or a zombie, is not running; any other failure is an error, which the caller
 // treats as a live owner (fail-closed).
 func processStart(pid int) (time.Time, bool, error) {

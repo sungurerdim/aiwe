@@ -17,9 +17,9 @@ import (
 // durationsTestModule is the module path of this repository, derived from the product constant.
 const durationsTestModule = "github.com/sungurerdim/" + core.Product
 
-// TestDurations pins the test step of SPEC §5.13 and DR-38: `go test -json` gives each package's
+// TestDurations pins the test step of SPEC §5.13 and DR-1: `go test -json` gives each package's
 // duration; the step limit is at least 2 × the longest recorded package and is never divided by
-// the worker count; `-p` comes from DR-7; a package whose current duration exceeds half the limit
+// the worker count; `-p` comes from DR-3; a package whose current duration exceeds half the limit
 // turns the commit gate red.
 func TestDurations(t *testing.T) {
 	t.Run("parse", testDurationsParse)
@@ -62,24 +62,24 @@ FAIL	` + durationsTestModule + `/internal/gates [build failed]
 			wantErr: true,
 		},
 		{
-			name:    "empty output measured no package and is refused, not read as an empty green list (DR-13)",
+			name:    "empty output measured no package and is refused, not read as an empty green list (DR-6)",
 			input:   "",
 			wantErr: true,
 		},
 		{
-			name:    "blank lines alone measured no package and are refused (DR-13)",
+			name:    "blank lines alone measured no package and are refused (DR-6)",
 			input:   "\n  \n\n",
 			wantErr: true,
 		},
 		{
-			name: "test events without a package end measured no package and are refused (DR-13)",
+			name: "test events without a package end measured no package and are refused (DR-6)",
 			input: `{"Time":"2026-10-11T09:14:02.2Z","Action":"run","Package":"` + durationsTestModule + `/internal/core","Test":"TestMeasured"}
 {"Time":"2026-10-11T09:14:04.9Z","Action":"pass","Package":"` + durationsTestModule + `/internal/core","Test":"TestMeasured","Elapsed":2.61}
 `,
 			wantErr: true,
 		},
 		{
-			name:    "a package end without Elapsed measured no duration and is refused, never read as 0 (DR-13)",
+			name:    "a package end without Elapsed measured no duration and is refused, never read as 0 (DR-6)",
 			input:   `{"Time":"2026-10-11T09:14:14.5Z","Action":"pass","Package":"` + durationsTestModule + `/internal/core"}` + "\n",
 			wantErr: true,
 		},
@@ -139,7 +139,7 @@ func testDurationsPrepare(t *testing.T) {
 				}
 			}
 			if want := []string{"-p=" + strconv.Itoa(tc.workers)}; !slices.Equal(p, want) {
-				t.Errorf("command %q sets parallelism %q, want %q from DR-7", got.Command, p, want)
+				t.Errorf("command %q sets parallelism %q, want %q from DR-3", got.Command, p, want)
 			}
 			for _, a := range before {
 				if !slices.Contains(got.Command, a) {
@@ -187,8 +187,8 @@ func testDurationsCheck(t *testing.T) {
 		limit   time.Duration
 		current []PackageDuration
 	}{
-		{"no package list is not_measured, not green (DR-13)", limit, nil},
-		{"an empty package list is not_measured, not green (DR-13)", limit, []PackageDuration{}},
+		{"no package list is not_measured, not green (DR-6)", limit, nil},
+		{"an empty package list is not_measured, not green (DR-6)", limit, []PackageDuration{}},
 		{"no step limit cannot judge a package", 0, []PackageDuration{{core, 12 * time.Second}}},
 	}
 	for _, tc := range unmeasuredCases {
@@ -256,7 +256,7 @@ func durationsTestStep(t *testing.T, output string) GateStep {
 // step runs under the limit StepLimit gives (3 × p90 of its last 20 green durations, else 3 × the
 // base proof, at least 60 s), raised to 2 × the longest recorded package and never divided by the
 // worker count; its `go test -json` output gives the package durations; a package over half that
-// limit turns the gate red; an empty or unparsable duration list is not_measured (DR-13, DR-38).
+// limit turns the gate red; an empty or unparsable duration list is not_measured (DR-6, DR-1).
 func TestDurationsRunner(t *testing.T) {
 	const pkg = durationsTestModule + "/internal/gates"
 	green := func(d time.Duration) StepRun { return StepRun{Result: ResultGreen, Duration: d} }

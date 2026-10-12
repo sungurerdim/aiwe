@@ -120,7 +120,7 @@ type tree struct {
 
 // newTree creates the job and sets the child to start suspended, so it joins the job before it
 // can start a process of its own (U22). Closing the last handle of the job kills every process
-// left in it, so a tree never outlives the engine (DR-15). A batch launcher runs through cmd.exe
+// left in it, so a tree never outlives the engine (DR-11). A batch launcher runs through cmd.exe
 // with a command line built here (SPEC §5.20).
 func newTree(cmd *exec.Cmd) (tree, error) {
 	k, err := loadKernel32()

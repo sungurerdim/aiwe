@@ -24,7 +24,9 @@ Each line names the rule; the rule text is in SPEC §3.
   hand. The lead applies the standard under L5. After M-Skeleton closes, a unit worked outside aiwe is a defect and is
   recorded as one. From then on, CI flags a `main` commit that closes or references a unit issue and has no `Run-Id`
   trailer (Q17).
-- Every piece of work is an issue before it starts, and a finished one closes on merge (DR-20, L7).
+- Issues are the single source of truth for work: every piece of work is an issue before it starts (DR-20, O5).
+  An intermediate commit carries `Refs <owner>/<repo>#N`; the commit that finishes the work carries
+  `Closes <owner>/<repo>#N`, so the issue closes on merge (SPEC §12.3, L7).
 - Every diff counts from the run's base commit (DR-9).
 - Commit only on your run branch; no push, merge, issue close or tracker write (DR-13).
 - A unit stays inside its declared file set (DR-7, DR-9).

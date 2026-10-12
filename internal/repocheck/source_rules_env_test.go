@@ -20,7 +20,7 @@ func envReadLines(t *testing.T, file repocheck.SourceFile) []int {
 	return lines
 }
 
-// TestSourceRulesEnvRead guards SPEC §5.4: only internal/core/env.go reads the process environment,
+// TestSourceRulesEnvRead guards SPEC §5.3: only internal/core/env.go reads the process environment,
 // so a new os.Environ, os.Getenv or os.LookupEnv anywhere else is a finding.
 func TestSourceRulesEnvRead(t *testing.T) {
 	flagged := []struct {

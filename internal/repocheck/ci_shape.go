@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-// The rule names of check repo/ci-shape (DR-42, SPEC §12.2).
+// The rule names of check repo/ci-shape (DR-22, SPEC §12.2).
 const (
 	ruleStepWithoutWhy   = "step_without_why"
 	ruleUsesNotPinned    = "uses_not_pinned"
@@ -32,7 +32,7 @@ const (
 // pinnedUsesPattern matches an action or reusable workflow named by a full commit SHA.
 var pinnedUsesPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+@[0-9a-f]{40}$`)
 
-// CIShapeReport is the result of check repo/ci-shape: the counts DR-42 reports and the findings.
+// CIShapeReport is the result of check repo/ci-shape: the counts DR-22 reports and the findings.
 type CIShapeReport struct {
 	Workflows int
 	Jobs      int
@@ -44,7 +44,7 @@ type CIShapeReport struct {
 // `# why:` comment, every `uses:` names a full commit SHA, the triggers are push on main,
 // pull_request and workflow_dispatch, the concurrency is the prescribed one, and ci.yml is the
 // only workflow. present is false when the tree has no ci.yml: the shape was not measured, and
-// the caller reports it so, never green (DR-13).
+// the caller reports it so, never green (DR-6).
 func CIShape(fsys fs.FS) (rep CIShapeReport, present bool, err error) {
 	body, err := fs.ReadFile(fsys, ciWorkflowPath)
 	if errors.Is(err, fs.ErrNotExist) {

@@ -71,7 +71,7 @@ func removeTestEditRecord(t *testing.T, r OwnedRoots, d OwnedDir, edit func(line
 
 // TestOwnedHMAC catches an owned_dir record or .owner marker without a valid HMAC under the key
 // that removal accepts (§5.15), and a record whose start_id is not bound by its HMAC, so a forged
-// start identity passes the ownership check (U13).
+// start identity passes the ownership check.
 func TestOwnedHMAC(t *testing.T) {
 	ctx := context.Background()
 	t.Run("key lives in the state root and stays out of the marker", func(t *testing.T) {

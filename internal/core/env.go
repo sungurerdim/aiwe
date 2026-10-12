@@ -5,14 +5,14 @@ import (
 	"strings"
 )
 
-// secretMarkers are the name parts that make a variable secret-shaped (DR-35).
+// secretMarkers are the name parts that make a variable secret-shaped (DR-10).
 func secretMarkers() []string {
 	return []string{"TOKEN", "SECRET", "KEY", "PASSWORD"}
 }
 
 // CleanEnv returns a copy of parent for a child process without secret-shaped variables, the
 // listed credentials, a git credential helper, or a variable that reaches a credential or a
-// program outside the run (DR-35). An entry with an empty name is dropped too. Names compare
+// program outside the run (DR-10). An entry with an empty name is dropped too. Names compare
 // without case, as Windows does. git is told to skip the system config, to read the null device
 // as its global config, so no user-level setting such as core.askPass applies, never to prompt,
 // and to use an empty credential.helper, which clears every helper set in a config file.
@@ -58,7 +58,7 @@ func dropFromChild(upper string, credentials []string) bool {
 }
 
 // secretName reports whether the upper-case variable name is secret-shaped: it holds a secret
-// marker, ends in a secret suffix, or is a known credential variable (DR-35, SPEC §6.5).
+// marker, ends in a secret suffix, or is a known credential variable (DR-10, SPEC §6.5).
 func secretName(upper string) bool {
 	for _, m := range secretMarkers() {
 		if strings.Contains(upper, m) {
@@ -74,7 +74,7 @@ func secretName(upper string) bool {
 }
 
 // urlWithPassword reports whether the upper-case name ends in _URL and its value may carry a
-// password: after a "://" comes a ":" and, later, an "@" (DR-35, SPEC §6.5). The check is
+// password: after a "://" comes a ":" and, later, an "@" (DR-10, SPEC §6.5). The check is
 // fail-closed, so a passwordless URL with a ":" and a later "@" is dropped too.
 func urlWithPassword(upper, value string) bool {
 	if !strings.HasSuffix(upper, "_URL") {
@@ -89,7 +89,7 @@ func urlWithPassword(upper, value string) bool {
 }
 
 // reachNames are the upper-case variable names that let a child reach a credential or run a
-// program outside the run, or that CleanEnv sets itself (DR-35, SPEC §6.5).
+// program outside the run, or that CleanEnv sets itself (DR-10, SPEC §6.5).
 func reachNames() []string {
 	return []string{
 		"GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT", "GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_GLOBAL",
@@ -100,14 +100,14 @@ func reachNames() []string {
 }
 
 // LookupEnv reads one variable of the process environment; it is the env lookup passed to
-// ResolveConfig and ResolveRoots, so this file stays the only reader (SPEC §5.4). An unset
+// ResolveConfig and ResolveRoots, so this file stays the only reader (SPEC §5.3). An unset
 // variable reads as "".
 func LookupEnv(name string) string {
 	return os.Getenv(name)
 }
 
 // Environ returns a copy of the whole process environment as "name=value" pairs; with LookupEnv it
-// keeps this file the only reader (SPEC §5.4).
+// keeps this file the only reader (SPEC §5.3).
 func Environ() []string {
 	return os.Environ()
 }
