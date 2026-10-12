@@ -122,6 +122,9 @@ type removalHooks struct {
 	lastChecked  func(name string)       // after removeOnce checked the emptied name the last time
 	rmdirChecked func(name string)       // after removeDirEntry checked the held handle
 	closeFail    func(what string) error // an error to add at the close named what
+
+	// mountCheck, when set, stands in for mountPointAt (refuseMounts).
+	mountCheck func(dir *os.File, name string) (bool, error)
 }
 
 // hookAt runs the hook f with name when f is set.
@@ -250,7 +253,7 @@ func (h removalHooks) removeOnce(rt *os.Root, name string, want fs.FileInfo, out
 	if err != nil {
 		return false, err
 	}
-	began, err := emptyOwned(sub, name, fi, outcome)
+	began, err := h.emptyOwned(sub, name, fi, outcome)
 	if err := errors.Join(err, sub.Close()); err != nil {
 		return began, err
 	}
@@ -298,7 +301,7 @@ func openChecked(rt *os.Root, name string, fi fs.FileInfo) (*os.Root, error) {
 // the directory fi describes, then that no entry under it is a mount point (refuseMounts), else it
 // fails with ErrNotOwned and removes nothing; a refusal names outcome. It reports whether it began
 // removing entries.
-func emptyOwned(sub *os.Root, name string, fi fs.FileInfo, outcome string) (bool, error) {
+func (h removalHooks) emptyOwned(sub *os.Root, name string, fi fs.FileInfo, outcome string) (bool, error) {
 	d, err := sub.Open(".")
 	if err != nil {
 		return false, err
@@ -308,7 +311,7 @@ func emptyOwned(sub *os.Root, name string, fi fs.FileInfo, outcome string) (bool
 		err = fmt.Errorf("%w: %q was swapped after the check (a link is never followed)", ErrNotOwned, name)
 	}
 	if err == nil {
-		err = refuseMounts(sub, name, ".", outcome)
+		err = h.refuseMounts(sub, name, ".", outcome)
 	}
 	var names []string
 	if err == nil {
