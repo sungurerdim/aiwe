@@ -18,11 +18,11 @@ func TestRemoveOwnedBindMount(t *testing.T) {
 	removeTestWrite(t, keep, "mounted data, not owned")
 	mnt := filepath.Join(d.Path(), "mnt")
 	removeTestMkdir(t, mnt)
-	if out, err := exec.Command("mount", "--bind", src, mnt).CombinedOutput(); err != nil {
+	if out, err := exec.CommandContext(t.Context(), "mount", "--bind", src, mnt).CombinedOutput(); err != nil {
 		t.Skipf("cannot bind mount %s on %s (needs root or CAP_SYS_ADMIN): %v %s", src, mnt, err, out)
 	}
 	t.Cleanup(func() {
-		if err := exec.Command("umount", "-l", mnt).Run(); err != nil {
+		if err := exec.CommandContext(context.WithoutCancel(t.Context()), "umount", "-l", mnt).Run(); err != nil {
 			t.Logf("umount %s: %v", mnt, err)
 		}
 	})
