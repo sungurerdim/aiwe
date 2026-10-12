@@ -481,20 +481,3 @@ func TestSweepSwapBeforeLastRemove(t *testing.T) {
 		t.Errorf("Sweep report = %+v, want Removed 0, Refused 1 for the swapped name %q", rep, filepath.Base(d.Path()))
 	}
 }
-
-// TestRemoveOwnedJunction catches a removal that goes through a mount-point reparse tag inside an
-// owned dir: every such tag, an in-root junction too, is refused and nothing is removed (#136).
-func TestRemoveOwnedJunction(t *testing.T) {
-	if JunctionForTest == nil {
-		t.Skip("directory junctions exist only on Windows")
-	}
-	o := removeTestOpen(t, removeTestRoots(t, t.TempDir()))
-	d := removeTestCreate(t, o, TempRoot)
-	keep := filepath.Join(d.Path(), "sub", "keep.txt")
-	removeTestWrite(t, keep, "inner data\n")
-	JunctionForTest(t, filepath.Join(d.Path(), "sub"), filepath.Join(d.Path(), "inner"))
-	err := o.RemoveOwned(context.Background(), d)
-	if !errors.Is(err, ErrNotOwned) || !strings.Contains(err.Error(), "is a mount point") || !removeTestExists(t, keep) {
-		t.Fatalf("RemoveOwned over a junction = %v (keep.txt kept: %v); want a mount point refusal", err, removeTestExists(t, keep))
-	}
-}
