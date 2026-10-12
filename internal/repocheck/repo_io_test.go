@@ -1,13 +1,16 @@
 package repocheck
 
 import (
+	"bytes"
 	"errors"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
+	"time"
 )
 
 // repoWithOutside returns a repository directory holding go.mod and, beside it, a file outside
@@ -122,5 +125,75 @@ func dirLink(t *testing.T, target, link string) {
 	}
 	if out, err := exec.CommandContext(t.Context(), "cmd", "/c", "mklink", "/J", link, target).CombinedOutput(); err != nil {
 		t.Fatalf("mklink /J %s %s: %v: %s", link, target, err, out)
+	}
+}
+
+// repoIOTestWithin runs read and fails when it still blocks after 1 s; a writer opened on path
+// then releases a blocked FIFO open.
+func repoIOTestWithin(t *testing.T, path string, read func() error) error {
+	t.Helper()
+	done := make(chan error, 1)
+	go func() { done <- read() }()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(time.Second):
+		if w, err := os.OpenFile(path, os.O_WRONLY, 0); err == nil {
+			_ = w.Close()
+		}
+		<-done
+		t.Fatalf("read of %s still blocked after 1 s; want a named error", path)
+		return nil
+	}
+}
+
+// TestRepoIONotRegular catches a repository read that hangs on a FIFO or reads a file of any size
+// (#199): a FIFO under a SPEC-listed path blocks a plain open forever on Unix; a 4 MiB cap bounds
+// the read.
+func TestRepoIONotRegular(t *testing.T) {
+	const repoCap = 4 << 20
+	sized := func(size int) func(t *testing.T, path string) {
+		return func(t *testing.T, path string) {
+			if err := os.WriteFile(path, bytes.Repeat([]byte("x"), size), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	tests := []struct {
+		name    string
+		unix    bool
+		make    func(t *testing.T, path string)
+		wantErr bool
+	}{
+		{name: "file at the cap refused", make: sized(repoCap)},
+		{name: "file one byte over the cap read", make: sized(repoCap + 1), wantErr: true},
+		{name: "FIFO blocks the read", unix: true, wantErr: true, make: func(t *testing.T, path string) {
+			if out, err := exec.Command("mkfifo", "-m", "600", path).CombinedOutput(); err != nil {
+				t.Fatalf("mkfifo: %v: %s", err, out)
+			}
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.unix && runtime.GOOS == "windows" {
+				t.Skip("a FIFO is a Unix file type")
+			}
+			repo, _ := repoWithOutside(t)
+			path := filepath.Join(repo, "SPEC.md")
+			tc.make(t, path)
+			err := repoIOTestWithin(t, path, func() error {
+				_, present, err := readRepoFileIfPresent(repo, "SPEC.md")
+				if err == nil && !present {
+					return errors.New("read as absent")
+				}
+				return err
+			})
+			if tc.wantErr && (err == nil || !strings.Contains(err.Error(), "SPEC.md")) {
+				t.Fatalf("readRepoFileIfPresent(SPEC.md) = %v; want an error that names SPEC.md", err)
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("readRepoFileIfPresent(SPEC.md) = %v; want a file at the cap read", err)
+			}
+		})
 	}
 }

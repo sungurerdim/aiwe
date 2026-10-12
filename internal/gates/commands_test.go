@@ -7,10 +7,13 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sungurerdim/aiwe/internal/core"
 )
@@ -419,5 +422,76 @@ func TestGateDefinitionLinkOut(t *testing.T) {
 	if !errors.As(err, &cerr) || cerr.Outcome != core.OutcomeError || !strings.Contains(cerr.Expected, "inside the repository") {
 		t.Fatalf("readDefinition = %+v, %v; want a *core.Error with outcome %q that names a gate.json inside the repository",
 			def, err, core.OutcomeError)
+	}
+}
+
+// gateDefinitionTestWithin runs readDefinition on repo and fails when it still blocks after 1 s;
+// a writer opened on gate.json then releases a blocked FIFO open.
+func gateDefinitionTestWithin(t *testing.T, repo string) error {
+	t.Helper()
+	done := make(chan error, 1)
+	go func() {
+		_, err := readDefinition(repo)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(time.Second):
+		if w, err := os.OpenFile(filepath.Join(repo, "gate.json"), os.O_WRONLY, 0); err == nil {
+			_ = w.Close()
+		}
+		<-done
+		t.Fatal("readDefinition still blocked after 1 s; want a named error")
+		return nil
+	}
+}
+
+// TestGateDefinitionNotRegular catches a gate.json that hangs the gate or is read without a cap
+// (#199): a FIFO blocks a plain open forever on Unix, and a 1 MiB cap bounds the read.
+func TestGateDefinitionNotRegular(t *testing.T) {
+	const gateCap = 1 << 20
+	padded := func(t *testing.T, repo string, size int) {
+		data, err := json.Marshal(Definition{FormatVersion: formatVersion,
+			Steps: []GateStep{{ID: "build", Command: []string{"go", "build", "./..."}, Required: true}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		body := append(bytes.Repeat([]byte(" "), size-len(data)), data...)
+		if err := os.WriteFile(filepath.Join(repo, "gate.json"), body, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tests := []struct {
+		name    string
+		unix    bool
+		make    func(t *testing.T, repo string)
+		wantErr bool
+	}{
+		{name: "gate.json at the cap refused", make: func(t *testing.T, repo string) { padded(t, repo, gateCap) }},
+		{name: "gate.json one byte over the cap read", wantErr: true,
+			make: func(t *testing.T, repo string) { padded(t, repo, gateCap+1) }},
+		{name: "FIFO gate.json blocks the gate", unix: true, wantErr: true,
+			make: func(t *testing.T, repo string) {
+				if out, err := exec.Command("mkfifo", "-m", "600", filepath.Join(repo, "gate.json")).CombinedOutput(); err != nil {
+					t.Fatalf("mkfifo: %v: %s", err, out)
+				}
+			}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.unix && runtime.GOOS == "windows" {
+				t.Skip("a FIFO is a Unix file type")
+			}
+			repo := t.TempDir()
+			tc.make(t, repo)
+			err := gateDefinitionTestWithin(t, repo)
+			if tc.wantErr && (err == nil || !strings.Contains(err.Error(), "gate.json")) {
+				t.Fatalf("readDefinition = %v; want an error that names gate.json", err)
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("readDefinition: %v; want a gate.json at the cap read", err)
+			}
+		})
 	}
 }

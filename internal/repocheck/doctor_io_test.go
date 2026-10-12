@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sungurerdim/aiwe/internal/repocheck"
 )
@@ -112,5 +113,57 @@ func TestDoctorGoFilesReadsTree(t *testing.T) {
 func TestDoctorGoFilesEmptyRepo(t *testing.T) {
 	if _, err := repocheck.GoFiles(t.TempDir()); err == nil {
 		t.Fatal("GoFiles on a repository without a .go file = nil error; want an error")
+	}
+}
+
+// TestDoctorGoFilesNotRegular catches a doctor walk that hangs on a FIFO named x.go, or later reads
+// it as an empty Go file, or reads a Go file of any size (#199). The cap is 4 MiB.
+func TestDoctorGoFilesNotRegular(t *testing.T) {
+	tests := []struct {
+		name string
+		unix bool
+		make func(t *testing.T, path string)
+	}{
+		{name: "Go file over the cap read", make: func(t *testing.T, path string) {
+			body := "package x\n" + strings.Repeat("/", 4<<20)
+			if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "FIFO x.go blocks the walk", unix: true, make: func(t *testing.T, path string) {
+			if out, err := exec.Command("mkfifo", "-m", "600", path).CombinedOutput(); err != nil {
+				t.Fatalf("mkfifo: %v: %s", err, out)
+			}
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.unix && runtime.GOOS == "windows" {
+				t.Skip("a FIFO is a Unix file type")
+			}
+			repo := t.TempDir()
+			if err := os.WriteFile(filepath.Join(repo, "main.go"), []byte("package main\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(repo, "x.go")
+			tc.make(t, path)
+			done := make(chan error, 1)
+			go func() {
+				_, err := repocheck.GoFiles(repo)
+				done <- err
+			}()
+			select {
+			case err := <-done:
+				if err == nil || !strings.Contains(err.Error(), "x.go") {
+					t.Fatalf("GoFiles = %v; want an error that names x.go", err)
+				}
+			case <-time.After(time.Second):
+				if w, err := os.OpenFile(path, os.O_WRONLY, 0); err == nil {
+					_ = w.Close()
+				}
+				<-done
+				t.Fatal("GoFiles still blocked after 1 s; want a named error")
+			}
+		})
 	}
 }
