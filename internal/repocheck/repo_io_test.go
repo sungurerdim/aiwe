@@ -168,7 +168,7 @@ func TestRepoIONotRegular(t *testing.T) {
 		{name: "file at the cap refused", make: sized(repoCap)},
 		{name: "file one byte over the cap read", make: sized(repoCap + 1), wantErr: true},
 		{name: "FIFO blocks the read", unix: true, wantErr: true, make: func(t *testing.T, path string) {
-			if out, err := exec.Command("mkfifo", "-m", "600", path).CombinedOutput(); err != nil {
+			if out, err := exec.CommandContext(t.Context(), "mkfifo", "-m", "600", path).CombinedOutput(); err != nil {
 				t.Fatalf("mkfifo: %v: %s", err, out)
 			}
 		}},

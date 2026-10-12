@@ -340,7 +340,7 @@ func TestConfig(t *testing.T) {
 				}},
 			{name: "FIFO under the settings name blocks the read", unix: true,
 				make: func(t *testing.T, path string) {
-					if out, err := exec.Command("mkfifo", "-m", "600", path).CombinedOutput(); err != nil {
+					if out, err := exec.CommandContext(t.Context(), "mkfifo", "-m", "600", path).CombinedOutput(); err != nil {
 						t.Fatalf("mkfifo %s: %v: %s", path, err, out)
 					}
 				}},

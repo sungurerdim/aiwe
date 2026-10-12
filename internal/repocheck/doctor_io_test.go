@@ -131,7 +131,7 @@ func TestDoctorGoFilesNotRegular(t *testing.T) {
 			}
 		}},
 		{name: "FIFO x.go blocks the walk", unix: true, make: func(t *testing.T, path string) {
-			if out, err := exec.Command("mkfifo", "-m", "600", path).CombinedOutput(); err != nil {
+			if out, err := exec.CommandContext(t.Context(), "mkfifo", "-m", "600", path).CombinedOutput(); err != nil {
 				t.Fatalf("mkfifo: %v: %s", err, out)
 			}
 		}},

@@ -473,7 +473,7 @@ func TestGateDefinitionNotRegular(t *testing.T) {
 			make: func(t *testing.T, repo string) { padded(t, repo, gateCap+1) }},
 		{name: "FIFO gate.json blocks the gate", unix: true, wantErr: true,
 			make: func(t *testing.T, repo string) {
-				if out, err := exec.Command("mkfifo", "-m", "600", filepath.Join(repo, "gate.json")).CombinedOutput(); err != nil {
+				if out, err := exec.CommandContext(t.Context(), "mkfifo", "-m", "600", filepath.Join(repo, "gate.json")).CombinedOutput(); err != nil {
 					t.Fatalf("mkfifo: %v: %s", err, out)
 				}
 			}},
