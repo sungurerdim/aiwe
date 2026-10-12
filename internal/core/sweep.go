@@ -222,15 +222,24 @@ func (h removalHooks) removeTree(ctx context.Context, rootPath, name string, app
 		if attempt == removeAttempts {
 			break
 		}
-		t := time.NewTimer(removeWait)
-		select {
-		case <-ctx.Done():
-			t.Stop()
-			return errors.Join(fmt.Errorf("remove %q: %w", name, err), ctx.Err())
-		case <-t.C:
+		if cerr := waitRetry(ctx); cerr != nil {
+			return errors.Join(fmt.Errorf("remove %q: %w", name, err), cerr)
 		}
 	}
 	return fmt.Errorf("%w: remove %q: %d attempts %v apart: %w", ErrResidueLocked, name, removeAttempts, removeWait, err)
+}
+
+// waitRetry waits removeWait before the next removal attempt; it returns the error of ctx when ctx
+// ends first.
+func waitRetry(ctx context.Context) error {
+	t := time.NewTimer(removeWait)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
 }
 
 // removeOnce removes the entries of name, then its marker, then name itself, so a removal that

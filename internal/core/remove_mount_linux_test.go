@@ -82,6 +82,9 @@ func TestRemoveOwnedPartialThenMount(t *testing.T) {
 	if !removeTestExists(t, keep) {
 		t.Errorf("RemoveOwned deleted the mounted %s (err %v); want it kept", keep, err)
 	}
+	if err == nil {
+		t.Fatalf("RemoveOwned after a partial attempt = nil; want not_owned naming a partial removal and the residue %s", d.Path())
+	}
 	if !errors.Is(err, ErrNotOwned) || strings.Contains(err.Error(), "nothing removed") ||
 		!strings.Contains(err.Error(), "partial removal") || !strings.Contains(err.Error(), d.Path()) {
 		t.Errorf("RemoveOwned after a partial attempt = %v; want not_owned naming a partial removal and the residue %s",

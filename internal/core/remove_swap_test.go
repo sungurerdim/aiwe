@@ -482,8 +482,7 @@ func TestSweepSwapBeforeLastRemove(t *testing.T) {
 	}
 }
 
-// TestRemoveOwnedMountUnknown catches a failed mount check that is retried and ends as
-// residue_locked (#136): the mount state is unknown, so the removal refuses at once, removing nothing.
+// TestRemoveOwnedMountUnknown catches a failed mount check retried into residue_locked, not refused at once (#136).
 func TestRemoveOwnedMountUnknown(t *testing.T) {
 	o := removeTestOpen(t, removeTestRoots(t, t.TempDir()))
 	d := removeTestCreate(t, o, TempRoot)
@@ -492,9 +491,10 @@ func TestRemoveOwnedMountUnknown(t *testing.T) {
 	o.hooks.mountCheck = func(*os.File, string) (bool, error) { return false, errors.New("statx: function not implemented") }
 	start := time.Now()
 	err := o.RemoveOwned(context.Background(), d)
-	if took := time.Since(start); !errors.Is(err, ErrNotOwned) || !strings.Contains(err.Error(), "mount state is unknown") ||
-		took >= removeWait || !removeTestExists(t, keep) {
-		t.Errorf("RemoveOwned with a failed mount check = %v after %v (notes.txt kept: %v); want an at-once not_owned "+
-			"refusal for an unknown mount state that removes nothing", err, took, removeTestExists(t, keep))
+	if err == nil {
+		t.Fatal("RemoveOwned with a failed mount check = nil; want an at-once not_owned refusal for an unknown mount state")
+	}
+	if took := time.Since(start); !errors.Is(err, ErrNotOwned) || !strings.Contains(err.Error(), "mount state is unknown") || took >= removeWait || !removeTestExists(t, keep) {
+		t.Errorf("RemoveOwned with a failed mount check = %v after %v (notes.txt kept: %v); want an at-once not_owned refusal for an unknown mount state that removes nothing", err, took, removeTestExists(t, keep))
 	}
 }

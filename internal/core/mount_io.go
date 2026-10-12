@@ -30,7 +30,7 @@ func (h removalHooks) refuseMounts(sub *os.Root, owned, dir, outcome string) (er
 		shown := filepath.Join(owned, filepath.FromSlash(p))
 		switch mount, merr := check(d, ents[i].Name()); {
 		case merr != nil:
-			err = fmt.Errorf("%w: %q: the mount state is unknown (%v); %s", ErrNotOwned, shown, merr, outcome)
+			err = fmt.Errorf("%w: %q: the mount state is unknown (%w); %s", ErrNotOwned, shown, merr, outcome)
 		case mount:
 			err = fmt.Errorf("%w: %q is a mount point; %s", ErrNotOwned, shown, outcome)
 		case ents[i].Type() == fs.ModeDir:
