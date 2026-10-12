@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -137,7 +136,7 @@ func isSettingsFile(name string) bool {
 // The file is read through root, so a link out of dir is refused, never followed.
 func mergeConfigFile(state map[string]string, root *os.Root, dir, name string) error {
 	path := filepath.Join(dir, name)
-	b, err := readSettingsFile(root, name)
+	b, err := ReadRegularCapped(root, name, maxSettingsBytes)
 	if err != nil {
 		return configInvalid("a regular state file of at most 64 KiB", fmt.Sprintf("%s: %v", path, err))
 	}
@@ -155,32 +154,6 @@ func mergeConfigFile(state map[string]string, root *os.Root, dir, name string) e
 		state[name] = v
 	}
 	return nil
-}
-
-// readSettingsFile opens name of root once, without blocking, checks on that handle that it is a
-// regular file, and reads at most maxSettingsBytes+1 bytes from it, refusing a larger file. A FIFO
-// or a directory swapped in after the directory listing is refused before any read (#199).
-func readSettingsFile(root *os.Root, name string) (b []byte, err error) {
-	f, err := root.OpenFile(name, ownerKeyOpenFlag, 0)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { err = errors.Join(err, f.Close()) }()
-	info, err := f.Stat()
-	if err != nil {
-		return nil, err
-	}
-	if !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("not a regular file: %s", info.Mode().Type())
-	}
-	b, err = io.ReadAll(io.LimitReader(f, maxSettingsBytes+1))
-	if err != nil {
-		return nil, err
-	}
-	if len(b) > maxSettingsBytes {
-		return nil, fmt.Errorf("larger than %d bytes", maxSettingsBytes)
-	}
-	return b, nil
 }
 
 // configInvalid returns the config_invalid error with what was expected and what was found.

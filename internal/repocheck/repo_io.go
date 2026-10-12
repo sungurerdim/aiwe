@@ -6,6 +6,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+
+	"github.com/sungurerdim/aiwe/internal/core"
 )
 
 // errPathEscapesRepo is returned when a repository-relative path leaves the repository, through
@@ -50,12 +52,20 @@ func escapeError(root *os.Root) (error, error) {
 	return pe.Err, nil
 }
 
-// readRepoFile reads the slash-separated, repository-relative file rel of repo.
+// maxRepoFileBytes caps one repository file read by repocheck, a Go file included; a larger file
+// is refused unread (#199).
+const maxRepoFileBytes = 4 << 20
+
+// readRepoFile reads the slash-separated, repository-relative file rel of repo; a non-regular
+// file, such as a FIFO, or a file over maxRepoFileBytes is an error that names rel.
 func readRepoFile(repo, rel string) ([]byte, error) {
 	var body []byte
 	err := inRepo(repo, rel, func(root *os.Root, name string) error {
 		var rerr error
-		body, rerr = root.ReadFile(name)
+		body, rerr = core.ReadRegularCapped(root, name, maxRepoFileBytes)
+		if rerr != nil && !errors.Is(rerr, fs.ErrNotExist) {
+			return fmt.Errorf("%s: %w", rel, rerr)
+		}
 		return rerr
 	})
 	return body, err

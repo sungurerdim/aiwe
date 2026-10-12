@@ -51,6 +51,7 @@ func RunGo(ctx context.Context, dir string, args ...string) ([]byte, error) {
 // Path is repository-relative and slash-separated. A repository without a .go file is an error.
 // The walk and every read go through an os.Root at repo, so a link, or a directory swapped for
 // one during the walk, never leads a read outside the repository: it is an error.
+// A .go entry that is not a regular file, such as a FIFO, or is over maxRepoFileBytes is an error.
 func GoFiles(repo string) ([]SourceFile, error) {
 	root, err := os.OpenRoot(repo)
 	if err != nil {
@@ -68,9 +69,9 @@ func GoFiles(repo string) ([]SourceFile, error) {
 		if !strings.HasSuffix(d.Name(), ".go") {
 			return nil
 		}
-		body, err := root.ReadFile(p)
+		body, err := core.ReadRegularCapped(root, p, maxRepoFileBytes)
 		if err != nil {
-			return err
+			return fmt.Errorf("%s: %w", p, err)
 		}
 		files = append(files, SourceFile{Path: p, Body: body})
 		return nil
