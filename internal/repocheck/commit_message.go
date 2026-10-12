@@ -20,6 +20,7 @@ const (
 	ruleMissingEffect      = "missing_effect"
 	ruleClosesOtherRepo    = "closes_other_repo"
 	ruleClosesRepoUnknown  = "closes_repo_unknown"
+	ruleClosingKeywordForm = "closing_keyword_form"
 )
 
 // The length limits of a commit message in runes, not bytes (SPEC §12.3).
@@ -45,24 +46,30 @@ var breakingFooterPattern = regexp.MustCompile(`(?i)^breaking[ -]change:`)
 // captures the keyword and the <owner>/<repo>.
 var issueRefPattern = regexp.MustCompile(`^(Refs|Closes) ([A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9._-]+)#[1-9][0-9]*$`)
 
+// closingKeywordPattern matches any GitHub closing keyword followed by an issue reference, in any
+// case and anywhere in a line; the strict whole-line Closes form is the only allowed occurrence.
+var closingKeywordPattern = regexp.MustCompile(`(?i)\b(?:close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)\b\s*(?:[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9._-]+)?#[1-9][0-9]*`)
+
 // effectPattern matches the Effect line a closing commit carries: Effect: <before> → <after>.
 var effectPattern = regexp.MustCompile(`^Effect: \S.* → \S`)
 
 // slugPattern matches an <owner>/<repo> slug.
 var slugPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9._-]+$`)
 
-// remotePathPatterns capture the path of a remote URL: the URL form (https, ssh, git) and the
-// scp-like ssh form user@host:path.
-var remotePathPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`^(?:https?|ssh|git)://[^/\s]+/(\S+)$`),
-	regexp.MustCompile(`^[^@/\s]+@[^:/\s]+:(\S+)$`),
+// remotePathPatterns returns the compiled patterns that capture the path of a remote URL:
+// the URL form (https, ssh, git) and the scp-like ssh form user@host:path.
+func remotePathPatterns() []*regexp.Regexp {
+	return []*regexp.Regexp{
+		regexp.MustCompile(`^(?:https?|ssh|git)://[^/\s]+/(\S+)$`),
+		regexp.MustCompile(`^[^@/\s]+@[^:/\s]+:(\S+)$`),
+	}
 }
 
 // codeSpanPattern matches a line that is one back-quoted code span.
 var codeSpanPattern = regexp.MustCompile("^`[^`]+`$")
 
-// trailerPattern matches a git trailer line: a token, a colon, one space and a value.
-var trailerPattern = regexp.MustCompile(`^(?:[A-Za-z][A-Za-z0-9-]*|BREAKING CHANGE): \S`)
+// trailerPattern matches a git trailer line in the closing trailer block (SPEC §12.3).
+var trailerPattern = regexp.MustCompile(`^(?:Effect|Co-Authored-By|Signed-off-by|Run-Id|BREAKING CHANGE|BREAKING-CHANGE): \S`)
 
 // urlPattern matches a URL anywhere in a line.
 var urlPattern = regexp.MustCompile(`https?://\S+`)
@@ -103,12 +110,15 @@ func CommitMessage(msg, slug string) []Finding {
 		}
 	}
 	found = append(found, checkBodyLines(rest)...)
-	return append(found, checkIssueLines(rest, slug)...)
+	fenced := fencedLines(rest)
+	found = append(found, checkIssueLines(rest, slug, fenced)...)
+	return append(found, checkClosingKeywords(rest)...)
 }
 
 // checkIssueLines checks the issue lines of body: one Refs or Closes line at least; a Closes line
-// names the repository slug and comes with an Effect line.
-func checkIssueLines(body []messageLine, slug string) []Finding {
+// names the repository slug and comes with an Effect line. An Effect line inside a fence does not
+// count.
+func checkIssueLines(body []messageLine, slug string, fenced []bool) []Finding {
 	var found []Finding
 	refs, closes := false, false
 	for _, l := range body {
@@ -131,8 +141,33 @@ func checkIssueLines(body []messageLine, slug string) []Finding {
 	if !refs {
 		found = append(found, Finding{Rule: ruleMissingIssueRef, Path: commitMessagePath})
 	}
-	if closes && !slices.ContainsFunc(body, func(l messageLine) bool { return effectPattern.MatchString(l.text) }) {
+	hasEffect := false
+	for i, l := range body {
+		if !fenced[i] && effectPattern.MatchString(l.text) {
+			hasEffect = true
+			break
+		}
+	}
+	if closes && !hasEffect {
 		found = append(found, Finding{Rule: ruleMissingEffect, Path: commitMessagePath})
+	}
+	return found
+}
+
+// checkClosingKeywords reports any GitHub closing keyword that is not the strict whole-line
+// Closes <owner>/<repo>#N form. Quoted command or output lines are exempt (SPEC §12.3).
+func checkClosingKeywords(body []messageLine) []Finding {
+	var found []Finding
+	for _, l := range body {
+		if isQuoted(l.text) {
+			continue
+		}
+		if issueRefPattern.MatchString(l.text) {
+			continue
+		}
+		if closingKeywordPattern.MatchString(l.text) {
+			found = append(found, Finding{Rule: ruleClosingKeywordForm, Path: commitMessagePath, Line: l.n})
+		}
 	}
 	return found
 }
@@ -141,7 +176,7 @@ func checkIssueLines(body []messageLine, slug string) []Finding {
 // when the URL holds none.
 func RepoSlug(remoteURL string) string {
 	u := strings.TrimSpace(remoteURL)
-	for _, p := range remotePathPatterns {
+	for _, p := range remotePathPatterns() {
 		m := p.FindStringSubmatch(u)
 		if m == nil {
 			continue
