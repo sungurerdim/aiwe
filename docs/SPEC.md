@@ -418,7 +418,7 @@ Every engine file carries `formatVersion`; parsers are fail-closed (DR-6); JSON 
 ```json
 { "formatVersion": 1,
   "sources": [
-    { "id": "sub-a", "adapter": "opencode", "kind": "subscription", "provider": "<provider-id>" },
+    { "id": "sub-a", "adapter": "opencode-go", "kind": "subscription", "provider": "<provider-id>" },
     { "id": "api-b", "adapter": "openai-chat", "kind": "api", "provider": "<provider-id>",
       "credentialEnv": "B_API_KEY", "baseUrlEnv": "B_BASE_URL", "spendCap": { "usd": 50, "since": "<date>" } } ],
   "overrides": { "pin": { "engineer": [ { "source": "sub-a", "model": "<model-id>", "effort": "<level>" } ] },
@@ -644,32 +644,31 @@ type Tracker interface {
   `merge_method: squash`, the §7.3 step 11 title and message, and `sha` = the audited head (§17).
 - Sub-issues and blocked-by use GitHub's native relations (§17, L8). Volume stays under GitHub's limits (§17); a `403`
   or `429` limit follows `rate_window`. Only `tracker/` knows GitHub; `tracker/trackertest` holds the fake.
-### 10.2 Provider port (harness and API)
+### 10.2 Provider port (model API and agent runtime)
 ```go
 type Provider interface {
     Identified
     Detect(ctx context.Context, env core.Env) Detection // Present; Version, Reason
-    Capabilities() Capabilities // Roles, Models, Effort; Resume, ReportsModel, RestrictsCommands, Images
+    Capabilities() Capabilities // Kind, Roles, Models, Effort; Resume, ReportsModel, RestrictsCommands, Images
     Run(ctx context.Context, req RunRequest) (core.Result[RunReport], error)
 }
 ```
-- Two kinds: CLI harness (a process in the run clone) and API channel (an engine agent loop over HTTPS with file tools
-  confined to the clone, O2). Each uses only the provider's official interface (DR-19). `Capabilities().Models` is
-  the source's discovered model list (§8.1).
-- `Detect` checks PATH, then the documented per-user install location: `harness_missing`, `harness_incompatible`,
-  `harness_unreadable`. A harness runs non-interactively under a written permission policy (`permission_blocked`,
-  never a wait). A session resumes only in its own directory (`session_directory_mismatch`).
-- API channel: streams `data:` lines when allowed (each chunk resets the silence limit); sends and carries the
-  provider's documented reasoning fields; a cut reply → `answer_truncated`. File tools: line-window read, search,
-  single exact-match edit, the profile's syntax check after each edit.
-- **Provider data** `adapters/providers/<provider>.json` (embedded, fail-closed): `id`, `adapter`, `baseUrl` (https),
-  `models` (fallback list when discovery has none), `reasoning {request, carry}`, `errors [{status, code, class}]`,
-  `balance {path, field, currency}`, `keyEnv` (the API key's usual variable name), and for a harness `cli {binary, flags, loginEnv, limitText}`. A new compatible API
-  or known harness is one file and one row (DR-3); each value cites a §17 fact or the issue that measured it.
-- **Lean run** (O13): the adapter cuts the harness's injected context (default system prompt, instruction files, unused
-  tools, codebase indexing) to what the role needs, keeps a default only when measured to help, records tokens and cost.
-- Skeleton: `opencode` 2.0 (L3, O13). M-Usable (§13): `cursor` first, then `claude-code`, `codex` and `gemini` (O12),
-  and `openai-chat` with one provider data file per API provider.
+- Two kinds behind one interface (O14). **Model API**: aiwe's own lean agent loop calls the provider's HTTP API; the tools read, write, edit, list and shell run
+  locally, confined to the clone (O2). **Agent runtime**: the provider's own agent runs as a process in the run clone, only when no raw model API exists. Each uses only the provider's official interface (DR-19).
+- One vocabulary across providers and the whole system: `RunRequest` = role, task, tool permissions, model; `RunReport` = served model, usage (prompt, cached,
+  completion, reasoning tokens), cost, quota, outcome; unmeasured is `unknown`, never `0` (DR-13). The stable prefix (role prompt, tool definitions) comes first and never changes within a run, so the prompt cache hits.
+- `Detect` checks PATH, then the documented per-user install location: `harness_missing`, `harness_incompatible`, `harness_unreadable`. A runtime runs
+  non-interactively under a written permission policy (`permission_blocked`, never a wait). A session resumes only in its own directory (`session_directory_mismatch`).
+- Model API: streams `data:` lines when allowed (each chunk resets the silence limit); sends and carries the provider's documented reasoning fields; a cut reply →
+  `answer_truncated`. Edit is single exact-match, then the profile's syntax check. `Capabilities().Models` is the source's discovered model list (§8.1).
+- **Provider data** `adapters/providers/<provider>.json` (embedded, fail-closed): `id`, `adapter`, `baseUrl` (https), `models` (fallback list when discovery has none),
+  `reasoning {request, carry}`, `errors [{status, code, class}]`, `balance {path, field, currency}`, `keyEnv` (the API key's usual variable name), and for a runtime
+  `cli {binary, flags, loginEnv, limitText}`. A new compatible API or known runtime is one file and one row (DR-3); each value cites a §17 fact or the issue that measured it.
+- **Lean run** (O13, O14): a runtime gets a run-owned `HOME`/`USERPROFILE` and config directory (Cursor: `CURSOR_CONFIG_DIR`), so no rules, `AGENTS.md`, `CLAUDE.md` or skills load; injected context is cut to what the role needs.
+- **OpenCode Go** (skeleton, O14): `POST https://opencode.ai/zen/go/v1/chat/completions` (OpenAI format: deepseek, kimi, glm; `/messages`, `/responses` later);
+  `Authorization: Bearer` from `OPENCODE_API_KEY`, read by name at run time; `x-opencode-session: <run id>` and `User-Agent` required. Only `/zen/go/v1` (Go quota), never `/zen/v1` (credit).
+  Quota: `GET /zen/go/v1/usage` (rolling, weekly, monthly percent and reset; undocumented, unreadable → `unknown`). The reply names the served model and tokens, no cost: cost comes from a pinned price table. Default model `deepseek-v4.1-flash`.
+- Then model APIs DeepSeek, Fireworks, Gemini; agent runtime `cursor` via its CLI (M-Usable, §13), then `claude-code`, `codex`, `gemini` (O12). Rejected (O14): Cursor SDK Bridge, Cloud Agents API, the opencode CLI.
 ## 11. Quality system applied to managed projects
 Mechanical: stack detection, gate derivation and base proof (§7.1); intake and issue parse (§8.4); tests red on base
 before code for every behaviour unit (§7.3 step 5); unit verify once per key (§7.8); scope check (DR-9); payload scan before text leaves the
@@ -756,10 +755,10 @@ Changed); CI never commits to `main`. Provenance: one attestation, verified with
 ## 13. Roadmap
 Each milestone has one goal issue; the tracker holds the units as its sub-issues (L1).
 - **M-Skeleton**: CI runs on `main`, and `aiwe work --repo . --unit N` takes one aiwe issue to a merged pull request
-  with zero owner actions, running on pinned models; this is the self-hosting point (O1, DR-23).
+  with zero owner actions, running on pinned models over the OpenCode Go model API (O14); this is the self-hosting point (O1, DR-23).
 - **M-Usable**: the MCP server, the work session and self-update (O10), concurrent sessions (O11) and model choice
-  (O9) first; sources with fallback and quota reaction; the cursor, claude-code, codex and gemini CLI adapters (O12,
-  O13) and the API adapter with its agent loop (O2); `aiwe plan`; unit validation; core D-checks; the
+  (O9) first; sources with fallback and quota reaction; the DeepSeek, Fireworks and Gemini model APIs, then the cursor, claude-code,
+  codex and gemini agent runtimes (O12, O14); `aiwe plan`; unit validation; core D-checks; the
   security-reviewer; a sandbox-repository end-to-end run; the repository turns public and `v0.1.0` ships (L9).
 - **M-Tracking**: `aiwe issue` and `aiwe report` across repositories (O8).
 - **M-Trust**: `aiwe metrics` M1–M5, invariance, escaped defects, mutation, the debugger, stack profiles beyond Go and
@@ -794,7 +793,7 @@ Each decision keeps its id.
 | Id | Decision | Status |
 |---|---|---|
 | O1 | Walking skeleton first: about 12 units to `aiwe work` on aiwe's own repository; hardening findings are frozen until aiwe works them (owner, 2026-10-12). | valid |
-| O2 | aiwe keeps its own API agent loop for API-key sources, after the skeleton (owner, 2026-10-12). | valid |
+| O2 | aiwe keeps its own API agent loop for API-key sources, after the skeleton (owner, 2026-10-12). | valid; the loop enters the skeleton (O14) |
 | O3 | Routing is an ordered (source, model) fallback list per role; percentage shares are deferred (owner, 2026-10-12). | valid; the list is the session assignment of O9 |
 | O4 | Operation units are deferred (§15) (owner, 2026-10-12). | valid |
 | O5 | The issue format is the global issue standard, English variant (§8.4); no checkboxes, status labels or comments; large outcomes are native sub-issues; commits carry `Refs`/`Closes` and an effect line (owner, 2026-10-12). | valid |
@@ -805,10 +804,11 @@ Each decision keeps its id.
 | O10 | The primary interface is an MCP server started by the user's harness session, with a detached work session and self-update (§6.3); placed at the start of M-Usable (owner, 2026-10-12). | valid |
 | O11 | Many concurrent sessions work without conflict and without a daemon (§6.6); placed in M-Usable with O10 (owner, 2026-10-12). | valid |
 | O12 | The Codex and Gemini CLI adapters come after self-hosting, in M-Usable (owner, 2026-10-12, #209). | valid |
-| O13 | The skeleton harness is opencode 2.0 (the owner's OpenCode Go subscription); Cursor is the first M-Usable adapter and Claude Code a later one. Any harness may host the lead session; nothing in aiwe (MCP server, CLI, docs, `AGENTS.md`) depends on one host. Every agent run is lean (§10.2) (owner, 2026-10-12, #245). | valid |
+| O13 | The skeleton harness is opencode 2.0 (the owner's OpenCode Go subscription); Cursor is the first M-Usable adapter and Claude Code a later one. Any harness may host the lead session; nothing in aiwe (MCP server, CLI, docs, `AGENTS.md`) depends on one host. Every agent run is lean (§10.2) (owner, 2026-10-12, #245). | host neutrality and lean run valid; the skeleton harness is replaced by O14 |
+| O14 | One provider interface with two kinds: model API (aiwe's lean agent loop over the provider's HTTP API, tools local and confined to the clone) and agent runtime (the provider's own agent, only when no raw model API exists); one request and result vocabulary everywhere. Model APIs: OpenCode Go first (skeleton), then DeepSeek, Fireworks, Gemini; agent runtime: Cursor via its CLI, isolated. Rejected: Cursor SDK Bridge, Cloud Agents API, the opencode CLI. Facts and the cache rule: §10.2 (owner, 2026-10-12, #32). | valid |
 | L1 | This file holds product, architecture and contracts, ≤ 900 lines; the delivery plan and the unknowns live in tracker issues; §17 keeps only cited facts (lead, 2026-10-12). | valid |
 | L2 | Design rules consolidate to about 22 with one enforcement each; `repo/rules` stops parsing tables of this file (lead, 2026-10-12). | valid |
-| L3 | The skeleton binds one tracker (GitHub over HTTPS with the standard library; gh is optional, §10.1) and one harness (opencode 2.0 in its leanest documented headless mode, O13), driven through the CLI; the MCP server opens M-Usable (O10) (lead, 2026-10-12). | valid |
+| L3 | The skeleton binds one tracker (GitHub over HTTPS with the standard library; gh is optional, §10.1) and one provider (the OpenCode Go model API client, O14), driven through the CLI; the MCP server opens M-Usable (O10) (lead, 2026-10-12). | valid |
 | L4 | `tool` lines move to `tools/go.mod`, run with `go tool -modfile=tools/go.mod` (lead, 2026-10-12). | valid |
 | L5 | Hand-worked units until self-hosting follow risk tiers: test-author only for risky work; one auditor run per batch; risky units reviewed separately (lead, 2026-10-12). | valid |
 | L6 | The owner key and the keyed hash on owned-directory records and markers are removed; removal keeps the root, link, marker and mount-point checks. Reason: a forged marker can only remove aiwe's own temp directory, and a run below `os-sandbox` could read the key anyway (lead, 2026-10-12). | valid |
