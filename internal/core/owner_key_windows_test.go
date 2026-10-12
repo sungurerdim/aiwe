@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -15,32 +16,34 @@ import (
 // ownerKeyTestChildEnv names the case the re-executed test binary runs; it is empty in the parent.
 const ownerKeyTestChildEnv = "OWNER_KEY_TEST_UNREADABLE_SD"
 
-// ownerKeyTestUnreadable maps each case to the check it runs on a security descriptor part that
-// cannot be read. A nil descriptor or entry crashes the process outside Go's recover, so each
-// case runs in a child process.
-var ownerKeyTestUnreadable = map[string]func() error{
-	"nil descriptor": func() error { return checkOwnerOnlySD(`C:\state`, true, nil, nil) },
-	"nil entry": func() error {
-		trusted, err := ownerOnlySIDs()
-		if err != nil {
-			return fmt.Errorf("trusted SIDs: %w", err)
-		}
-		return checkOwnerOnlyACE(`C:\state\owner.key`, false, (*windows.ACCESS_ALLOWED_ACE)(nil), trusted)
-	},
+// ownerKeyTestUnreadable maps each case to the check it runs, for the state root dir, on a
+// security descriptor part that cannot be read. A nil descriptor or entry crashes the process
+// outside Go's recover, so each case runs in a child process.
+func ownerKeyTestUnreadable(dir string) map[string]func() error {
+	return map[string]func() error{
+		"nil descriptor": func() error { return checkOwnerOnlySD(dir, true, nil, nil) },
+		"nil entry": func() error {
+			trusted, err := ownerOnlySIDs()
+			if err != nil {
+				return fmt.Errorf("trusted SIDs: %w", err)
+			}
+			return checkOwnerOnlyACE(filepath.Join(dir, ownerKeyFile), false, (*windows.ACCESS_ALLOWED_ACE)(nil), trusted)
+		},
+	}
 }
 
 // TestOwnerKeyUnreadableSD guards against a nil dereference on a security descriptor, or one of
 // its entries, that cannot be read: the owner-only check must refuse it with ErrRootUnsafe.
 func TestOwnerKeyUnreadableSD(t *testing.T) {
 	if name := os.Getenv(ownerKeyTestChildEnv); name != "" {
-		err := ownerKeyTestUnreadable[name]()
+		err := ownerKeyTestUnreadable(filepath.Join(os.TempDir(), "owner-key-test-state"))[name]() // os.Exit skips t.TempDir cleanup
 		if !errors.Is(err, ErrRootUnsafe) {
 			fmt.Fprintf(os.Stderr, "child %q: err = %v; want ErrRootUnsafe\n", name, err)
 			os.Exit(3)
 		}
 		os.Exit(0)
 	}
-	for name := range ownerKeyTestUnreadable {
+	for name := range ownerKeyTestUnreadable(t.TempDir()) {
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
