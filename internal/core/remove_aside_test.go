@@ -11,21 +11,21 @@ import (
 	"testing"
 )
 
-// rmdirTestKinds are the entries a test puts under an owned name in the moment between the last
+// rmdirTestKinds returns the entries a test puts under an owned name in the moment between the last
 // handle check and the directory-only removal: an unowned file, an unowned empty dir, or nothing.
-var rmdirTestKinds = []string{"file", "empty dir", "nothing"}
+func rmdirTestKinds() []string { return []string{"file", "empty dir", "nothing"} }
 
 // rmdirSharingViolation is ERROR_SHARING_VIOLATION: on Windows the removal holds the owned dir
 // open without delete sharing, so the system refuses to move it.
 const rmdirSharingViolation = syscall.Errno(32)
 
-// rmdirTestSwap arms rmdirCheckedHook for one removal of name under temp: the owned dir moves to
-// moved, then an entry of kind takes its name. It returns a func that reports whether the hook ran
-// and whether the system refused the move (Windows only), so no swap took place.
-func rmdirTestSwap(t *testing.T, temp, name, moved, kind string) func() (bool, bool) {
+// rmdirTestSwap arms the rmdirChecked hook of o for one removal of name under temp: the owned dir
+// moves to moved, then an entry of kind takes its name. It returns a func that reports whether the
+// hook ran and whether the system refused the move (Windows only), so no swap took place.
+func rmdirTestSwap(t *testing.T, o *Owner, temp, name, moved, kind string) func() (bool, bool) {
 	t.Helper()
 	swapped, refused := false, false
-	rmdirCheckedHook = func(n string) {
+	o.hooks.rmdirChecked = func(n string) {
 		if swapped || n != name {
 			return
 		}
@@ -41,7 +41,6 @@ func rmdirTestSwap(t *testing.T, temp, name, moved, kind string) func() (bool, b
 			swapTestForeign(t, filepath.Join(temp, name), kind == "empty dir")
 		}
 	}
-	t.Cleanup(func() { rmdirCheckedHook = nil })
 	return func() (bool, bool) { return swapped, refused }
 }
 
@@ -89,21 +88,21 @@ func rmdirTestCheckKept(t *testing.T, temp, name, moved, kind string) {
 
 // TestRemoveOwnedSwapBeforeRmdir catches a last removal step that deletes whatever its name names
 // after its handle check: a file put under the name is deleted, or the call reports success while
-// the owned dir stays elsewhere (#144). The swap runs in rmdirCheckedHook, after the check of the
+// the owned dir stays elsewhere (#144). The swap runs in hooks.rmdirChecked, after the check of the
 // held handle and before the directory-only removal. Each kind must fail with ErrNotOwned.
 func TestRemoveOwnedSwapBeforeRmdir(t *testing.T) {
-	for _, kind := range rmdirTestKinds {
+	for _, kind := range rmdirTestKinds() {
 		t.Run(kind, func(t *testing.T) {
 			r := removeTestRoots(t, t.TempDir())
 			o := removeTestOpen(t, r)
 			d := removeTestCreate(t, o, TempRoot)
 			removeTestWrite(t, filepath.Join(d.Path(), "work.txt"), "owned work")
 			name, moved := filepath.Base(d.Path()), filepath.Join(o.temp, "moved-away")
-			ran := rmdirTestSwap(t, o.temp, name, moved, kind)
+			ran := rmdirTestSwap(t, o, o.temp, name, moved, kind)
 
 			err := o.RemoveOwned(context.Background(), d)
 			if ok, refused := ran(); !ok {
-				t.Fatalf("rmdirCheckedHook never ran for %q", name)
+				t.Fatalf("hooks.rmdirChecked never ran for %q", name)
 			} else if refused {
 				rmdirTestCheckRemoved(t, err, o.temp)
 				return
@@ -119,18 +118,19 @@ func TestRemoveOwnedSwapBeforeRmdir(t *testing.T) {
 // TestSweepSwapBeforeRmdir is TestRemoveOwnedSwapBeforeRmdir through Sweep: the swapped name of a
 // dead owner must count as Refused with not_owned, never as Removed.
 func TestSweepSwapBeforeRmdir(t *testing.T) {
-	for _, kind := range rmdirTestKinds {
+	for _, kind := range rmdirTestKinds() {
 		t.Run(kind, func(t *testing.T) {
 			r := sweepTestRoots(t)
 			dead := sweepTestOpen(t, r, sweepTestDeadProcess(t))
 			d := sweepTestCreate(t, dead, TempRoot)
 			removeTestWrite(t, filepath.Join(d.Path(), "work.txt"), "owned work")
 			name, moved := filepath.Base(d.Path()), filepath.Join(dead.temp, "moved-away")
-			ran := rmdirTestSwap(t, dead.temp, name, moved, kind)
+			sw := sweepTestOpen(t, r, sweepTestSelf(t))
+			ran := rmdirTestSwap(t, sw, dead.temp, name, moved, kind)
 
-			rep, err := sweepTestOpen(t, r, sweepTestSelf(t)).Sweep(context.Background())
+			rep, err := sw.Sweep(context.Background())
 			if ok, refused := ran(); !ok {
-				t.Fatalf("rmdirCheckedHook never ran for %q", name)
+				t.Fatalf("hooks.rmdirChecked never ran for %q", name)
 			} else if refused {
 				rmdirTestCheckRemoved(t, err, dead.temp)
 				if rep.Removed != 1 || rep.Refused != 0 {
@@ -153,7 +153,7 @@ func TestSweepSwapBeforeRmdir(t *testing.T) {
 // ownership check: it goes through the same directory-only removal, so a file put under its name
 // is never deleted and a swapped name counts as Refused with not_owned (#144).
 func TestSweepEmptyDirSwapBeforeRmdir(t *testing.T) {
-	for _, kind := range rmdirTestKinds {
+	for _, kind := range rmdirTestKinds() {
 		t.Run(kind, func(t *testing.T) {
 			r := sweepTestRoots(t)
 			dead := sweepTestOpen(t, r, sweepTestDeadProcess(t))
@@ -163,11 +163,12 @@ func TestSweepEmptyDirSwapBeforeRmdir(t *testing.T) {
 				t.Fatalf("remove the marker of %s: %v", d.Path(), err)
 			}
 			name, moved := filepath.Base(d.Path()), filepath.Join(dead.temp, "moved-away")
-			ran := rmdirTestSwap(t, dead.temp, name, moved, kind)
+			sw := sweepTestOpen(t, r, sweepTestSelf(t))
+			ran := rmdirTestSwap(t, sw, dead.temp, name, moved, kind)
 
-			rep, err := sweepTestOpen(t, r, sweepTestSelf(t)).Sweep(context.Background())
+			rep, err := sw.Sweep(context.Background())
 			if ok, refused := ran(); !ok {
-				t.Fatalf("rmdirCheckedHook never ran for %q", name)
+				t.Fatalf("hooks.rmdirChecked never ran for %q", name)
 			} else if refused {
 				rmdirTestCheckRemoved(t, err, dead.temp)
 				if rep.Removed != 1 || rep.Refused != 0 {
@@ -189,7 +190,7 @@ func TestSweepEmptyDirSwapBeforeRmdir(t *testing.T) {
 // TestSweepEmptyDirSwapReturnsNotOwned catches a sweep of an empty unowned dir that drops the
 // error of a swap after its check: Sweep must return the not_owned error of the swapped name, and
 // errors.Is must find ErrNotOwned in it, so the wrapping (%w) is fixed (#144). The swap runs in
-// removeEmptyCheckedHook: the empty dir moves away and an unowned file takes its name.
+// hooks.emptyChecked: the empty dir moves away and an unowned file takes its name.
 func TestSweepEmptyDirSwapReturnsNotOwned(t *testing.T) {
 	r := sweepTestRoots(t)
 	dead := sweepTestOpen(t, r, sweepTestDeadProcess(t))
@@ -199,7 +200,8 @@ func TestSweepEmptyDirSwapReturnsNotOwned(t *testing.T) {
 		t.Fatalf("remove the marker of %s: %v", d.Path(), err)
 	}
 	swapped := false
-	removeEmptyCheckedHook = func(name string) {
+	sw := sweepTestOpen(t, r, sweepTestSelf(t))
+	sw.hooks.emptyChecked = func(name string) {
 		if swapped || name != filepath.Base(d.Path()) {
 			return
 		}
@@ -210,11 +212,10 @@ func TestSweepEmptyDirSwapReturnsNotOwned(t *testing.T) {
 		}
 		swapTestForeign(t, d.Path(), false)
 	}
-	t.Cleanup(func() { removeEmptyCheckedHook = nil })
 
-	rep, err := sweepTestOpen(t, r, sweepTestSelf(t)).Sweep(context.Background())
+	rep, err := sw.Sweep(context.Background())
 	if !swapped {
-		t.Fatalf("removeEmptyCheckedHook never ran for %q", filepath.Base(d.Path()))
+		t.Fatalf("hooks.emptyChecked never ran for %q", filepath.Base(d.Path()))
 	}
 	if !errors.Is(err, ErrNotOwned) {
 		t.Errorf("Sweep after the swap = %v, want an error that wraps %v", err, ErrNotOwned)
@@ -225,4 +226,25 @@ func TestSweepEmptyDirSwapReturnsNotOwned(t *testing.T) {
 	if !removeTestExists(t, d.Path()) {
 		t.Errorf("unowned file %q put under the empty dir name was deleted by the sweep", d.Path())
 	}
+}
+
+// swapTestLstat returns the file info of name under root, read without following it through an
+// os.Root, as the ownership check reads the identity it approves. A path-based os.Lstat is no
+// stand-in: on Windows it reads the file identity later, from whatever the path names by then.
+func swapTestLstat(t *testing.T, root, name string) os.FileInfo {
+	t.Helper()
+	rt, err := os.OpenRoot(root)
+	if err != nil {
+		t.Fatalf("open root %s: %v", root, err)
+	}
+	defer func() {
+		if err := rt.Close(); err != nil {
+			t.Errorf("close root %s: %v", root, err)
+		}
+	}()
+	fi, err := rt.Lstat(name)
+	if err != nil {
+		t.Fatalf("lstat %s under %s: %v", name, root, err)
+	}
+	return fi
 }

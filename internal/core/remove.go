@@ -55,6 +55,7 @@ type Owner struct {
 	state, temp, cache string
 	key                []byte
 	self               ProcessID
+	hooks              removalHooks
 }
 
 // namedPath is a real path with the name used in errors.
@@ -271,15 +272,9 @@ func (o *Owner) RemoveOwned(ctx context.Context, d OwnedDir) error {
 	if err != nil {
 		return err
 	}
-	if ownedCheckedHook != nil {
-		ownedCheckedHook(e.name)
-	}
-	return removeTree(ctx, e.root, e.name, e.fi)
+	hookAt(o.hooks.ownedChecked, e.name)
+	return o.hooks.removeTree(ctx, e.root, e.name, e.fi)
 }
-
-// ownedCheckedHook, when set, runs right after the ownership check of a directory and before its
-// removal starts; a test uses it to swap the name at that point.
-var ownedCheckedHook func(name string)
 
 // ownedEntry is a directory the ownership check approved: its root path, its name, and the file
 // info that names its identity, read through a handle. Removal compares each entry it removes with
@@ -321,7 +316,7 @@ func (o *Owner) checkOwnedContent(rootPath, name string, rec ownedRecord) (fi fs
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrNotOwned, err)
 	}
-	defer func() { err = errors.Join(err, closeChecked("owned root", rt.Close)) }()
+	defer func() { err = errors.Join(err, o.hooks.closeChecked("owned root", rt.Close)) }()
 	fi, err = rt.Lstat(name)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrNotOwned, err)
@@ -329,9 +324,7 @@ func (o *Owner) checkOwnedContent(rootPath, name string, rec ownedRecord) (fi fs
 	if fi.Mode().Type() != fs.ModeDir {
 		return nil, fmt.Errorf("%w: %q is not a directory (a link is never followed)", ErrNotOwned, name)
 	}
-	if ownedMarkerHook != nil {
-		ownedMarkerHook(name)
-	}
+	hookAt(o.hooks.ownedMarker, name)
 	if err := o.checkMarkerOf(rt, rootPath, name, fi, rec); err != nil {
 		return nil, err
 	}
@@ -344,10 +337,6 @@ func (o *Owner) checkOwnedContent(rootPath, name string, rec ownedRecord) (fi fs
 	return fi, nil
 }
 
-// ownedMarkerHook, when set, runs right after the ownership check has read name without following
-// it and before it opens name to read the marker; a test uses it to swap name at that point.
-var ownedMarkerHook func(name string)
-
 // checkMarkerOf opens name under rt once, proves it is the directory fi describes, and checks its
 // marker through that handle; a name swapped in between fails with ErrNotOwned.
 func (o *Owner) checkMarkerOf(rt *os.Root, rootPath, name string, fi fs.FileInfo, rec ownedRecord) (err error) {
@@ -358,7 +347,7 @@ func (o *Owner) checkMarkerOf(rt *os.Root, rootPath, name string, fi fs.FileInfo
 	if err != nil {
 		return err
 	}
-	defer func() { err = errors.Join(err, closeChecked("owned directory", sub.Close)) }()
+	defer func() { err = errors.Join(err, o.hooks.closeChecked("owned directory", sub.Close)) }()
 	d, err := sub.Open(".")
 	if err != nil {
 		return fmt.Errorf("%w: %w", ErrNotOwned, err)
@@ -371,6 +360,13 @@ func (o *Owner) checkMarkerOf(rt *os.Root, rootPath, name string, fi fs.FileInfo
 		return fmt.Errorf("%w: %q was swapped during the ownership check (a link is never followed)", ErrNotOwned, name)
 	}
 	return o.checkMarker(rootPath, sub, filepath.Join(rootPath, name), rec)
+}
+
+// removeEntryTree removes name under sub and everything in it; os.Root never follows a link out of
+// sub. It is the one recursive removal (DR-25), and its callers reach it only for an approved owned
+// directory (emptyOwned).
+func removeEntryTree(sub *os.Root, name string) error {
+	return sub.RemoveAll(name)
 }
 
 // plainName reports whether s is 1 to max letters, digits, '.', '_' or '-', starting with a letter

@@ -20,13 +20,21 @@ type heldDir struct {
 
 // openHeldDir opens name relative to the handle of rt as a directory, without following a link,
 // with delete access and without delete sharing; a name that is not a directory fails. An open
-// handle with delete access, held by anyone, makes it fail. The caller checks the identity.
-func openHeldDir(rt *os.Root, name string) (*heldDir, error) {
+// handle with delete access, held by anyone, makes it fail. The caller checks the identity. A failed
+// close of the parent handle is returned (closeChecked) and the held directory is closed again.
+func (hk removalHooks) openHeldDir(rt *os.Root, name string) (held *heldDir, err error) {
 	parent, err := rt.Open(".")
 	if err != nil {
 		return nil, err
 	}
-	defer parent.Close()
+	defer func() {
+		if cerr := hk.closeChecked("held parent", parent.Close); cerr != nil {
+			if held != nil {
+				cerr = errors.Join(cerr, held.f.Close())
+			}
+			held, err = nil, errors.Join(err, cerr)
+		}
+	}()
 	objName, err := windows.NewNTUnicodeString(name)
 	if err != nil {
 		return nil, err
@@ -43,7 +51,8 @@ func openHeldDir(rt *os.Root, name string) (*heldDir, error) {
 		windows.FILE_DIRECTORY_FILE|windows.FILE_OPEN_REPARSE_POINT|windows.FILE_OPEN_FOR_BACKUP_INTENT|
 			windows.FILE_SYNCHRONOUS_IO_NONALERT, 0, 0)
 	path := filepath.Join(rt.Name(), name)
-	if st, ok := err.(windows.NTStatus); ok {
+	var st windows.NTStatus
+	if errors.As(err, &st) {
 		return nil, &fs.PathError{Op: "open", Path: path, Err: st.Errno()}
 	}
 	if err != nil {

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math"
 	"os"
 	"runtime"
 	"strconv"
@@ -25,6 +26,9 @@ const exactStartID = runtime.GOOS == "linux"
 
 // clockTick is one clock tick of /proc/<pid>/stat.
 const clockTick = time.Second / clockTicks
+
+// maxStartTicks is the largest start tick a time.Duration holds; a larger one would wrap.
+const maxStartTicks = uint64(math.MaxInt64 / clockTick)
 
 // processStart returns the OS start time of pid and whether the process runs (U13). A pid that
 // names no process, or a zombie, is not running; any other failure is an error, which the caller
@@ -54,12 +58,11 @@ func processStart(pid int) (time.Time, bool, error) {
 
 // bootTime reads the boot time from the btime line of /proc/stat.
 func bootTime() (time.Time, error) {
-	f, err := os.Open("/proc/stat")
+	b, err := os.ReadFile("/proc/stat")
 	if err != nil {
 		return time.Time{}, fmt.Errorf("boot time: %w", err)
 	}
-	defer f.Close()
-	sc := bufio.NewScanner(f)
+	sc := bufio.NewScanner(bytes.NewReader(b))
 	for sc.Scan() {
 		if v, ok := strings.CutPrefix(sc.Text(), "btime "); ok {
 			sec, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
@@ -90,7 +93,7 @@ func startID(pid int) (string, bool, error) {
 	if err != nil {
 		return "", false, fmt.Errorf("start identity of process %d: %w", pid, err)
 	}
-	return boot + "/" + strconv.FormatUint(ticks, 10), true, nil
+	return boot + "/" + strconv.FormatInt(ticks, 10), true, nil
 }
 
 // bootID reads the id of the running boot.
@@ -108,7 +111,7 @@ func bootID() (string, error) {
 
 // procStartTicks reads the start time of pid in clock ticks since boot, field 22 of
 // /proc/<pid>/stat. A pid that names no process, or a zombie, is not running.
-func procStartTicks(pid int) (uint64, bool, error) {
+func procStartTicks(pid int) (int64, bool, error) {
 	b, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
 	if errors.Is(err, fs.ErrNotExist) {
 		return 0, false, nil
@@ -120,9 +123,9 @@ func procStartTicks(pid int) (uint64, bool, error) {
 }
 
 // parseProcStat returns the start tick, field 22, of the contents of a /proc/<pid>/stat file, and
-// whether the process runs: a process in state Z or X has exited. Any malformed input is an error,
-// never a start, so the start counts as unknown (fail-closed).
-func parseProcStat(data []byte) (uint64, bool, error) {
+// whether the process runs: a process in state Z or X has exited. Any malformed input, or a tick past
+// maxStartTicks, is an error, never a start, so the start counts as unknown (fail-closed).
+func parseProcStat(data []byte) (int64, bool, error) {
 	f, err := procStatFields(data)
 	if err != nil {
 		return 0, false, err
@@ -134,7 +137,10 @@ func parseProcStat(data []byte) (uint64, bool, error) {
 	if f[0] == "Z" || f[0] == "X" {
 		return 0, false, nil
 	}
-	return ticks, true, nil
+	if ticks > maxStartTicks {
+		return 0, false, fmt.Errorf("malformed stat %q: start tick %d past %d", data, ticks, maxStartTicks)
+	}
+	return int64(ticks), true, nil
 }
 
 // procStatFields returns the fields of a /proc/<pid>/stat file that follow the command name, from

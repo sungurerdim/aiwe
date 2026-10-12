@@ -19,15 +19,16 @@ type heldDir struct {
 }
 
 // openHeldDir opens name under rt as a directory, without following a link; a name that is not a
-// directory fails. The caller checks the identity of the handle.
-func openHeldDir(rt *os.Root, name string) (*heldDir, error) {
+// directory fails. The caller checks the identity of the handle. When the open fails, a failed close
+// of the parent handle is returned too (closeChecked).
+func (hk removalHooks) openHeldDir(rt *os.Root, name string) (*heldDir, error) {
 	parent, err := rt.Open(".")
 	if err != nil {
 		return nil, err
 	}
 	fd, err := unix.Openat(int(parent.Fd()), name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
-		return nil, errors.Join(&fs.PathError{Op: "openat", Path: name, Err: err}, parent.Close())
+		return nil, errors.Join(&fs.PathError{Op: "openat", Path: name, Err: err}, hk.closeChecked("held parent", parent.Close))
 	}
 	return &heldDir{parent: parent, f: os.NewFile(uintptr(fd), name), name: name}, nil
 }
