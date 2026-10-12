@@ -37,7 +37,7 @@ func WriteResult(w io.Writer, f Format, r Result[any]) error {
 			return fmt.Errorf("encode result envelope: %w", err)
 		}
 	case FormatText:
-		fmt.Fprintf(&buf, "%s\n", textEscape(textLine(r)))
+		fmt.Fprintf(&buf, "%s\n", TextEscape(textLine(r)))
 	default:
 		return fmt.Errorf("unknown output format %q: want %q or %q", f, FormatText, FormatJSON)
 	}
@@ -57,12 +57,12 @@ func textLine(r Result[any]) string {
 	return prefix + r.Detail
 }
 
-// textEscape writes each terminal control in s as a visible escape, so a path or value from the file
-// system or the environment cannot drive the terminal (#200). It escapes the logStrip set (C0, DEL,
-// C1) except newline and tab, and the hidden runes of hiddenRune. Each invalid UTF-8 byte is written
-// as \xNN. Every other rune, in any script, passes unchanged. A refusal's fields hold no newline:
-// Error escapes them.
-func textEscape(s string) string {
+// TextEscape writes each terminal control in s as a visible escape, so a path or value from the file
+// system or the environment, or a gate step's output, cannot drive the terminal (#200, #223). It
+// escapes the logStrip set (C0, DEL, C1) except newline and tab, and the hidden runes of hiddenRune.
+// Each invalid UTF-8 byte is written as \xNN. Every other rune, in any script, passes unchanged. An
+// error's detail holds no newline: Error and ErrorResult escape them with lineEscape.
+func TextEscape(s string) string {
 	var b strings.Builder
 	for i := 0; i < len(s); {
 		r, n := utf8.DecodeRuneInString(s[i:])

@@ -143,6 +143,10 @@ func (r *Runner) runStep(ctx context.Context, step GateStep, dir string, proof *
 	var out bytes.Buffer
 	spec := core.ChildSpec{Dir: dir, Env: roots.env(), Stdout: io.MultiWriter(&out, stream), Stderr: stream}
 	code, failed := execStep(ctx, step, spec)
+	if err := stream.Close(); err != nil && failed == nil {
+		report := unmeasured(step.ID, err.Error())
+		failed = &report
+	}
 	if failed != nil {
 		return roots.close(ctx, *failed)
 	}

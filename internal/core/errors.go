@@ -23,9 +23,14 @@ func (e *Error) Error() string {
 	if next == "" {
 		next = outcomeRow(e.Outcome).Next
 	}
-	field := strings.NewReplacer("\n", `\x0a`, "\r", `\x0d`, "\t", `\x09`)
-	return fmt.Sprintf("%s: expected %s; found %s; next: %s", e.Outcome, field.Replace(e.Expected),
-		field.Replace(e.Found), field.Replace(next))
+	return fmt.Sprintf("%s: expected %s; found %s; next: %s", e.Outcome, lineEscape(e.Expected),
+		lineEscape(e.Found), lineEscape(next))
+}
+
+// lineEscape writes each LF, CR and tab in s as \xNN, so s stays on one line and cannot fake a
+// second result line (SPEC §5.10, #200).
+func lineEscape(s string) string {
+	return strings.NewReplacer("\n", `\x0a`, "\r", `\x0d`, "\t", `\x09`).Replace(s)
 }
 
 // Unwrap returns the cause, so errors.Is and errors.As see through e.
