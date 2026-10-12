@@ -154,5 +154,5 @@ func outcomeFirst(err error) string {
 		return msg
 	}
 	prefix := string(e.Outcome) + ": "
-	return prefix + msg[:i] + strings.TrimPrefix(inner, prefix)
+	return prefix + msg[:i] + strings.TrimPrefix(inner, prefix) + msg[i+len(inner):]
 }
