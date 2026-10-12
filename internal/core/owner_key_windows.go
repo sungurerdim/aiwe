@@ -30,7 +30,7 @@ const ownerOnlyMask = windows.FILE_READ_DATA | windows.FILE_WRITE_DATA | windows
 // the owner key are checked on their open handles (checkOwnerOnlyFile).
 func checkOwnerOnly(p string) error {
 	sd, err := windows.GetNamedSecurityInfo(p, windows.SE_FILE_OBJECT, ownerOnlyInfo)
-	return checkOwnerOnlySD(p, sd, err)
+	return checkOwnerOnlySD(p, true, sd, err)
 }
 
 // ownerKeyOpenFlag opens the owner key; an open on Windows does not wait for a writer.
@@ -41,21 +41,22 @@ const ownerKeyOpenFlag = os.O_RDONLY
 // Only a plain file or a directory passes.
 func checkOwnerOnlyFile(f *os.File, p string) error {
 	fi, err := f.Stat()
-	if err == nil && fi.Mode().Type()&^fs.ModeDir != 0 {
-		err = fmt.Errorf("a %v is not a plain file or directory", fi.Mode().Type())
-	}
 	if err != nil {
 		return fmt.Errorf("%w: owner-only check of %q: %v", ErrRootUnsafe, p, err)
 	}
+	if t := fi.Mode().Type(); t&^fs.ModeDir != 0 {
+		return fmt.Errorf("%w: owner-only check of %q: a %v is not a plain file or directory", ErrRootUnsafe, p, t)
+	}
 	sd, err := windows.GetSecurityInfo(windows.Handle(f.Fd()), windows.SE_FILE_OBJECT, ownerOnlyInfo)
-	return checkOwnerOnlySD(p, sd, err)
+	return checkOwnerOnlySD(p, fi.IsDir(), sd, err)
 }
 
 // ownerOnlyInfo is the part of a security descriptor that the owner-only check reads.
 const ownerOnlyInfo = windows.OWNER_SECURITY_INFORMATION | windows.DACL_SECURITY_INFORMATION
 
-// checkOwnerOnlySD checks sd, the security descriptor of p read with error err, for checkOwnerOnly.
-func checkOwnerOnlySD(p string, sd *windows.SECURITY_DESCRIPTOR, err error) error {
+// checkOwnerOnlySD checks sd, the security descriptor of p read with error err, for checkOwnerOnly;
+// dir tells whether p is a directory, which a refusal never names for delete (ownerOnlyNext).
+func checkOwnerOnlySD(p string, dir bool, sd *windows.SECURITY_DESCRIPTOR, err error) error {
 	if err != nil {
 		return fmt.Errorf("%w: owner-only check of %q: %v", ErrRootUnsafe, p, err)
 	}
@@ -65,18 +66,19 @@ func checkOwnerOnlySD(p string, sd *windows.SECURITY_DESCRIPTOR, err error) erro
 	}
 	owner, _, err := sd.Owner()
 	if err != nil || owner == nil || !sidIn(owner, trusted) {
-		return fmt.Errorf("%w: %q is not owned by the current user, SYSTEM or Administrators", ErrRootUnsafe, p)
+		return fmt.Errorf("%w: %q is not owned by the current user, SYSTEM or Administrators%s", ErrRootUnsafe, p,
+			ownerOnlyNext(p, dir, true))
 	}
 	dacl, _, err := sd.DACL()
 	if err != nil || dacl == nil {
-		return fmt.Errorf("%w: %q has no DACL, so everyone can read and write it", ErrRootUnsafe, p)
+		return fmt.Errorf("%w: %q has no DACL, so everyone can read and write it%s", ErrRootUnsafe, p, ownerOnlyNext(p, dir, false))
 	}
 	for i := uint32(0); i < uint32(dacl.AceCount); i++ {
 		var ace *windows.ACCESS_ALLOWED_ACE
 		if err := windows.GetAce(dacl, i, &ace); err != nil {
 			return fmt.Errorf("%w: owner-only check of %q: ACE %d: %v", ErrRootUnsafe, p, i, err)
 		}
-		if err := checkOwnerOnlyACE(p, ace, trusted); err != nil {
+		if err := checkOwnerOnlyACE(p, dir, ace, trusted); err != nil {
 			return err
 		}
 	}
@@ -85,7 +87,7 @@ func checkOwnerOnlySD(p string, sd *windows.SECURITY_DESCRIPTOR, err error) erro
 
 // checkOwnerOnlyACE refuses ace of p when it is neither an allow nor a deny ACE, or when it allows
 // a principal outside trusted a right of ownerOnlyMask.
-func checkOwnerOnlyACE(p string, ace *windows.ACCESS_ALLOWED_ACE, trusted []*windows.SID) error {
+func checkOwnerOnlyACE(p string, dir bool, ace *windows.ACCESS_ALLOWED_ACE, trusted []*windows.SID) error {
 	switch ace.Header.AceType {
 	case windows.ACCESS_DENIED_ACE_TYPE:
 		return nil
@@ -98,7 +100,7 @@ func checkOwnerOnlyACE(p string, ace *windows.ACCESS_ALLOWED_ACE, trusted []*win
 		return nil
 	}
 	return fmt.Errorf("%w: %q grants %s access mask %#x; only the current user, SYSTEM and "+
-		"Administrators may read or write it", ErrRootUnsafe, p, sid, uint32(ace.Mask))
+		"Administrators may read or write it%s", ErrRootUnsafe, p, sid, uint32(ace.Mask), ownerOnlyNext(p, dir, false))
 }
 
 // mkdirOwnerOnly makes the state, temp or cache root p, and any missing parent, when p is missing

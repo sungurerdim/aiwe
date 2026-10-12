@@ -408,12 +408,18 @@ ledger holds an `owned_dir` record for it, the marker file `.owner` matches that
 symlink leaves that root. The state root and every user directory stay outside (Q14). At start, a
 temp or cache root (env overrides included) that is, or contains, the user's home, the state root, a
 canonical repository or a file-system root, that is a symlink or junction, or that is not
-owner-only, is refused (`root_unsafe`), the same as the state root. The `owned_dir` record and
-the `.owner` marker carry an HMAC-SHA256 under a key in `<state>/owner.key`. This key is the
-engine's local state-ownership key, not a provider credential (DR-43). The key never enters a run
-environment (DR-35), so a run cannot forge a marker from what it is given. Below `os-sandbox` a run
-can still read the state root itself (§6.7). Benefit: a user directory cannot reach removal, by
-type and at run time. Enforced: DR-25.
+owner-only, is refused (`root_unsafe`), the same as the state root. A state, temp or cache root, or
+the owner key, that another user can read or write or owns is refused (`root_unsafe`) with the fix
+as its next action. A directory is never named for delete, as it may be the home, a repository or
+`/`: an open one names removing the other users' access, and a foreign one names giving its
+ownership to the user that runs aiwe, or setting the root to a directory that user owns. A file,
+such as the owner key, names delete first, so the next run makes it owner-only: a key another user
+could read stays exposed after the access is removed. The `owned_dir` record and the `.owner` marker
+carry an HMAC-SHA256 under a key in `<state>/owner.key`. This key is the engine's local
+state-ownership key, not a provider credential (DR-43). The key never enters a run environment
+(DR-35), so a run cannot forge a marker from what it is given. Below `os-sandbox` a run can still
+read the state root itself (§6.7). Benefit: a user directory cannot reach removal, by type and at
+run time. Enforced: DR-25.
 
 ### 5.16 Check key
 Where: `gates/key.go`.
@@ -813,7 +819,7 @@ A **red signature** = step id + sorted failing test ids (when the runner reports
 | A unit commit is marked breaking (`!` or `BREAKING CHANGE`) | `breaking_change` | Not integrated; label `question`; owner brief; the owner answers with the terminal-only `aiwe unit approve-breaking` (§12.3). |
 | An approval expired, or the before-state changed since approval | `approval_expired`, `before_state_changed` | Not applied; a new plan check and approval (§7.9). |
 | A terminal-only command runs without a terminal | `not_a_terminal` | Refused (§5.7). |
-| A temp or cache root contains home, state, a canonical repository or a file-system root, is a symlink or junction, or is not owner-only | `root_unsafe` | Exit 1; nothing is removed (§5.15). |
+| A temp or cache root contains home, state, a canonical repository or a file-system root, is a symlink or junction, or is not owner-only; the state root or the owner key is open to another user or owned by one | `root_unsafe` | Exit 1; nothing is removed (§5.15). The detail names the fix; a directory is never named for delete. An open root: remove the other users' access; a foreign root: give its ownership to the user that runs aiwe, or set the root to a directory that user owns. An open or foreign owner key: delete it so the next run makes it owner-only (§5.10). |
 | A directory's `owned_dir` record or `.owner` marker does not prove that aiwe made it | `not_owned` | Refused; the directory stays (§5.15). |
 | A file in an owned directory stays locked after the removal retries | `residue_locked` | The directory stays; the next sweep retries (§6.4). |
 | Text is not valid UTF-8 | `invalid_utf8` | Refused; the detail names the first invalid byte (§5.14). |

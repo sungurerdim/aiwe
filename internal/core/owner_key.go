@@ -125,8 +125,7 @@ func openOwnerOnlyRoot(state string) (*os.Root, error) {
 // synced to a file of its own, then hard-linked to the key's name, which fails when it exists. A reader
 // never sees the key without its bytes; of two racing processes, the loser reads the winner's key.
 func createOwnerKey(rt *os.Root) error {
-	k := make([]byte, ownerKeySize)
-	tag := make([]byte, dirSuffixBytes)
+	k, tag := make([]byte, ownerKeySize), make([]byte, dirSuffixBytes)
 	if _, err := rand.Read(k); err != nil {
 		return fmt.Errorf("owner key: %w", err)
 	}
@@ -198,9 +197,7 @@ func (o *Owner) appendRecord(rec ownedRecord) error {
 		return fmt.Errorf("owned_dir record: %w", err)
 	}
 	_, werr := f.Write(append(b, '\n'))
-	serr := f.Sync()
-	cerr := f.Close()
-	if err := errors.Join(werr, serr, cerr); err != nil {
+	if err := errors.Join(werr, f.Sync(), f.Close()); err != nil {
 		return fmt.Errorf("owned_dir record: %w", err)
 	}
 	return nil

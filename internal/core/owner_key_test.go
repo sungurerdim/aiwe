@@ -31,12 +31,18 @@ func removeTestFlipHex(t *testing.T, what, s string) string {
 		t.Fatalf("%s carries no hex HMAC-SHA256: %q", what, s)
 	}
 	b := []byte(s)
-	if b[loc[0]] == '0' {
-		b[loc[0]] = '1'
-	} else {
-		b[loc[0]] = '0'
-	}
+	b[loc[0]] = "10"[min(1, int(b[loc[0]]-'0'))] // '0' becomes '1'; any other hex digit becomes '0'
 	return string(b)
+}
+
+// ownerKeyTestRead returns the bytes of the file p, or fails the test when p is unreadable or empty.
+func ownerKeyTestRead(t *testing.T, p string) []byte {
+	t.Helper()
+	b, err := os.ReadFile(p)
+	if err != nil || len(b) == 0 {
+		t.Fatalf("read %s: %d bytes, error %v; want its bytes", p, len(b), err)
+	}
+	return b
 }
 
 // removeTestStartID finds the start_id field of an owned_dir record.
@@ -47,10 +53,7 @@ var removeTestStartID = regexp.MustCompile(`"start_id":"[^"]*"`)
 func removeTestEditRecord(t *testing.T, r OwnedRoots, d OwnedDir, edit func(line string) string) {
 	t.Helper()
 	p := filepath.Join(r.State, "ledger.jsonl")
-	b, err := os.ReadFile(p)
-	if err != nil {
-		t.Fatalf("ledger: %v", err)
-	}
+	b := ownerKeyTestRead(t, p)
 	lines := strings.Split(string(b), "\n")
 	name := filepath.Base(d.Path())
 	found := false
@@ -74,19 +77,9 @@ func TestOwnedHMAC(t *testing.T) {
 	t.Run("key lives in the state root and stays out of the marker", func(t *testing.T) {
 		r := removeTestRoots(t, t.TempDir())
 		d := removeTestCreate(t, removeTestOpen(t, r), TempRoot)
-		key, err := os.ReadFile(filepath.Join(r.State, "owner.key"))
-		if err != nil {
-			t.Fatalf("owner.key: %v", err)
-		}
-		if len(key) == 0 {
-			t.Fatal("owner.key is empty")
-		}
-		marker, err := os.ReadFile(filepath.Join(d.Path(), ".owner"))
-		if err != nil {
-			t.Fatalf("marker: %v", err)
-		}
-		if strings.Contains(string(marker), string(key)) ||
-			strings.Contains(string(marker), strings.TrimSpace(string(key))) {
+		key := ownerKeyTestRead(t, filepath.Join(r.State, "owner.key"))
+		marker := ownerKeyTestRead(t, filepath.Join(d.Path(), ".owner"))
+		if strings.Contains(string(marker), string(key)) || strings.Contains(string(marker), strings.TrimSpace(string(key))) {
 			t.Fatal("the .owner marker carries the owner key")
 		}
 		if !removeTestHex.Match(marker) {
@@ -99,11 +92,7 @@ func TestOwnedHMAC(t *testing.T) {
 	}{
 		{"marker HMAC changed", func(t *testing.T, r OwnedRoots, d OwnedDir) {
 			p := filepath.Join(d.Path(), ".owner")
-			b, err := os.ReadFile(p)
-			if err != nil {
-				t.Fatal(err)
-			}
-			removeTestWrite(t, p, removeTestFlipHex(t, "marker", string(b)))
+			removeTestWrite(t, p, removeTestFlipHex(t, "marker", string(ownerKeyTestRead(t, p))))
 		}},
 		{"record HMAC changed", func(t *testing.T, r OwnedRoots, d OwnedDir) {
 			removeTestEditRecord(t, r, d, func(l string) string {
@@ -130,11 +119,7 @@ func TestOwnedHMAC(t *testing.T) {
 			other := r
 			other.State = filepath.Join(filepath.Dir(r.State), "other-state")
 			removeTestOpen(t, other)
-			nb, err := os.ReadFile(filepath.Join(other.State, "owner.key"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			removeTestWrite(t, filepath.Join(r.State, "owner.key"), string(nb))
+			removeTestWrite(t, filepath.Join(r.State, "owner.key"), string(ownerKeyTestRead(t, filepath.Join(other.State, "owner.key"))))
 		}},
 	}
 	for _, tc := range tampers {
@@ -169,10 +154,7 @@ func TestOwnedHMAC(t *testing.T) {
 // that sees the key file before its bytes fails, or two processes keep different keys.
 func TestOwnedOpenConcurrent(t *testing.T) {
 	const attempts, workers = 40, 16
-	self, err := CurrentProcess()
-	if err != nil {
-		t.Fatalf("CurrentProcess: %v", err)
-	}
+	self := sweepTestSelf(t)
 	base := t.TempDir()
 	for i := 0; i < attempts; i++ {
 		r := removeTestRoots(t, filepath.Join(base, strconv.Itoa(i)))
@@ -211,16 +193,11 @@ func TestOwnedLedgerRotation(t *testing.T) {
 	r := removeTestRoots(t, t.TempDir())
 	d := removeTestCreate(t, removeTestOpen(t, r), TempRoot)
 	ledger := filepath.Join(r.State, "ledger.jsonl")
-	b, err := os.ReadFile(ledger)
-	if err != nil {
-		t.Fatalf("read ledger: %v", err)
-	}
+	b := ownerKeyTestRead(t, ledger)
 	var gz bytes.Buffer
 	zw := gzip.NewWriter(&gz)
-	if _, err := zw.Write(b); err != nil {
-		t.Fatalf("gzip ledger: %v", err)
-	}
-	if err := zw.Close(); err != nil {
+	_, werr := zw.Write(b)
+	if err := errors.Join(werr, zw.Close()); err != nil {
 		t.Fatalf("gzip ledger: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(r.State, "ledger.1.jsonl.gz"), gz.Bytes(), 0o600); err != nil {
@@ -244,10 +221,7 @@ func TestOwnedLedgerRotation(t *testing.T) {
 func TestOwnedRecordFields(t *testing.T) {
 	r := removeTestRoots(t, t.TempDir())
 	d := removeTestCreate(t, removeTestOpen(t, r), TempRoot)
-	b, err := os.ReadFile(filepath.Join(r.State, "ledger.jsonl"))
-	if err != nil {
-		t.Fatalf("read ledger: %v", err)
-	}
+	b := ownerKeyTestRead(t, filepath.Join(r.State, "ledger.jsonl"))
 	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
 	if len(lines) != 1 {
 		t.Fatalf("ledger holds %d lines after one CreateOwned, want 1", len(lines))
@@ -256,8 +230,7 @@ func TestOwnedRecordFields(t *testing.T) {
 	if err := json.Unmarshal([]byte(lines[0]), &rec); err != nil {
 		t.Fatalf("ledger line %q: %v", lines[0], err)
 	}
-	for _, k := range []string{"format_version", "kind", "at", "repo_id", "goal", "unit", "run_id",
-		"path", "pid", "removed_at"} {
+	for _, k := range []string{"format_version", "kind", "at", "repo_id", "goal", "unit", "run_id", "path", "pid", "removed_at"} {
 		if _, ok := rec[k]; !ok {
 			t.Errorf("owned_dir record %s has no %q field", lines[0], k)
 		}
@@ -367,22 +340,42 @@ func ownerKeyTestOwnerOnly(t *testing.T, p string, protected bool) {
 	}
 }
 
+// ownerKeyTestRefused fails the test when OpenOwner of p, an open or foreign root or owner key, is
+// not refused as root_unsafe with the step that fixes it (#123): a file is deleted first; a directory
+// (dir), which may be a home or "/", is never named for delete. The row promises no step a detail lacks.
+func ownerKeyTestRefused(t *testing.T, what, p string, o *Owner, err error, dir, foreign bool) {
+	t.Helper()
+	if !errors.Is(err, ErrRootUnsafe) || ErrorResult(err).Outcome != "root_unsafe" {
+		t.Errorf("OpenOwner with %s %s: owner %t, error %v; want %v (§5.10)", p, what, o != nil, err, ErrRootUnsafe)
+		return
+	}
+	if next := outcomeRow("root_unsafe").Next; !strings.Contains(next, "other user") || strings.Contains(next, "detail names the step") {
+		t.Errorf("root_unsafe next action %q does not name the other users' access, or promises a step a detail lacks", next)
+	}
+	q, d := strconv.Quote(p), ErrorResult(err).Detail
+	want := map[[2]bool]string{
+		{false, false}: "; next: delete " + q + " so the next " + Product + " run makes it owner-only, or remove the access of every other user from it",
+		{false, true}:  "; next: delete " + q + ", or give its ownership to the user that runs " + Product,
+		{true, false}:  "; next: remove the access of every other user from " + q,
+		{true, true}:   "; next: give its ownership to the user that runs " + Product + ", or set the root to a directory that user owns",
+	}[[2]bool{dir, foreign}]
+	if !strings.HasSuffix(d, want) || (dir && strings.Contains(d, "delete")) {
+		t.Errorf("refusal detail %q (directory %t) does not end with the step that fixes it, %q", d, dir, want)
+	}
+}
+
 // TestOwnerKeyACL catches an owner key, or a state dir, that a principal other than the owner,
 // SYSTEM or Administrators can read or write and that OpenOwner still loads on Windows, where the
 // 0o600/0o700 modes do nothing (security review of #6, medium). It also catches a state dir and key
 // that OpenOwner makes under an open parent and leaves open by inheritance, so aiwe refuses its own
 // state on a machine whose temp dir lets other users in (#109), and on every OS a key swapped (#124).
 func TestOwnerKeyACL(t *testing.T) {
-	self, err := CurrentProcess()
-	if err != nil {
-		t.Fatalf("CurrentProcess: %v", err)
-	}
+	self := sweepTestSelf(t)
 	t.Run("key swapped for the owner-only key after it is taken", func(t *testing.T) {
 		r := removeTestRoots(t, t.TempDir())
 		removeTestOpen(t, r)
 		key := filepath.Join(r.State, ownerKeyFile)
-		if err := errors.Join(os.Rename(key, key+".good"), writeNewFile(key, []byte(strings.Repeat("5a", ownerKeySize))),
-			os.Chmod(key, 0o644)); err != nil {
+		if err := errors.Join(os.Rename(key, key+".good"), writeNewFile(key, []byte(strings.Repeat("5a", ownerKeySize))), os.Chmod(key, 0o644)); err != nil {
 			t.Fatal(err)
 		}
 		if runtime.GOOS == "windows" {
@@ -391,9 +384,11 @@ func TestOwnerKeyACL(t *testing.T) {
 		swap := errors.New("ownerKeyTakenHook never ran")
 		ownerKeyTakenHook = func() { swap = errors.Join(os.Rename(key, key+".open"), os.Rename(key+".good", key)) }
 		t.Cleanup(func() { ownerKeyTakenHook = nil })
-		if o, err := OpenOwner(r, self); swap != nil || !errors.Is(err, ErrRootUnsafe) {
-			t.Errorf("OpenOwner of a key open to others, swapped for the owner-only key after it was taken: swap %v, owner %t, error %v; want %v", swap, o != nil, err, ErrRootUnsafe)
+		o, err := OpenOwner(r, self)
+		if swap != nil {
+			t.Errorf("ownerKeyTakenHook did not swap the key open to others for the owner-only key: %v", swap)
 		}
+		ownerKeyTestRefused(t, "open to others, swapped for the owner-only key after it was taken", key, o, err, false, false)
 	})
 	if runtime.GOOS != "windows" {
 		t.Skip("the key ACL check is Windows-only; Unix key modes are not measured (#109)")
@@ -402,8 +397,7 @@ func TestOwnerKeyACL(t *testing.T) {
 	t.Run("state dir and key made under an open parent are owner-only", func(t *testing.T) {
 		base := ownerKeyTestPermissiveParent(t)
 		_, parent := ownerKeyTestSDDL(t, base)
-		if allowed, _, _ := ownerKeyTestAllowed(t, base, parent); !slices.Contains(allowed, "AU") &&
-			!slices.Contains(allowed, "S-1-5-11") {
+		if allowed, _, _ := ownerKeyTestAllowed(t, base, parent); !slices.Contains(allowed, "AU") && !slices.Contains(allowed, "S-1-5-11") {
 			t.Fatalf("parent %s does not allow Authenticated Users (SDDL %s); the case proves nothing", base, parent)
 		}
 		r := removeTestRoots(t, base)
@@ -417,10 +411,8 @@ func TestOwnerKeyACL(t *testing.T) {
 	t.Run("state dir made beforehand under an open parent", func(t *testing.T) {
 		r := removeTestRoots(t, ownerKeyTestPermissiveParent(t))
 		removeTestMkdir(t, r.State)
-		if o, err := OpenOwner(r, self); !errors.Is(err, ErrRootUnsafe) {
-			t.Fatalf("OpenOwner of a state dir that inherits Authenticated Users modify: owner %t, error %v; want %v",
-				o != nil, err, ErrRootUnsafe)
-		}
+		o, err := OpenOwner(r, self)
+		ownerKeyTestRefused(t, "inheriting Authenticated Users modify", r.State, o, err, true, false)
 		if removeTestExists(t, filepath.Join(r.State, ownerKeyFile)) {
 			t.Errorf("OpenOwner refused %s yet wrote a key into it", r.State)
 		}
@@ -430,18 +422,16 @@ func TestOwnerKeyACL(t *testing.T) {
 		{"key readable by Authenticated Users", ownerKeyFile, "(R)"},
 		{"key writable by Authenticated Users", ownerKeyFile, "(M)"},
 		{"state dir writable by Authenticated Users", ".", "(OI)(CI)(M)"},
+		{"temp root writable by Authenticated Users", "../temp", "(OI)(CI)(M)"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			r := removeTestRoots(t, t.TempDir())
-			// The first open makes the state dir and key and loads them: the grant alone makes the
-			// refusal.
+			// The first open makes the roots and key and loads them: the grant alone makes the refusal.
 			removeTestOpen(t, r)
 			target := filepath.Join(r.State, c.target)
 			ownerKeyTestGrant(t, target, c.perm)
-			if o, err := OpenOwner(r, self); !errors.Is(err, ErrRootUnsafe) {
-				t.Errorf("OpenOwner with Authenticated Users granted %s on %s: owner %t, error %v; want %v",
-					c.perm, target, o != nil, err, ErrRootUnsafe)
-			}
+			o, err := OpenOwner(r, self)
+			ownerKeyTestRefused(t, "granting Authenticated Users "+c.perm, target, o, err, c.target != ownerKeyFile, false)
 		})
 	}
 }
@@ -453,10 +443,7 @@ func TestOwnerKeyMode(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Unix modes; TestOwnerKeyACL covers Windows")
 	}
-	self, err := CurrentProcess()
-	if err != nil {
-		t.Fatalf("CurrentProcess: %v", err)
-	}
+	self := sweepTestSelf(t)
 	t.Run("made by OpenOwner", func(t *testing.T) {
 		r := removeTestRoots(t, t.TempDir())
 		removeTestOpen(t, r)
@@ -468,15 +455,25 @@ func TestOwnerKeyMode(t *testing.T) {
 			}
 		}
 	})
+	t.Run("state root / is never named for delete", func(t *testing.T) {
+		r := removeTestRoots(t, t.TempDir())
+		r.State = "/"
+		if o, err := OpenOwner(r, self); !errors.Is(err, ErrRootUnsafe) || strings.Contains(ErrorResult(err).Detail, "delete") {
+			t.Errorf("OpenOwner with state root /: owner %t, error %v; want %v naming no delete", o != nil, err, ErrRootUnsafe)
+		}
+	})
 	for _, c := range []struct {
-		name, target string
-		mode         os.FileMode
-		preset       bool
+		name, target  string
+		mode          os.FileMode
+		preset, chown bool
 	}{
-		{"state dir 0777 made beforehand", ".", 0o777, true},
-		{"state dir group-writable", ".", 0o770, false},
-		{"key 0666", ownerKeyFile, 0o666, false},
-		{"key group-writable", ownerKeyFile, 0o620, false},
+		{"state dir 0777 made beforehand", ".", 0o777, true, false},
+		{"state dir 0755 made beforehand, like a home", ".", 0o755, true, false},
+		{"state dir group-writable", ".", 0o770, false, false},
+		{"key 0666", ownerKeyFile, 0o666, false, false},
+		{"key group-writable", ownerKeyFile, 0o620, false, false},
+		{"temp root 0777", "../temp", 0o777, false, false},
+		{"state dir 0700 owned by another user", ".", 0o700, false, true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			r := removeTestRoots(t, t.TempDir())
@@ -486,12 +483,14 @@ func TestOwnerKeyMode(t *testing.T) {
 				removeTestOpen(t, r)
 			}
 			target := filepath.Join(r.State, c.target)
-			if err := os.Chmod(target, c.mode); err != nil {
-				t.Fatal(err)
+			if c.chown && os.Geteuid() != 0 {
+				t.Skip("giving the state dir to uid 65534 needs root; the Linux container runs this case as root")
 			}
-			if o, err := OpenOwner(r, self); !errors.Is(err, ErrRootUnsafe) {
-				t.Errorf("OpenOwner with %s at mode %#o: owner %t, error %v; want %v", target, c.mode, o != nil, err, ErrRootUnsafe)
+			if err := os.Chmod(target, c.mode); err != nil || (c.chown && os.Chown(target, 65534, -1) != nil) {
+				t.Fatalf("chmod %#o (chown %t) %s: %v", c.mode, c.chown, target, err)
 			}
+			o, err := OpenOwner(r, self)
+			ownerKeyTestRefused(t, "at mode "+c.mode.String(), target, o, err, c.target != ownerKeyFile, c.chown)
 			if c.preset && removeTestExists(t, filepath.Join(r.State, ownerKeyFile)) {
 				t.Errorf("OpenOwner refused %s yet wrote a key into it", r.State)
 			}

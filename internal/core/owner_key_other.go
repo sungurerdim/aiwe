@@ -44,11 +44,13 @@ func checkOwnerOnlyInfo(p string, fi fs.FileInfo) error {
 		return fmt.Errorf("%w: %q is a %v, not a plain file or directory", ErrRootUnsafe, p, t)
 	}
 	if fi.Mode().Perm()&0o077 != 0 {
-		return fmt.Errorf("%w: %q has mode %v; want no access for group or others", ErrRootUnsafe, p, fi.Mode())
+		return fmt.Errorf("%w: %q has mode %v; want no access for group or others%s", ErrRootUnsafe, p, fi.Mode(),
+			ownerOnlyNext(p, fi.IsDir(), false))
 	}
 	st, ok := fi.Sys().(*syscall.Stat_t)
 	if !ok || int(st.Uid) != os.Geteuid() {
-		return fmt.Errorf("%w: %q is not owned by the effective user %d", ErrRootUnsafe, p, os.Geteuid())
+		return fmt.Errorf("%w: %q is not owned by the effective user %d%s", ErrRootUnsafe, p, os.Geteuid(),
+			ownerOnlyNext(p, fi.IsDir(), true))
 	}
 	return nil
 }
