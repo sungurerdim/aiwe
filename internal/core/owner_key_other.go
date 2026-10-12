@@ -10,8 +10,8 @@ import (
 	"syscall"
 )
 
-// ownerKeyOpenFlag opens the owner key without blocking, so a FIFO under its name cannot hang the
-// open; checkOwnerOnlyFile then refuses it on the handle, as it is not a plain file.
+// ownerKeyOpenFlag opens the owner key and the .owner marker without blocking, so a FIFO under
+// either name cannot hang the open; a check on the handle then refuses it, as it is not a plain file.
 const ownerKeyOpenFlag = os.O_RDONLY | syscall.O_NONBLOCK
 
 // checkOwnerOnly refuses p, the temp or cache root, when it is neither a plain file nor a
@@ -21,7 +21,7 @@ const ownerKeyOpenFlag = os.O_RDONLY | syscall.O_NONBLOCK
 func checkOwnerOnly(p string) error {
 	fi, err := os.Lstat(p)
 	if err != nil {
-		return fmt.Errorf("%w: owner-only check of %q: %v", ErrRootUnsafe, p, err)
+		return fmt.Errorf("%w: owner-only check of %q: %w", ErrRootUnsafe, p, err)
 	}
 	return checkOwnerOnlyInfo(p, fi)
 }
@@ -31,7 +31,7 @@ func checkOwnerOnly(p string) error {
 func checkOwnerOnlyFile(f *os.File, p string) error {
 	fi, err := f.Stat()
 	if err != nil {
-		return fmt.Errorf("%w: owner-only check of %q: %v", ErrRootUnsafe, p, err)
+		return fmt.Errorf("%w: owner-only check of %q: %w", ErrRootUnsafe, p, err)
 	}
 	return checkOwnerOnlyInfo(p, fi)
 }

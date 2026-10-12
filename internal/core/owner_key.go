@@ -63,19 +63,22 @@ func orNone(s string) string {
 	return s
 }
 
-// ownerKeyTakenHook, when set, runs right after loadOwnerKey has opened the key and before it
-// checks the key's access; a test uses it to swap the key at that point.
-var ownerKeyTakenHook func()
+// ownerKeyLoader loads the owner key. taken, when set, runs right after the key is opened and
+// before its access is checked; a test uses it to swap the key at that point.
+type ownerKeyLoader struct{ taken func() }
 
-// loadOwnerKey reads <state>/owner.key, or makes it with a fresh random key when it is missing. Each
-// access is checked on an open handle: the key is made and opened through the checked state root and
-// read from its own checked handle. A root or key that another principal can read or write fails with ErrRootUnsafe.
-func loadOwnerKey(state string) ([]byte, error) {
+// loadOwnerKey reads <state>/owner.key, or makes it with a fresh random key when it is missing.
+func loadOwnerKey(state string) ([]byte, error) { return ownerKeyLoader{}.load(state) }
+
+// load is loadOwnerKey. Each access is checked on an open handle: the key is made and opened through
+// the checked state root and read from its own checked handle. A root or key that another principal
+// can read or write fails with ErrRootUnsafe. An error closing the root or the key is returned.
+func (l ownerKeyLoader) load(state string) (_ []byte, err error) {
 	rt, err := openOwnerOnlyRoot(state)
 	if err != nil {
 		return nil, err
 	}
-	defer rt.Close()
+	defer func() { err = errors.Join(err, rt.Close()) }()
 	p := filepath.Join(state, ownerKeyFile)
 	f, err := rt.OpenFile(ownerKeyFile, ownerKeyOpenFlag, 0)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -87,9 +90,9 @@ func loadOwnerKey(state string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("owner key: %w", err)
 	}
-	defer f.Close()
-	if ownerKeyTakenHook != nil {
-		ownerKeyTakenHook()
+	defer func() { err = errors.Join(err, f.Close()) }()
+	if l.taken != nil {
+		l.taken()
 	}
 	if err := checkOwnerOnlyFile(f, p); err != nil {
 		return nil, err
@@ -109,11 +112,11 @@ func loadOwnerKey(state string) ([]byte, error) {
 func openOwnerOnlyRoot(state string) (*os.Root, error) {
 	rt, err := os.OpenRoot(state)
 	if err != nil {
-		return nil, fmt.Errorf("%w: owner-only check of %q: %v", ErrRootUnsafe, state, err)
+		return nil, fmt.Errorf("%w: owner-only check of %q: %w", ErrRootUnsafe, state, err)
 	}
 	dir, err := rt.Open(".")
 	if err != nil {
-		return nil, errors.Join(fmt.Errorf("%w: owner-only check of %q: %v", ErrRootUnsafe, state, err), rt.Close())
+		return nil, errors.Join(fmt.Errorf("%w: owner-only check of %q: %w", ErrRootUnsafe, state, err), rt.Close())
 	}
 	if err := errors.Join(checkOwnerOnlyFile(dir, state), dir.Close()); err != nil {
 		return nil, errors.Join(err, rt.Close())
@@ -239,23 +242,23 @@ func ledgerFiles(state string) ([]string, error) {
 }
 
 // fileRecords returns the valid owned_dir records of one ledger file; a rotation is gzip-compressed.
-// A file that does not exist holds no record.
-func (o *Owner) fileRecords(p string) ([]ownedRecord, error) {
-	f, err := os.Open(p)
+// A file that does not exist holds no record. An error closing the file or the gzip reader is returned.
+func (o *Owner) fileRecords(p string) (_ []ownedRecord, err error) {
+	f, err := os.Open(p) //nolint:gosec // G304: p is the ledger or a rotation that ledgerFiles named in the checked state root
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("ledger: %w", err)
 	}
-	defer f.Close()
+	defer func() { err = errors.Join(err, f.Close()) }()
 	var r io.Reader = f
 	if strings.HasSuffix(p, rotationSuffix) {
-		zr, err := gzip.NewReader(f)
-		if err != nil {
-			return nil, fmt.Errorf("ledger %s: %w", p, err)
+		zr, zerr := gzip.NewReader(f)
+		if zerr != nil {
+			return nil, fmt.Errorf("ledger %s: %w", p, zerr)
 		}
-		defer zr.Close()
+		defer func() { err = errors.Join(err, zr.Close()) }()
 		r = zr
 	}
 	var out []ownedRecord
@@ -352,7 +355,7 @@ func checkOwnedDir(p string) (string, string, error) {
 	}
 	fi, err := os.Lstat(p)
 	if err != nil {
-		return "", "", fmt.Errorf("%w: %v", ErrNotOwned, err)
+		return "", "", fmt.Errorf("%w: %w", ErrNotOwned, err)
 	}
 	if !fi.IsDir() {
 		return "", "", fmt.Errorf("%w: %q is not a directory (a link is never followed)", ErrNotOwned, p)
@@ -368,14 +371,14 @@ func checkOwnedDir(p string) (string, string, error) {
 func checkLinks(rootPath, dir string) error {
 	return filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return fmt.Errorf("%w: %v", ErrNotOwned, err)
+			return fmt.Errorf("%w: %w", ErrNotOwned, err)
 		}
 		if d.Type()&(fs.ModeSymlink|fs.ModeIrregular) == 0 {
 			return nil
 		}
 		rp, err := realPath(p)
 		if err != nil {
-			return fmt.Errorf("%w: link %q: %v", ErrNotOwned, p, err)
+			return fmt.Errorf("%w: link %q: %w", ErrNotOwned, p, err)
 		}
 		if !within(rootPath, rp) {
 			return fmt.Errorf("%w: link %q leaves the root %q for %q", ErrNotOwned, p, rootPath, rp)
