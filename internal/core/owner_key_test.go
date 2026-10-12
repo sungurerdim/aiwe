@@ -341,9 +341,9 @@ func ownerKeyTestOwnerOnly(t *testing.T, p string, protected bool) {
 }
 
 // ownerKeyTestRefused fails the test when OpenOwner of p, an open or foreign root or owner key, is
-// not refused as root_unsafe with the step that fixes it (#123): a file is deleted first; a directory,
-// which may be a home or "/", is never named for delete. The row promises no step a detail lacks.
-func ownerKeyTestRefused(t *testing.T, what, p string, o *Owner, err error, foreign bool) {
+// not refused as root_unsafe with the step that fixes it (#123): a file is deleted first; a directory
+// (dir), which may be a home or "/", is never named for delete. The row promises no step a detail lacks.
+func ownerKeyTestRefused(t *testing.T, what, p string, o *Owner, err error, dir, foreign bool) {
 	t.Helper()
 	if !errors.Is(err, ErrRootUnsafe) || ErrorResult(err).Outcome != "root_unsafe" {
 		t.Errorf("OpenOwner with %s %s: owner %t, error %v; want %v (§5.10)", p, what, o != nil, err, ErrRootUnsafe)
@@ -352,8 +352,7 @@ func ownerKeyTestRefused(t *testing.T, what, p string, o *Owner, err error, fore
 	if next := outcomeRow("root_unsafe").Next; !strings.Contains(next, "other user") || strings.Contains(next, "detail names the step") {
 		t.Errorf("root_unsafe next action %q does not name the other users' access, or promises a step a detail lacks", next)
 	}
-	fi, serr := os.Stat(p)
-	dir, q, d := serr == nil && fi.IsDir(), strconv.Quote(p), ErrorResult(err).Detail
+	q, d := strconv.Quote(p), ErrorResult(err).Detail
 	want := map[[2]bool]string{
 		{false, false}: "; next: delete " + q + " so the next " + Product + " run makes it owner-only, or remove the access of every other user from it",
 		{false, true}:  "; next: delete " + q + ", or give its ownership to the user that runs " + Product,
@@ -389,7 +388,7 @@ func TestOwnerKeyACL(t *testing.T) {
 		if swap != nil {
 			t.Errorf("ownerKeyTakenHook did not swap the key open to others for the owner-only key: %v", swap)
 		}
-		ownerKeyTestRefused(t, "open to others, swapped for the owner-only key after it was taken", key, o, err, false)
+		ownerKeyTestRefused(t, "open to others, swapped for the owner-only key after it was taken", key, o, err, false, false)
 	})
 	if runtime.GOOS != "windows" {
 		t.Skip("the key ACL check is Windows-only; Unix key modes are not measured (#109)")
@@ -413,7 +412,7 @@ func TestOwnerKeyACL(t *testing.T) {
 		r := removeTestRoots(t, ownerKeyTestPermissiveParent(t))
 		removeTestMkdir(t, r.State)
 		o, err := OpenOwner(r, self)
-		ownerKeyTestRefused(t, "inheriting Authenticated Users modify", r.State, o, err, false)
+		ownerKeyTestRefused(t, "inheriting Authenticated Users modify", r.State, o, err, true, false)
 		if removeTestExists(t, filepath.Join(r.State, ownerKeyFile)) {
 			t.Errorf("OpenOwner refused %s yet wrote a key into it", r.State)
 		}
@@ -432,7 +431,7 @@ func TestOwnerKeyACL(t *testing.T) {
 			target := filepath.Join(r.State, c.target)
 			ownerKeyTestGrant(t, target, c.perm)
 			o, err := OpenOwner(r, self)
-			ownerKeyTestRefused(t, "granting Authenticated Users "+c.perm, target, o, err, false)
+			ownerKeyTestRefused(t, "granting Authenticated Users "+c.perm, target, o, err, c.target != ownerKeyFile, false)
 		})
 	}
 }
@@ -491,7 +490,7 @@ func TestOwnerKeyMode(t *testing.T) {
 				t.Fatalf("chmod %#o (chown %t) %s: %v", c.mode, c.chown, target, err)
 			}
 			o, err := OpenOwner(r, self)
-			ownerKeyTestRefused(t, "at mode "+c.mode.String(), target, o, err, c.chown)
+			ownerKeyTestRefused(t, "at mode "+c.mode.String(), target, o, err, c.target != ownerKeyFile, c.chown)
 			if c.preset && removeTestExists(t, filepath.Join(r.State, ownerKeyFile)) {
 				t.Errorf("OpenOwner refused %s yet wrote a key into it", r.State)
 			}

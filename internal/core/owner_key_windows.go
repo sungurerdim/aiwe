@@ -41,11 +41,11 @@ const ownerKeyOpenFlag = os.O_RDONLY
 // Only a plain file or a directory passes.
 func checkOwnerOnlyFile(f *os.File, p string) error {
 	fi, err := f.Stat()
-	if err == nil && fi.Mode().Type()&^fs.ModeDir != 0 {
-		err = fmt.Errorf("a %v is not a plain file or directory", fi.Mode().Type())
-	}
 	if err != nil {
 		return fmt.Errorf("%w: owner-only check of %q: %v", ErrRootUnsafe, p, err)
+	}
+	if t := fi.Mode().Type(); t&^fs.ModeDir != 0 {
+		return fmt.Errorf("%w: owner-only check of %q: a %v is not a plain file or directory", ErrRootUnsafe, p, t)
 	}
 	sd, err := windows.GetSecurityInfo(windows.Handle(f.Fd()), windows.SE_FILE_OBJECT, ownerOnlyInfo)
 	return checkOwnerOnlySD(p, fi.IsDir(), sd, err)
