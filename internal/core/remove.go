@@ -61,10 +61,11 @@ type Owner struct {
 // namedPath is a real path with the name used in errors.
 type namedPath struct{ name, path string }
 
-// OpenOwner checks the roots of r and loads, or makes, the owner key in the state root. A temp or
-// cache root that is, or contains, the home, the state root, a canonical repository or a
-// file-system root, or that is not owner-only, fails with ErrRootUnsafe; nothing is created under
-// it. The owner records self as it is: a ProcessID built by hand gets no start identity.
+// OpenOwner checks the roots of r and loads, or makes, the owner key in the state root. A state,
+// temp or cache root that is, or contains, the home, a canonical repository or a file-system root,
+// a temp or cache root that is or contains the state root, and a root that is not owner-only fail
+// with ErrRootUnsafe; nothing is created under it. The state root is checked by location first,
+// so a refused home or "/" is never named for an access change. The owner records self as it is: a ProcessID built by hand gets no start identity.
 func OpenOwner(r OwnedRoots, self ProcessID) (*Owner, error) {
 	if self.PID <= 0 || self.Start.IsZero() {
 		return nil, fmt.Errorf("owner process %+v: want a pid and a start time", self)
@@ -80,6 +81,10 @@ func OpenOwner(r OwnedRoots, self ProcessID) (*Owner, error) {
 	protected, err := protectedPaths(paths["state"], r)
 	if err != nil {
 		return nil, err
+	}
+	if err := checkRootSafe(namedPath{"state root", paths["state"]}, protected[1:]); err != nil {
+		return nil, fmt.Errorf("%w; next: set %s to a state root apart from the home, every repository and the file-system root",
+			err, productEnv("HOME"))
 	}
 	for _, n := range []string{"temp", "cache"} {
 		if err := checkRootSafe(namedPath{n + " root", paths[n]}, protected); err != nil {
