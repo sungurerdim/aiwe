@@ -9,6 +9,14 @@ updates:
     commit-message:
       prefix: chore
       include: scope
+  # The tools module: the development tools, run with go tool -modfile=tools/go.mod (SPEC §12.2).
+  - package-ecosystem: gomod
+    directory: /tools
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore
+      include: scope
   - package-ecosystem: github-actions
     directory: /
     schedule:

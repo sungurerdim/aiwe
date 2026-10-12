@@ -1,5 +1,6 @@
 # Builds custom-gcl: golangci-lint with the nilaway module plugin (SPEC §5.17, §12.2).
-# Build: go tool golangci-lint custom. version must equal the golangci-lint version in go.mod.
+# Build: go tool -modfile=tools/go.mod golangci-lint custom. version must equal the
+# golangci-lint version in tools/go.mod.
 version: v2.14.0
 name: custom-gcl
 destination: .

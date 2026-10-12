@@ -117,8 +117,8 @@ type Prerequisite struct {
 	Install string
 }
 
-// installCommands maps each prerequisite to its install command per OS; the tools come from go.mod
-// and share one command.
+// installCommands maps each prerequisite to its install command per OS; the tools come from
+// tools/go.mod and share one command.
 func installCommands() map[string]map[string]string {
 	return map[string]map[string]string{
 		"git": {
@@ -134,17 +134,25 @@ func installCommands() map[string]map[string]string {
 	}
 }
 
+// toolsModFile is the tools module: its tool lines are the development tools, run with
+// `go tool -modfile=tools/go.mod` (SPEC §12.2).
+const toolsModFile = "tools/go.mod"
+
 // Doctor reports each prerequisite of this repository (SPEC §12.2): git, Go at least at the go.mod
-// version, and each `go tool` entry of go.mod resolving. A missing one carries its install command
-// for env.GOOS. A repository without a readable go.mod is an error.
+// version, and each tool line of tools/go.mod resolving. A missing one carries its install command
+// for env.GOOS. A repository without a readable go.mod or tools/go.mod is an error, and so is a
+// tool line in go.mod: the main module requires only what the binary links.
 func Doctor(env DoctorEnv) ([]Prerequisite, error) {
-	body, err := readRepoFile(env.Repo, "go.mod")
+	want, mainTools, err := readGoMod(env.Repo, "go.mod")
 	if err != nil {
-		return nil, fmt.Errorf("doctor: %w", err)
+		return nil, err
 	}
-	want, tools, err := parseGoMod(string(body))
+	if len(mainTools) > 0 {
+		return nil, fmt.Errorf("doctor: go.mod has tool lines %v; they belong in %s", mainTools, toolsModFile)
+	}
+	_, tools, err := readGoMod(env.Repo, toolsModFile)
 	if err != nil {
-		return nil, fmt.Errorf("doctor: go.mod: %w", err)
+		return nil, err
 	}
 	_, gitErr := env.LookPath("git")
 	report := []Prerequisite{
@@ -155,11 +163,24 @@ func Doctor(env DoctorEnv) ([]Prerequisite, error) {
 	for _, tool := range tools {
 		p := Prerequisite{Name: tool, Present: goOK && env.ResolveTool(tool) == nil}
 		if !p.Present {
-			p.Install = "go mod download"
+			p.Install = "go mod download -modfile=" + toolsModFile
 		}
 		report = append(report, p)
 	}
 	return report, nil
+}
+
+// readGoMod reads the module file rel of repo and returns its go directive and tool entries.
+func readGoMod(repo, rel string) (string, []string, error) {
+	body, err := readRepoFile(repo, rel)
+	if err != nil {
+		return "", nil, fmt.Errorf("doctor: %w", err)
+	}
+	want, tools, err := parseGoMod(string(body))
+	if err != nil {
+		return "", nil, fmt.Errorf("doctor: %s: %w", rel, err)
+	}
+	return want, tools, nil
 }
 
 // prerequisite builds the entry of name, with its install command for goos when it is missing.
