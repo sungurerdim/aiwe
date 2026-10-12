@@ -15,7 +15,8 @@ import (
 )
 
 // MachineDoctorEnv returns the DoctorEnv of this machine for repo: the real program lookup, the
-// Go version and the `go tool` resolution, each go call started through core.Start (SPEC §5.20).
+// Go version and the tool resolution through the tools module, each go call started through
+// core.Start (SPEC §5.20, §12.2).
 func MachineDoctorEnv(ctx context.Context, repo string) DoctorEnv {
 	return DoctorEnv{
 		Repo:     repo,
@@ -26,7 +27,7 @@ func MachineDoctorEnv(ctx context.Context, repo string) DoctorEnv {
 			return strings.TrimSpace(string(out)), err
 		},
 		ResolveTool: func(tool string) error {
-			_, err := RunGo(ctx, repo, "tool", "-n", tool)
+			_, err := RunGo(ctx, repo, "tool", "-modfile="+toolsModFile, "-n", tool)
 			return err
 		},
 	}
