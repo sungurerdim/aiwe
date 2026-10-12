@@ -84,7 +84,6 @@ func TestOutcomes(t *testing.T) {
 			{name: "error missing", outcome: "error", want: core.StatusError},
 			{name: "usage missing", outcome: "usage", want: core.StatusUsage},
 			{name: "red missing", outcome: "red", want: core.StatusRed},
-			{name: "no_change missing", outcome: "no_change", want: core.StatusNoChange},
 			{name: "param_duplicate missing", outcome: "param_duplicate", want: core.StatusError},
 			{name: "param_undeclared missing", outcome: "param_undeclared", want: core.StatusError},
 		}
@@ -171,8 +170,10 @@ func TestOutcomes(t *testing.T) {
 	// BC-1 (SPEC §13.1): an outcome string used in code is missing from the outcome table.
 	t.Run("BC-1 outcome string used in code missing from the outcome table", func(t *testing.T) {
 		used := outcomesUsedInSource(t, filepath.Join("..", ".."))
-		if !used["param_duplicate"] {
-			t.Fatalf("source scan did not find the sentinel param_duplicate in internal/core/command.go; found %v", used)
+		for _, sentinel := range []string{"param_duplicate", "root_unresolved"} {
+			if !used[sentinel] {
+				t.Fatalf("source scan did not find the sentinel %s in internal/core; found %v", sentinel, used)
+			}
 		}
 		for name := range used {
 			if _, ok := table[core.Outcome(name)]; !ok {
@@ -182,9 +183,21 @@ func TestOutcomes(t *testing.T) {
 	})
 }
 
+// TestOutcomesUsed catches an outcome table row that no code path produces (SPEC §5.5): the table
+// itself does not count as a producer.
+func TestOutcomesUsed(t *testing.T) {
+	used := outcomesUsedInSource(t, filepath.Join("..", ".."))
+	for _, r := range core.Outcomes() {
+		if !used[string(r.Outcome)] {
+			t.Errorf("outcome table row %q is produced by no code path under internal or cmd", r.Outcome)
+		}
+	}
+}
+
 // outcomesUsedInSource returns every outcome string literal in the non-test Go files under
 // root/internal and root/cmd: Outcome("x") conversions, Outcome: "x" fields, constants of type
-// Outcome, and package-level sentinels var ErrX = errors.New("x").
+// Outcome, and package-level sentinels var ErrX = errors.New("x"). The body of a function named
+// Outcomes, the table itself, is skipped.
 func outcomesUsedInSource(t *testing.T, root string) map[string]bool {
 	t.Helper()
 	used := map[string]bool{}
@@ -253,6 +266,8 @@ func outcomesUsedInSource(t *testing.T, root string) map[string]bool {
 			}
 			ast.Inspect(f, func(n ast.Node) bool {
 				switch x := n.(type) {
+				case *ast.FuncDecl:
+					return x.Name.Name != "Outcomes"
 				case *ast.CallExpr:
 					if isOutcomeIdent(x.Fun) && len(x.Args) == 1 {
 						if s, ok := lit(x.Args[0]); ok {
