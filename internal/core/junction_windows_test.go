@@ -11,11 +11,9 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func init() { JunctionForTest = junctionForTest }
-
-// junctionForTest makes link a directory junction to the absolute dir target through
+// JunctionForTest makes link a directory junction to the absolute dir target through
 // FSCTL_SET_REPARSE_POINT, so no path goes through cmd (#154).
-func junctionForTest(t *testing.T, target, link string) {
+func JunctionForTest(t *testing.T, target, link string) {
 	t.Helper()
 	if !filepath.IsAbs(target) {
 		t.Fatalf("junction target %s is not absolute", target)
