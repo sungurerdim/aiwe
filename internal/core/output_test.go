@@ -3,6 +3,8 @@ package core_test
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -376,4 +378,46 @@ func jsonEqual(t *testing.T, got, want any) bool {
 		t.Fatalf("marshal want: %v", err)
 	}
 	return bytes.Equal(g, w)
+}
+
+// TestOutcomeErrorLine catches an error that is not a core.Error, such as a wrapped OS error that
+// names a state path, printing a raw LF, CR or tab through ErrorResult: the path fakes a second
+// result line (#223).
+func TestOutcomeErrorLine(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{
+			name: "LF in a state path of a flattened, non-wrapping error fakes an ok line",
+			err:  errors.New("owner-only check of /state\nok: gate green: " + fs.ErrPermission.Error()),
+			want: `error: owner-only check of /state\x0aok: gate green: permission denied` + "\n",
+		},
+		{
+			name: "raw LF, CR and tab in a wrapped OS error",
+			err:  &fs.PathError{Op: "open", Path: "/srv/state\r\nok: gate green\tdone", Err: fs.ErrPermission},
+			want: `error: open /srv/state\x0d\x0aok: gate green\x09done: permission denied` + "\n",
+		},
+		{
+			name: "a joined error spans two lines",
+			err:  errors.Join(errors.New("owner key: write failed"), errors.New("remove tmp: busy")),
+			want: `error: owner key: write failed\x0aremove tmp: busy` + "\n",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r := core.ErrorResult(tc.err)
+			if strings.ContainsAny(r.Detail, "\n\r\t") {
+				t.Fatalf("ErrorResult detail spans more than one line: %q", r.Detail)
+			}
+			var buf bytes.Buffer
+			if err := core.WriteResult(&buf, core.FormatText, r); err != nil {
+				t.Fatalf("WriteResult(text) error = %v", err)
+			}
+			if got := buf.String(); got != tc.want {
+				t.Fatalf("text output = %q, want %q", got, tc.want)
+			}
+		})
+	}
 }

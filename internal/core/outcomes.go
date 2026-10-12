@@ -131,7 +131,9 @@ func classify(err error) OutcomeRow {
 }
 
 // ErrorResult maps err to its result: the outcome, status and exit code come from the outcome table.
+// The detail is one line: an error that is not a *Error, such as a wrapped OS error that names a
+// path, has each LF, CR and tab escaped (#223).
 func ErrorResult(err error) Result[any] {
 	r := classify(err)
-	return Result[any]{Status: r.Status, Outcome: r.Outcome, Detail: err.Error()}
+	return Result[any]{Status: r.Status, Outcome: r.Outcome, Detail: lineEscape(err.Error())}
 }

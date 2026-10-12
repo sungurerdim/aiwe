@@ -143,10 +143,18 @@ func (r *Runner) runStep(ctx context.Context, step GateStep, dir string, proof *
 	var out bytes.Buffer
 	spec := core.ChildSpec{Dir: dir, Env: roots.env(), Stdout: io.MultiWriter(&out, stream), Stderr: stream}
 	code, failed := execStep(ctx, step, spec)
+	var report StepReport
 	if failed != nil {
-		return roots.close(ctx, *failed)
+		report = *failed
+	} else {
+		report = judgeStep(step, code, note, out.Bytes())
 	}
-	return roots.close(ctx, judgeStep(step, code, note, out.Bytes()))
+	// The terminal write is not the measurement (DR-13): a failed write of the held last line keeps
+	// the step's result, judged from the exit code and the raw output, and is noted in its detail.
+	if err := stream.Close(); err != nil {
+		report.Detail = joinDetail(report.Detail, err.Error())
+	}
+	return roots.close(ctx, report)
 }
 
 // judgeStep judges a step that exited by its declared exit code; a test step that exits as
