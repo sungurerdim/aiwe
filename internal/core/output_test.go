@@ -154,6 +154,174 @@ func TestOutput(t *testing.T) {
 		}
 	})
 
+	// A path or value from the file system or the environment reaches the text output with every
+	// terminal control escaped, so a file name cannot drive the terminal (#200). JSON keeps it exact.
+	escapes := []struct {
+		name   string
+		detail string
+		want   string
+	}{
+		{
+			name:   "OSC title sequence with BEL in a file name drives the terminal",
+			detail: "read settings.\x1b]0;PWN\x07.json",
+			want:   `ok: read settings.\x1b]0;PWN\x07.json` + "\n",
+		},
+		{
+			name:   "CSI clear-screen sequence reaches the terminal raw",
+			detail: "path a\x1b[2Jb",
+			want:   `ok: path a\x1b[2Jb` + "\n",
+		},
+		{
+			name:   "lone CR overwrites the line before it",
+			detail: "found ok\rforged",
+			want:   `ok: found ok\x0dforged` + "\n",
+		},
+		{
+			name:   "C1 CSI U+009B and NEL U+0085 reach the terminal raw",
+			detail: "path a\u009b2Jb\u0085c",
+			want:   `ok: path a\u009b2Jb\u0085c` + "\n",
+		},
+		{
+			name:   "DEL reaches the terminal raw",
+			detail: "path a\x7fb",
+			want:   `ok: path a\x7fb` + "\n",
+		},
+		{
+			name:   "bidi override U+202E reverses the displayed path",
+			detail: "file evil\u202etxt.exe",
+			want:   `ok: file evil\u202etxt.exe` + "\n",
+		},
+		{
+			name:   "bidi isolates U+2066 to U+2069 reorder the displayed path",
+			detail: "a\u2066b\u2067c\u2068d\u2069e",
+			want:   `ok: a\u2066b\u2067c\u2068d\u2069e` + "\n",
+		},
+		{
+			name:   "invalid UTF-8 bytes form a control on the terminal",
+			detail: "path a\xffb\xc2",
+			want:   `ok: path a\xffb\xc2` + "\n",
+		},
+		{
+			name:   "invisible, direction mark and line separator runes hide or reorder the displayed path",
+			detail: "a\u200bb\u200ec\u200fd\u061ce\ufefff\u2028g\u2029h",
+			want:   `ok: a\u200bb\u200ec\u200fd\u061ce\ufefff\u2028g\u2029h` + "\n",
+		},
+		{
+			name:   "plain Unicode, RTL script, newline and tab altered on the way out",
+			detail: "İıŞşĞğ 仓库 مستودع 🚀 é\ndocs\\plan.md\tnext",
+			want:   "ok: İıŞşĞğ 仓库 مستودع 🚀 é\ndocs\\plan.md\tnext\n",
+		},
+	}
+	for _, tc := range escapes {
+		r := core.Result[any]{Status: core.StatusOK, Outcome: core.Outcome("ok"), Detail: tc.detail}
+		t.Run("text escape/"+tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			if err := core.WriteResult(&buf, core.FormatText, r); err != nil {
+				t.Fatalf("WriteResult(text) error = %v", err)
+			}
+			if got := buf.String(); got != tc.want {
+				t.Fatalf("text output = %q, want %q", got, tc.want)
+			}
+		})
+		t.Run("json escape/"+tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			if err := core.WriteResult(&buf, core.FormatJSON, r); err != nil {
+				t.Fatalf("WriteResult(json) error = %v", err)
+			}
+			if strings.ContainsAny(buf.String(), "\x1b\x07\r") {
+				t.Fatalf("json output carries a raw C0 control: %q", buf.String())
+			}
+			var env map[string]json.RawMessage
+			if err := json.Unmarshal(buf.Bytes(), &env); err != nil {
+				t.Fatalf("json output is not one JSON object: %v; output %q", err, buf.String())
+			}
+			if utf8.ValidString(tc.detail) {
+				assertJSONString(t, env, "detail", tc.detail)
+			}
+		})
+	}
+
+	t.Run("text escape/refusal with an OSC sequence in the found path drives the terminal", func(t *testing.T) {
+		var buf bytes.Buffer
+		e := &core.Error{Outcome: core.OutcomeError, Expected: "one JSON object",
+			Found: "an unreadable file settings.\x1b]0;PWN\x07.json", Next: "correct the file"}
+		if err := core.WriteResult(&buf, core.FormatText, core.ErrorResult(e)); err != nil {
+			t.Fatalf("WriteResult(text) error = %v", err)
+		}
+		want := `error: expected one JSON object; found an unreadable file settings.\x1b]0;PWN\x07.json; next: correct the file` + "\n"
+		if got := buf.String(); got != want {
+			t.Fatalf("text refusal = %q, want %q", got, want)
+		}
+	})
+
+	// An error result that is not a core.Error, such as an incomplete gate, lists one step per line;
+	// escaping its newlines would flatten the list into one line (#200).
+	t.Run("text escape/step lines of an incomplete error result flattened into one line", func(t *testing.T) {
+		var buf bytes.Buffer
+		r := core.Result[any]{Status: core.StatusError, Outcome: core.Outcome("incomplete"),
+			Detail: "gate incomplete\n  build: green\n  test: not measured\tunknown"}
+		if err := core.WriteResult(&buf, core.FormatText, r); err != nil {
+			t.Fatalf("WriteResult(text) error = %v", err)
+		}
+		want := "error: gate incomplete\n  build: green\n  test: not measured\tunknown\n"
+		if got := buf.String(); got != want {
+			t.Fatalf("text output = %q, want %q", got, want)
+		}
+	})
+
+	// A refusal is one line (SPEC §5.10): a newline or CR in Expected, Found or Next would fake a
+	// second result line (#200).
+	lineFakes := []struct {
+		name string
+		err  *core.Error
+		want string
+	}{
+		{
+			name: "LF in an undeclared flag fakes an ok line",
+			err:  &core.Error{Outcome: core.OutcomeUsage, Expected: "a declared flag", Found: "--zz\nok: gate pass"},
+			want: `usage: expected a declared flag; found --zz\x0aok: gate pass; next: run ` + core.Product + ` --help and correct the call` + "\n",
+		},
+		{
+			name: "CR LF in expected fakes a line",
+			err: &core.Error{Outcome: core.OutcomeError, Expected: "one file\r\nok: done", Found: "two files",
+				Next: "remove one file"},
+			want: `error: expected one file\x0d\x0aok: done; found two files; next: remove one file` + "\n",
+		},
+		{
+			name: "LF in next fakes a line",
+			err: &core.Error{Outcome: core.OutcomeError, Expected: "one file", Found: "two files",
+				Next: "remove one file\nok: done"},
+			want: `error: expected one file; found two files; next: remove one file\x0aok: done` + "\n",
+		},
+	}
+	for _, tc := range lineFakes {
+		t.Run("text refusal/"+tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			if err := core.WriteResult(&buf, core.FormatText, core.ErrorResult(tc.err)); err != nil {
+				t.Fatalf("WriteResult(text) error = %v", err)
+			}
+			if got := buf.String(); got != tc.want {
+				t.Fatalf("text refusal = %q, want %q", got, tc.want)
+			}
+		})
+		t.Run("refusal message/"+tc.name, func(t *testing.T) {
+			if msg := tc.err.Error(); strings.ContainsAny(msg, "\n\r\t") {
+				t.Fatalf("core.Error message spans more than one line: %q", msg)
+			}
+		})
+		t.Run("json refusal/"+tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			if err := core.WriteResult(&buf, core.FormatJSON, core.ErrorResult(tc.err)); err != nil {
+				t.Fatalf("WriteResult(json) error = %v", err)
+			}
+			var env map[string]json.RawMessage
+			if err := json.Unmarshal(buf.Bytes(), &env); err != nil {
+				t.Fatalf("json output is not one JSON object: %v; output %q", err, buf.String())
+			}
+			assertJSONString(t, env, "detail", tc.err.Error())
+		})
+	}
+
 	t.Run("unknown format printed anyway instead of refused", func(t *testing.T) {
 		var buf bytes.Buffer
 		r := core.Result[any]{Status: core.StatusOK, Outcome: core.Outcome("ok"), Detail: "done"}
