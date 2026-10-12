@@ -192,11 +192,10 @@ func (h removalHooks) closeChecked(what string, c func() error) error {
 // that is not a plain name, or that is not a directory, such as one swapped for a link, fails with
 // ErrNotOwned at once. approved is the file info the ownership check approved, read through a
 // handle; a nil approved fails with ErrNotOwned and removes nothing. Every attempt removes only
-// that directory: a name that names another one fails with ErrNotOwned at once. A
-// failed attempt, such as a file another process holds open, is retried 5 times, 200 ms apart,
-// then fails with ErrResidueLocked (SPEC §6.4); the next sweep retries. A failed close is returned at
-// once, not retried. A mount point refusal after an attempt began removing entries names a partial
-// removal and the residue, never "nothing removed".
+// that directory: a name that names another one fails with ErrNotOwned at once. A failed attempt,
+// such as a file another process holds open, is retried 5 times, 200 ms apart, then fails with
+// ErrResidueLocked (SPEC §6.4); the next sweep retries. A failed close is returned at once, not
+// retried; a refusal after a partial removal says so, never "nothing removed" (removeAttempt).
 func (h removalHooks) removeTree(ctx context.Context, rootPath, name string, approved fs.FileInfo) (err error) {
 	if !plainName(name, maxOwnedName) {
 		return fmt.Errorf("%w: remove %q: not an owned directory name", ErrNotOwned, name)
@@ -211,12 +210,8 @@ func (h removalHooks) removeTree(ctx context.Context, rootPath, name string, app
 	defer func() { err = errors.Join(err, h.closeChecked("removal root", rt.Close)) }()
 	outcome := "nothing removed" // what a mount point refusal says was removed
 	for attempt := 1; ; attempt++ {
-		var began bool
-		if began, err = h.removeOnce(rt, name, approved, outcome); began {
-			outcome = fmt.Sprintf("partial removal: an earlier attempt removed entries; the residue stays in %q",
-				filepath.Join(rootPath, name))
-		}
-		if err == nil || errors.Is(err, ErrNotOwned) || errors.Is(err, errCloseFailed) {
+		var stop bool
+		if outcome, stop, err = h.removeAttempt(rt, rootPath, name, approved, outcome); stop {
 			return err
 		}
 		if attempt == removeAttempts {
@@ -229,8 +224,17 @@ func (h removalHooks) removeTree(ctx context.Context, rootPath, name string, app
 	return fmt.Errorf("%w: remove %q: %d attempts %v apart: %w", ErrResidueLocked, name, removeAttempts, removeWait, err)
 }
 
-// waitRetry waits removeWait before the next removal attempt; it returns the error of ctx when ctx
-// ends first.
+// removeAttempt runs one removeOnce and reports whether the removal stops (success, ErrNotOwned, a
+// failed close), with the outcome a later mount point refusal names: partial once entries went.
+func (h removalHooks) removeAttempt(rt *os.Root, rootPath, name string, approved fs.FileInfo, outcome string) (string, bool, error) {
+	began, err := h.removeOnce(rt, name, approved, outcome)
+	if began {
+		outcome = fmt.Sprintf("partial removal: an earlier attempt removed entries; the residue stays in %q", filepath.Join(rootPath, name))
+	}
+	return outcome, err == nil || errors.Is(err, ErrNotOwned) || errors.Is(err, errCloseFailed), err
+}
+
+// waitRetry waits removeWait before the next removal attempt, or returns the error of ctx when it ends first.
 func waitRetry(ctx context.Context) error {
 	t := time.NewTimer(removeWait)
 	defer t.Stop()

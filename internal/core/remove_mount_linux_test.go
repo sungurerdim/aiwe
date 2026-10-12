@@ -51,10 +51,10 @@ func TestRemoveOwnedPartialThenMount(t *testing.T) {
 	removeTestWrite(t, keep, "mounted data, not owned")
 	probe := filepath.Join(t.TempDir(), "probe")
 	removeTestMkdir(t, probe)
-	if out, err := exec.Command("mount", "--bind", src, probe).CombinedOutput(); err != nil {
+	if out, err := exec.CommandContext(t.Context(), "mount", "--bind", src, probe).CombinedOutput(); err != nil {
 		t.Skipf("cannot bind mount %s on %s (needs root or CAP_SYS_ADMIN): %v %s", src, probe, err, out)
 	}
-	if err := exec.Command("umount", probe).Run(); err != nil {
+	if err := exec.CommandContext(t.Context(), "umount", probe).Run(); err != nil {
 		t.Fatalf("umount %s: %v", probe, err)
 	}
 	z := filepath.Join(d.Path(), "z")
@@ -65,11 +65,11 @@ func TestRemoveOwnedPartialThenMount(t *testing.T) {
 		}
 		mounted = true
 		removeTestMkdir(t, z)
-		if out, err := exec.Command("mount", "--bind", src, z).CombinedOutput(); err != nil {
+		if out, err := exec.CommandContext(t.Context(), "mount", "--bind", src, z).CombinedOutput(); err != nil {
 			t.Fatalf("bind mount %s on %s: %v %s", src, z, err, out)
 		}
 		t.Cleanup(func() {
-			if err := exec.Command("umount", "-l", z).Run(); err != nil {
+			if err := exec.CommandContext(context.WithoutCancel(t.Context()), "umount", "-l", z).Run(); err != nil {
 				t.Logf("umount %s: %v", z, err)
 			}
 		})
