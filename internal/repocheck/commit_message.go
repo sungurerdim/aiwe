@@ -46,11 +46,13 @@ var breakingFooterPattern = regexp.MustCompile(`(?i)^breaking[ -]change:`)
 // captures the keyword and the <owner>/<repo>.
 var issueRefPattern = regexp.MustCompile(`^(Refs|Closes) ([A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9._-]+)#[1-9][0-9]*$`)
 
-// closingKeywordPattern matches any GitHub closing keyword, with or without a colon, followed by an
-// issue reference (#N, <owner>/<repo>#N, a GitHub issue URL or GH-N), in any case and anywhere in a
-// line; the strict whole-line Closes form is the only allowed occurrence.
-var closingKeywordPattern = regexp.MustCompile(`(?i)\b(?:close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)\b:?\s*` +
-	`(?:(?:[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9._-]+)?#[1-9][0-9]*|https?://github\.com/[^/\s]+/[^/\s]+/issues/[0-9]+|GH-[0-9]+)`)
+// closingKeywordPattern matches any GitHub closing keyword, with or without a colon and any Unicode
+// space around it, followed by an issue reference (#N, <owner>/<repo>#N, GH-N, or a GitHub issue or
+// pull request URL), in any case and anywhere in a line; the strict whole-line Closes form is the
+// only allowed occurrence.
+var closingKeywordPattern = regexp.MustCompile(`(?i)\b(?:close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)\b[\s\p{Z}]*:?[\s\p{Z}]*` +
+	`(?:(?:[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9._-]+)?#[1-9][0-9]*|GH-[0-9]+|` +
+	`https?://(?:www\.)?github\.com/[^/\s]+/[^/\s]+/(?:issues|pull)/[0-9]+)`)
 
 // effectPattern matches the Effect line a closing commit carries: Effect: <before> → <after>.
 var effectPattern = regexp.MustCompile(`^Effect: \S.* → \S`)
