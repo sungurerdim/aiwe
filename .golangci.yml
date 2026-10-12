@@ -25,9 +25,9 @@ linters:
       analyze-types: true
       forbid:
         - pattern: ^os\.RemoveAll$
-          msg: recursive removal only in internal/core/remove.go (DR-25)
+          msg: recursive removal only in internal/core/remove.go (DR-11, SPEC §5.15)
         - pattern: ^os\.(Getenv|LookupEnv|Environ)$
-          msg: the environment is read only in internal/core/env.go (SPEC §5.4)
+          msg: the environment is read only in internal/core/env.go (SPEC §5.3)
         - pattern: ^panic$
           msg: panic only through internal/core/assert.go (SPEC §5.3)
         - pattern: ^context\.Background$

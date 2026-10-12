@@ -87,7 +87,7 @@ func TestOwnerKeyFIFO(t *testing.T) {
 	if err := os.Remove(key); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := exec.Command("mkfifo", "-m", "600", key).CombinedOutput(); err != nil {
+	if out, err := exec.CommandContext(t.Context(), "mkfifo", "-m", "600", key).CombinedOutput(); err != nil {
 		t.Fatalf("mkfifo %s: %v: %s", key, err, out)
 	}
 	done := make(chan error, 1)

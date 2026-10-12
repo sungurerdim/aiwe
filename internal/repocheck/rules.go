@@ -78,6 +78,9 @@ func repoFiles(sec []string) []string {
 
 // firstParagraph returns the lines of sec from its first non-blank line up to the next blank line.
 func firstParagraph(sec []string) []string {
+	if len(sec) == 0 {
+		return nil
+	}
 	start := 0
 	for start < len(sec) && strings.TrimSpace(sec[start]) == "" {
 		start++

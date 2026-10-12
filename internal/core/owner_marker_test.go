@@ -140,7 +140,7 @@ func TestOwnerMarkerSwappedForFIFO(t *testing.T) {
 	small := filepath.Join(src, "small")
 	fifo := filepath.Join(src, "fifo")
 	removeTestWrite(t, small, markerTestBad)
-	if out, err := exec.Command("mkfifo", "-m", "600", fifo).CombinedOutput(); err != nil {
+	if out, err := exec.CommandContext(t.Context(), "mkfifo", "-m", "600", fifo).CombinedOutput(); err != nil {
 		t.Fatalf("mkfifo %s: %v: %s", fifo, err, out)
 	}
 	p := filepath.Join(d.Path(), markerFile)
@@ -218,7 +218,7 @@ func TestOwnerMarkerShape(t *testing.T) {
 			if err := os.Remove(p); err != nil {
 				t.Fatal(err)
 			}
-			if out, err := exec.Command("mkfifo", "-m", "600", p).CombinedOutput(); err != nil {
+			if out, err := exec.CommandContext(t.Context(), "mkfifo", "-m", "600", p).CombinedOutput(); err != nil {
 				t.Fatalf("mkfifo %s: %v: %s", p, err, out)
 			}
 		}},
@@ -310,7 +310,11 @@ func TestOwnerMarkerGrownInPlace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open the marker to grow it: %v", err)
 	}
-	defer f.Close()
+	defer func() {
+		if err := f.Close(); err != nil {
+			t.Errorf("close the marker %s: %v", p, err)
+		}
+	}()
 	pad := []byte(strings.Repeat(" ", 2*maxMarkerBytes))
 	space, x := []byte(" "), []byte("x")
 	grow := func(delay time.Duration) error {
@@ -375,7 +379,11 @@ func TestOwnerMarkerTornRead(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open the marker to grow it: %v", err)
 	}
-	defer f.Close()
+	defer func() {
+		if err := f.Close(); err != nil {
+			t.Errorf("close the marker %s: %v", p, err)
+		}
+	}()
 	pad := []byte(strings.Repeat(" ", 2*maxMarkerBytes))
 	space, x := []byte(" "), []byte("x")
 	var cycles atomic.Int64
