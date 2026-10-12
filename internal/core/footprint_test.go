@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -264,7 +265,7 @@ func footprintTestLink(t *testing.T, target, link string) {
 	if err == nil {
 		return
 	}
-	if core.JunctionForTest == nil {
+	if runtime.GOOS != "windows" {
 		t.Fatalf("symlink %s -> %s: %v", link, target, err)
 	}
 	core.JunctionForTest(t, target, link)

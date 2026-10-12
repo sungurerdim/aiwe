@@ -142,7 +142,7 @@ is opened once without blocking and must be a regular file of at most 64 KiB, el
 - `x.go` has its behaviour test in `x_test.go`, or the covering test names it. Tests are table-driven; each row names
   the failure it catches. Every check has a red case on a known-bad input.
 - One contract suite per port, run against every implementation and fake (`providertest.Run`, `trackertest.Run`);
-  the provider suite checks recorded harness flags, no credential leaving env, DR-15, DR-19 and quota classes (§7.6).
+  the provider suite checks recorded harness flags, lean runs, no credential leaving env, DR-15, DR-19, quota classes (§7.6).
 - Parsers of untrusted text (issue body, intake, `gate.json`, sources, catalogue) have a `Fuzz` test. Fixtures use
   realistic values, `t.TempDir()` and `core.CreateOwned`. Live calls sit behind the build tag `smoke`.
 - Source file ≤ 400 lines; test file ≤ 500; non-test function ≤ 60 lines (Q23) and cognitive complexity ≤ 12 (Q12);
@@ -221,7 +221,7 @@ development tools (§12.2) are never user prerequisites. The MCP layer is the of
 ### 6.3 MCP and CLI
 - The primary interface is an MCP server (`aiwe mcp`, stdio only) that the user's harness session starts; the session's
   lead agent organizes work through its tools: plan, work start, stop and status, models, sources, issue, report
-  (O10). One registry feeds MCP and CLI (DR-16). The skeleton is driven through the CLI (L3).
+  (O10). One registry feeds MCP and CLI (DR-16). The skeleton is driven through the CLI (L3). No host harness is assumed (O13).
 - MCP server start = session start = the model assignment refresh point (§8.1).
 - Long work runs in a detached **work session**: an engine process that outlives the harness session. Starting it
   returns a work session id. MCP tools and `aiwe runs list` query it. `aiwe runs stop --run <id>` stops one run's tree, records
@@ -272,8 +272,7 @@ Serves DR-10 and DR-11.
   Every check process, the restore command included, gets the same environment.
 - **Collect**: fetch the run branch into the canonical repository as `refs/aiwe/runs/<run-id>`, record residue
   (uncommitted paths, diff stat), remove the clone; path lists are read from git output, never passed as argv.
-- **Sweeper**: at start and after every run, collect each dead run's clone, then remove temp directories whose owner
-  process is dead (§5.15).
+- **Sweeper**: at start and after each run, collect dead runs' clones, then remove temp dirs whose owner process died (§5.15).
 - Measured (§17): shallow `file://` clone 1.27–2.42 s and 7.9 MB; removal 0.35–0.74 s. Rejected: worktrees (shared
   refs, config and hooks); `--shared` (breaks when the source prunes).
 ### 6.6 Concurrent sessions (O11)
@@ -410,16 +409,16 @@ terminal-only `aiwe artefact submit`, then the same proof · rung 3: a product d
   the signal (`NoTests`); Go prints `[no tests to run]` and exits 0 (§17).
 - **Early diff checks** (after the skeleton): each `aiwe verify` also runs D1, D3, D4, D7, D10, D11 and D16.
 - **Roots**: each check runs with all three roots in one fresh owned directory; an entry left there is red.
-- When the last recorded verify's tree digest equals the final tree, it is the evidence. The
-  full gate runs once per batch and in CI, only for changed keys. Adapters add a harness command restriction where
-  the harness supports one. Concurrent gates follow DR-3; slot waits are recorded apart.
+- When the last recorded verify's tree digest equals the final tree, it is the evidence. The full gate runs once per
+  batch and in CI, only for changed keys. Adapters add a harness command restriction where the harness supports one.
+  Concurrent gates follow DR-3; slot waits are recorded apart.
 ## 8. Data contracts
 Every engine file carries `formatVersion`; parsers are fail-closed (DR-6); JSON keys are `camelCase`.
 ### 8.1 Sources and model choice — `<state>/sources.json`
 ```json
 { "formatVersion": 1,
   "sources": [
-    { "id": "sub-a", "adapter": "claude-code", "kind": "subscription", "provider": "<provider-id>" },
+    { "id": "sub-a", "adapter": "opencode", "kind": "subscription", "provider": "<provider-id>" },
     { "id": "api-b", "adapter": "openai-chat", "kind": "api", "provider": "<provider-id>",
       "credentialEnv": "B_API_KEY", "baseUrlEnv": "B_BASE_URL", "spendCap": { "usd": 50, "since": "<date>" } } ],
   "overrides": { "pin": { "engineer": [ { "source": "sub-a", "model": "<model-id>", "effort": "<level>" } ] },
@@ -667,8 +666,10 @@ type Provider interface {
   `models` (fallback list when discovery has none), `reasoning {request, carry}`, `errors [{status, code, class}]`,
   `balance {path, field, currency}`, `keyEnv` (the API key's usual variable name), and for a harness `cli {binary, flags, loginEnv, limitText}`. A new compatible API
   or known harness is one file and one row (DR-3); each value cites a §17 fact or the issue that measured it.
-- Skeleton: `claude-code` (L3). M-Usable (§13): `opencode`, `cursor`, `codex` and `gemini` (O12), and `openai-chat`
-  with one provider data file per API provider.
+- **Lean run** (O13): the adapter cuts the harness's injected context (default system prompt, instruction files, unused
+  tools, codebase indexing) to what the role needs, keeps a default only when measured to help, records tokens and cost.
+- Skeleton: `opencode` 2.0 (L3, O13). M-Usable (§13): `cursor` first, then `claude-code`, `codex` and `gemini` (O12),
+  and `openai-chat` with one provider data file per API provider.
 ## 11. Quality system applied to managed projects
 Mechanical: stack detection, gate derivation and base proof (§7.1); intake and issue parse (§8.4); tests red on base
 before code for every behaviour unit (§7.3 step 5); unit verify once per key (§7.8); scope check (DR-9); payload scan before text leaves the
@@ -757,10 +758,9 @@ Each milestone has one goal issue; the tracker holds the units as its sub-issues
 - **M-Skeleton**: CI runs on `main`, and `aiwe work --repo . --unit N` takes one aiwe issue to a merged pull request
   with zero owner actions, running on pinned models; this is the self-hosting point (O1, DR-23).
 - **M-Usable**: the MCP server, the work session and self-update (O10), concurrent sessions (O11) and model choice
-  (O9) first; sources with fallback and quota reaction; the opencode, cursor, codex and
-  gemini CLI adapters (O12) and the API adapter with its agent loop (O2); `aiwe plan`; unit
-  validation; core D-checks; the security-reviewer; a sandbox-repository end-to-end run; the repository turns public
-  and `v0.1.0` ships (L9).
+  (O9) first; sources with fallback and quota reaction; the cursor, claude-code, codex and gemini CLI adapters (O12,
+  O13) and the API adapter with its agent loop (O2); `aiwe plan`; unit validation; core D-checks; the
+  security-reviewer; a sandbox-repository end-to-end run; the repository turns public and `v0.1.0` ships (L9).
 - **M-Tracking**: `aiwe issue` and `aiwe report` across repositories (O8).
 - **M-Trust**: `aiwe metrics` M1–M5, invariance, escaped defects, mutation, the debugger, stack profiles beyond Go and
   the adaptation ladder; `1.0.0` ships (L9).
@@ -805,9 +805,10 @@ Each decision keeps its id.
 | O10 | The primary interface is an MCP server started by the user's harness session, with a detached work session and self-update (§6.3); placed at the start of M-Usable (owner, 2026-10-12). | valid |
 | O11 | Many concurrent sessions work without conflict and without a daemon (§6.6); placed in M-Usable with O10 (owner, 2026-10-12). | valid |
 | O12 | The Codex and Gemini CLI adapters come after self-hosting, in M-Usable (owner, 2026-10-12, #209). | valid |
+| O13 | The skeleton harness is opencode 2.0 (the owner's OpenCode Go subscription); Cursor is the first M-Usable adapter and Claude Code a later one. Any harness may host the lead session; nothing in aiwe (MCP server, CLI, docs, `AGENTS.md`) depends on one host. Every agent run is lean (§10.2) (owner, 2026-10-12, #245). | valid |
 | L1 | This file holds product, architecture and contracts, ≤ 900 lines; the delivery plan and the unknowns live in tracker issues; §17 keeps only cited facts (lead, 2026-10-12). | valid |
 | L2 | Design rules consolidate to about 22 with one enforcement each; `repo/rules` stops parsing tables of this file (lead, 2026-10-12). | valid |
-| L3 | The skeleton binds one tracker (GitHub over HTTPS with the standard library; gh is optional, §10.1) and one harness (Claude Code CLI), driven through the CLI; the MCP server opens M-Usable (O10) (lead, 2026-10-12). | valid |
+| L3 | The skeleton binds one tracker (GitHub over HTTPS with the standard library; gh is optional, §10.1) and one harness (opencode 2.0 in its leanest documented headless mode, O13), driven through the CLI; the MCP server opens M-Usable (O10) (lead, 2026-10-12). | valid |
 | L4 | `tool` lines move to `tools/go.mod`, run with `go tool -modfile=tools/go.mod` (lead, 2026-10-12). | valid |
 | L5 | Hand-worked units until self-hosting follow risk tiers: test-author only for risky work; one auditor run per batch; risky units reviewed separately (lead, 2026-10-12). | valid |
 | L6 | The owner key and the keyed hash on owned-directory records and markers are removed; removal keeps the root, link, marker and mount-point checks. Reason: a forged marker can only remove aiwe's own temp directory, and a run below `os-sandbox` could read the key anyway (lead, 2026-10-12). | valid |
@@ -870,8 +871,7 @@ Checked 2026-10-10 unless dated.
   altered subscription OAuth traffic saw bans about one minute after connecting, and its ban detector never
   auto-recovers (OmniRoute issues, `BAN_DETECTION.md`).
 - Market: no surveyed tool combines engine-run gates, an independent auditor, credential-free multi-source routing and
-  per-unit metrics; rotating consumer accounts of one provider is the high-risk pattern. Source: lead survey,
-  2026-10-12.
+  per-unit metrics; rotating consumer accounts of one provider is the high-risk pattern (lead survey, 2026-10-12).
 - Runtime survey (one Windows 11 x64 machine): binary Go 7.3–7.9 MB, Node single executable 100.7–151.1 MB, Bun
   64.7–99.8 MB; MCP `initialize` median Go 22.2 ms, Node 147.4 ms; idle memory Go 9.1 MB, Node 49.7 MB, Bun 75.5 MB;
   Go cross-compiled to five targets with `CGO_ENABLED=0` and no download, Bun failed on all six; `go vet` caught 0 of 5

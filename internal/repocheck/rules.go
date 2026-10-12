@@ -58,16 +58,36 @@ func missingRepoFiles(repo string, lines []string) ([]Finding, error) {
 	return found, nil
 }
 
-// repoFiles returns the files of the §12.1 list: the backticked names of its first sentence,
-// outside parentheses. A parenthesis explains a file, and the sentences after the list name what
-// does not exist or which commands to run, so neither names a required file.
+// repoFiles returns the files of the §12.1 list: the backticked names of its first paragraph,
+// outside parentheses, except those of a sentence that opens with "No". A parenthesis explains a
+// file, a "No" sentence names what does not exist, and the paragraphs after the list name commands,
+// so none of them names a required file. The whole paragraph is read, so a full stop inside the
+// list, such as "e.g.", never drops the files after it.
 func repoFiles(sec []string) []string {
-	list := firstSentence(stripParens(strings.Join(sec, "\n")))
 	var names []string
-	for _, m := range backtickPattern.FindAllStringSubmatch(list, -1) {
-		names = append(names, m[1])
+	for _, s := range sentences(stripParens(strings.Join(firstParagraph(sec), "\n"))) {
+		if words := strings.Fields(s); len(words) > 0 && words[0] == "No" {
+			continue
+		}
+		for _, m := range backtickPattern.FindAllStringSubmatch(s, -1) {
+			names = append(names, m[1])
+		}
 	}
 	return names
+}
+
+// firstParagraph returns the lines of sec from its first non-blank line up to the next blank line.
+func firstParagraph(sec []string) []string {
+	start := 0
+	for start < len(sec) && strings.TrimSpace(sec[start]) == "" {
+		start++
+	}
+	for end := start; end < len(sec); end++ {
+		if strings.TrimSpace(sec[end]) == "" {
+			return sec[start:end]
+		}
+	}
+	return sec[start:]
 }
 
 // stripParens removes every parenthesised span of s, nested ones included.
@@ -87,18 +107,22 @@ func stripParens(s string) string {
 	return b.String()
 }
 
-// firstSentence returns s up to the first full stop outside backticks that ends a sentence.
-func firstSentence(s string) string {
+// sentences splits s at every full stop outside backticks that is followed by a space, a line
+// break or the end of s.
+func sentences(s string) []string {
+	var out []string
 	inTick := false
+	from := 0
 	for i := 0; i < len(s); i++ {
 		switch {
 		case s[i] == '`':
 			inTick = !inTick
 		case s[i] == '.' && !inTick && (i+1 == len(s) || s[i+1] == ' ' || s[i+1] == '\n'):
-			return s[:i]
+			out = append(out, s[from:i])
+			from = i + 1
 		}
 	}
-	return s
+	return append(out, s[from:])
 }
 
 // section returns the lines after the heading that starts with head, up to the next line that

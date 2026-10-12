@@ -281,7 +281,15 @@ func ownerKeyTestSDDL(t *testing.T, p string) (string, string) {
 	t.Helper()
 	script := "[Security.Principal.WindowsIdentity]::GetCurrent().User.Value; (Get-Acl -LiteralPath '" +
 		strings.ReplaceAll(p, "'", "''") + "').Sddl"
-	out, err := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", script).CombinedOutput()
+	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", script)
+	// Under PowerShell 7 (the GitHub Actions default shell) PSModulePath names PowerShell 7's
+	// module folders first; Windows PowerShell 5.1 then fails to load Get-Acl's module. Without
+	// the variable, 5.1 builds its own default path.
+	cmd.Env = slices.DeleteFunc(os.Environ(), func(kv string) bool {
+		k, _, _ := strings.Cut(kv, "=")
+		return strings.EqualFold(k, "PSModulePath")
+	})
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("read the ACL of %s: %v: %s", p, err, out)
 	}
@@ -324,20 +332,32 @@ func ownerKeyTestAllowed(t *testing.T, p, sddl string) (allowed []string, flags,
 func ownerKeyTestOwnerOnly(t *testing.T, p string, protected bool) {
 	t.Helper()
 	user, sddl := ownerKeyTestSDDL(t, p)
-	trusted := map[string]bool{user: true, "SY": true, "S-1-5-18": true, "BA": true,
-		"S-1-5-32-544": true, "CO": true, "S-1-3-0": true}
+	// SDDL prints a well-known principal as an alias, such as LA for the RID-500 user the GitHub
+	// runner uses, so each principal is compared by its SID value.
+	trusted := map[string]bool{user: true, "S-1-5-18": true, "S-1-5-32-544": true, "S-1-3-0": true}
 	allowed, flags, owner := ownerKeyTestAllowed(t, p, sddl)
-	if !trusted[owner] {
+	if !trusted[ownerKeyTestSID(t, owner)] {
 		t.Errorf("%s is owned by %s; want the current user (%s), SYSTEM or Administrators", p, owner, user)
 	}
 	if protected && !strings.Contains(flags, "P") {
 		t.Errorf("%s inherits its parent's ACEs (DACL flags %q, SDDL %s); want inheritance cut", p, flags, sddl)
 	}
 	for _, sid := range allowed {
-		if !trusted[sid] {
+		if !trusted[ownerKeyTestSID(t, sid)] {
 			t.Errorf("%s allows %s (SDDL %s); want only the current user, SYSTEM and Administrators", p, sid, sddl)
 		}
 	}
+}
+
+// ownerKeyTestReal returns the real path of p, the spelling a refusal detail names: a temp dir given
+// as an 8.3 short name or in another letter case resolves to its long, on-disk name.
+func ownerKeyTestReal(t *testing.T, p string) string {
+	t.Helper()
+	rp, err := realPath(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rp
 }
 
 // ownerKeyTestRefused fails the test when OpenOwner of p, an open or foreign root or owner key, is
@@ -346,7 +366,7 @@ func ownerKeyTestOwnerOnly(t *testing.T, p string, protected bool) {
 func ownerKeyTestRefused(t *testing.T, what, p string, o *Owner, err error, dir, foreign bool) {
 	t.Helper()
 	if !errors.Is(err, ErrRootUnsafe) || ErrorResult(err).Outcome != "root_unsafe" {
-		t.Errorf("OpenOwner with %s %s: owner %t, error %v; want %v (§5.10)", p, what, o != nil, err, ErrRootUnsafe)
+		t.Errorf("OpenOwner with %s %s: owner %t, error %v; want %v (§5.15)", p, what, o != nil, err, ErrRootUnsafe)
 		return
 	}
 	if next := outcomeRow("root_unsafe").Next; !strings.Contains(next, "other user") || strings.Contains(next, "detail names the step") {
@@ -410,7 +430,7 @@ func TestOwnerKeyACL(t *testing.T) {
 		r := removeTestRoots(t, ownerKeyTestPermissiveParent(t))
 		removeTestMkdir(t, r.State)
 		o, err := OpenOwner(r, self)
-		ownerKeyTestRefused(t, "inheriting Authenticated Users modify", r.State, o, err, true, false)
+		ownerKeyTestRefused(t, "inheriting Authenticated Users modify", ownerKeyTestReal(t, r.State), o, err, true, false)
 		if removeTestExists(t, filepath.Join(r.State, ownerKeyFile)) {
 			t.Errorf("OpenOwner refused %s yet wrote a key into it", r.State)
 		}
@@ -429,7 +449,7 @@ func TestOwnerKeyACL(t *testing.T) {
 			target := filepath.Join(r.State, c.target)
 			ownerKeyTestGrant(t, target, c.perm)
 			o, err := OpenOwner(r, self)
-			ownerKeyTestRefused(t, "granting Authenticated Users "+c.perm, target, o, err, c.target != ownerKeyFile, false)
+			ownerKeyTestRefused(t, "granting Authenticated Users "+c.perm, ownerKeyTestReal(t, target), o, err, c.target != ownerKeyFile, false)
 		})
 	}
 }
