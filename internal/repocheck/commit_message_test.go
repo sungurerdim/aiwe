@@ -275,6 +275,16 @@ func TestCommitMessageLengths(t *testing.T) {
 			t.Fatalf("body_line_length findings %+v for Note trailer, want one at line 6", got)
 		}
 	})
+
+	t.Run("a BREAKING CHANGE footer in the trailer block is checked for length", func(t *testing.T) {
+		for _, key := range []string{"BREAKING CHANGE: ", "BREAKING-CHANGE: "} {
+			msg := "feat: x\n\nRefs octo-org/widget#1\n" + fill(t, key+"the result drops the field ", 73) + "\n"
+			got := findings(msg, "body_line_length")
+			if len(got) != 1 || got[0].Line != 4 {
+				t.Fatalf("body_line_length findings %+v for a long %q footer, want one at line 4", got, key)
+			}
+		}
+	})
 }
 
 // TestCommitMessageClosingKeywords catches a closing keyword that GitHub would act on but that is
@@ -316,8 +326,37 @@ func TestCommitMessageClosingKeywords(t *testing.T) {
 		has(t, "fix: x\n\nCloses octo-org/widget#7 trailing\n"+refLine, "closing_keyword_form", 3)
 	})
 
-	t.Run("indented closing keyword is exempt", func(t *testing.T) {
-		no(t, "fix: x\n\n    closes octo-org/widget#7\n"+refLine, "closing_keyword_form")
+	t.Run("indented closing keyword is not exempt", func(t *testing.T) {
+		has(t, "fix: x\n\n    closes octo-org/widget#7\n"+refLine, "closing_keyword_form", 3)
+	})
+
+	t.Run("closing keyword in a code span line is not exempt", func(t *testing.T) {
+		has(t, "fix: x\n\n`closes octo-org/widget#7`\n"+refLine, "closing_keyword_form", 3)
+	})
+
+	t.Run("closing keyword inside a fence is not exempt", func(t *testing.T) {
+		has(t, "fix: x\n\n```\nFixes #7\n```\n"+refLine, "closing_keyword_form", 4)
+	})
+
+	t.Run("closing keyword in the header", func(t *testing.T) {
+		has(t, "fix: closes #8"+refLine, "closing_keyword_form", 1)
+	})
+
+	t.Run("closing keyword with a colon", func(t *testing.T) {
+		has(t, "fix: x\n\nFixes: #8\n"+refLine, "closing_keyword_form", 3)
+		has(t, "fix: x\n\nEffect: a → b\nCloses: octo-org/widget#8\n"+refLine, "closing_keyword_form", 4)
+	})
+
+	t.Run("closing keyword with an issue URL", func(t *testing.T) {
+		has(t, "fix: x\n\nFixes https://github.com/octo-org/widget/issues/8\n"+refLine, "closing_keyword_form", 3)
+	})
+
+	t.Run("closing keyword with a GH number", func(t *testing.T) {
+		has(t, "fix: x\n\ncloses GH-8\n"+refLine, "closing_keyword_form", 3)
+	})
+
+	t.Run("closing word without an issue reference is prose", func(t *testing.T) {
+		no(t, "fix: the fix closes the gap\n\nThe step fixes the exit code.\n"+refLine, "closing_keyword_form")
 	})
 
 	t.Run("strict Closes line is accepted", func(t *testing.T) {
