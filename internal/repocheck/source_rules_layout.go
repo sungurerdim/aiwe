@@ -78,31 +78,61 @@ func (c *sourceChecker) checkEnvReads(file *ast.File) {
 	if c.path == envFile || c.isTestFile() {
 		return
 	}
-	ast.Inspect(file, c.visitEnvRead)
+	ast.Inspect(file, osUses{c: c, rule: ruleEnvRead, names: envReads()}.visit)
 }
 
-// visitEnvRead flags n when it is os.<read> under any import name or, under a dot import of os, a
-// bare <read>; the selected name of a selector is never visited as a bare identifier.
-func (c *sourceChecker) visitEnvRead(n ast.Node) bool {
+// ruleRootRead flags a plain os read by path outside rootReadFiles (SPEC §5.6).
+const ruleRootRead = "root_read"
+
+// rootReads are the os functions that read a file by path and follow a link out of a root.
+func rootReads() []string { return []string{"ReadFile", "Open", "OpenFile", "Stat"} }
+
+// rootReadFiles read by a path that is not under a repository root: procstart_unix.go reads fixed
+// /proc paths, remove.go stats the roots it compares, owner_key.go reads its state-root ledger.
+func rootReadFiles() []string {
+	return []string{"internal/core/procstart_unix.go", "internal/core/remove.go", "internal/core/owner_key.go"}
+}
+
+// checkRootReads flags each plain os read by path outside rootReadFiles and test files; a file
+// under a repository or state root is read through an *os.Root, which keeps links inside it
+// (SPEC §5.6).
+func (c *sourceChecker) checkRootReads(file *ast.File) {
+	if slices.Contains(rootReadFiles(), c.path) || c.isTestFile() {
+		return
+	}
+	ast.Inspect(file, osUses{c: c, rule: ruleRootRead, names: rootReads()}.visit)
+}
+
+// osUses flags each use of one of names from package os, called or taken as a value.
+type osUses struct {
+	c     *sourceChecker
+	rule  string
+	names []string
+}
+
+// visit flags n when it is os.<name> under any import name or, under a dot import of os, a bare
+// <name>; the selected name of a selector is never visited as a bare identifier.
+func (u osUses) visit(n ast.Node) bool {
 	switch n := n.(type) {
 	case *ast.SelectorExpr:
-		if x, ok := n.X.(*ast.Ident); ok && c.imports[x.Name] == "os" && slices.Contains(envReads(), n.Sel.Name) {
-			c.add(ruleEnvRead, n.Pos())
+		if x, ok := n.X.(*ast.Ident); ok && u.c.imports[x.Name] == "os" && slices.Contains(u.names, n.Sel.Name) {
+			u.c.add(u.rule, n.Pos())
 		}
-		ast.Inspect(n.X, c.visitEnvRead)
+		ast.Inspect(n.X, u.visit)
 		return false
 	case *ast.Ident:
-		if c.imports[".os"] == "os" && slices.Contains(envReads(), n.Name) {
-			c.add(ruleEnvRead, n.Pos())
+		if u.c.imports[".os"] == "os" && slices.Contains(u.names, n.Name) {
+			u.c.add(u.rule, n.Pos())
 		}
 	}
 	return true
 }
 
-// checkIOImports flags each IO import, aliased or grouped, in a file that may not import IO, and
-// each environment read outside envFile, which is process IO too.
+// checkIOImports flags each IO import, aliased or grouped, in a file that may not import IO, each
+// environment read outside envFile, which is process IO too, and each plain read by path.
 func (c *sourceChecker) checkIOImports(file *ast.File) {
 	c.checkEnvReads(file)
+	c.checkRootReads(file)
 	if c.mayImportIO() {
 		return
 	}

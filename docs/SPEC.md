@@ -310,6 +310,15 @@ adapters. Outside `*_io.go`, only `cmd/aiwe/main.go`, `internal/cmd/repocheck/ma
 units 0.3, 0.20, 0.5, 0.6, 0.18 and 0.21 (§14), with their `_<os>` variants, may import `os` and `os/exec`. Enforced: check
 `repo/source-rules` (other files may not import `os`, `os/exec`, `net` or `net/http`).
 
+A file under a repository or state root is read through an `*os.Root` (`os.OpenRoot`,
+`os.OpenInRoot`), never by path: a path read follows a link inside the root out of it.
+`filepath.Clean` does not fix gosec G304; it removes `..` but no link. Outside test files, only
+`core/procstart_unix.go` (fixed `/proc` paths), `core/remove.go` (the roots it compares) and
+`core/owner_key.go` (its ledger) call `os.ReadFile`, `os.Open`, `os.OpenFile` or `os.Stat`.
+Enforced: check `repo/source-rules` (rule `root_read`). The root refuses a symlink or junction
+whose target is absolute, even when the target is inside the root. It cannot see a hardlink: a
+hardlink inside the root to a file outside it, on the same volume, is read.
+
 ### 5.7 One command registry
 ```go
 core.Command{Module: "engine", Object: "unit", Verb: "run", Params: []string{"repo", "unit"},
