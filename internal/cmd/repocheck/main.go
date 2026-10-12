@@ -146,9 +146,15 @@ func runCheck(ctx context.Context, c check, repo string) checkResult {
 	return checkResult{Check: c.name, Result: resultGreen, Detail: m.detail}
 }
 
-// runCIShape checks the shape of the CI workflow of repo and reports its counts (DR-42).
+// runCIShape checks the shape of the CI workflow of repo and reports its counts (DR-42). The
+// reads go through an os.Root at repo, so a workflows link out of the repository is an error.
 func runCIShape(_ context.Context, repo string) (measured, error) {
-	rep, present, err := repocheck.CIShape(os.DirFS(repo))
+	root, err := os.OpenRoot(repo)
+	if err != nil {
+		return measured{}, fmt.Errorf("ci-shape: %w", err)
+	}
+	defer func() { _ = root.Close() }()
+	rep, present, err := repocheck.CIShape(root.FS())
 	if err != nil || !present {
 		return measured{absent: ".github/workflows/ci.yml"}, err
 	}
