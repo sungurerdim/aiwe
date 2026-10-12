@@ -356,6 +356,9 @@ event, detail}`. No colour codes. Benefit: logs are machine-read. Enforced: test
 ### 5.12 Config precedence
 flags > environment variables > settings files > built-in defaults. Settings files are
 `<state>/settings.json` and `<state>/settings.*.json`; other state files are not settings.
+A settings file is opened once, without blocking, and must be a regular file of at most 64 KiB,
+checked on that handle and read through it; a FIFO, a directory or a larger file is
+`config_invalid` naming the file.
 `aiwe config show` prints each value and its origin. Every path parameter resolves against `--repo`;
 a relative path without `--repo` is a `usage` error; the process working directory is never used.
 The one exception is `--repo` itself: a relative `--repo` resolves once, at the CLI boundary,

@@ -13,6 +13,9 @@ import (
 // ErrConfigInvalid is returned when a state file cannot be read as settings (SPEC §5.12).
 var ErrConfigInvalid = errors.New("config_invalid")
 
+// maxSettingsBytes caps one settings file (SPEC §5.12); a larger file is config_invalid.
+const maxSettingsBytes = 64 << 10
+
 // ConfigOrigin names the source a resolved value came from.
 type ConfigOrigin string
 
@@ -109,7 +112,7 @@ func readConfigState(dir string) (map[string]string, error) {
 // entry order.
 func mergeConfigFiles(state map[string]string, root *os.Root, dir string, entries []fs.DirEntry) error {
 	for _, e := range entries {
-		if e.IsDir() || !isSettingsFile(e.Name()) {
+		if !isSettingsFile(e.Name()) {
 			continue
 		}
 		if err := mergeConfigFile(state, root, dir, e.Name()); err != nil {
@@ -133,9 +136,9 @@ func isSettingsFile(name string) bool {
 // The file is read through root, so a link out of dir is refused, never followed.
 func mergeConfigFile(state map[string]string, root *os.Root, dir, name string) error {
 	path := filepath.Join(dir, name)
-	b, err := root.ReadFile(name)
+	b, err := ReadRegularCapped(root, name, maxSettingsBytes)
 	if err != nil {
-		return configInvalid("a readable state file", fmt.Sprintf("%s: %v", path, err))
+		return configInvalid("a regular state file of at most 64 KiB", fmt.Sprintf("%s: %v", path, err))
 	}
 	var file map[string]string
 	if err := json.Unmarshal(b, &file); err != nil {

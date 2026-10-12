@@ -3,9 +3,9 @@ package gates
 import (
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
+	"path/filepath"
 
 	"github.com/sungurerdim/aiwe/internal/core"
 )
@@ -56,12 +56,20 @@ func readDefinition(repo string) (Definition, error) {
 	return ParseDefinition(data)
 }
 
-// readInRoot reads the file name under dir; a name or link that leads out of dir is an error.
-func readInRoot(dir, name string) ([]byte, error) {
-	f, err := os.OpenInRoot(dir, name)
+// maxGateDefinitionBytes caps gate.json; a larger file is refused unread (#199).
+const maxGateDefinitionBytes = 1 << 20
+
+// readInRoot reads the file name under dir; a name or link that leads out of dir, a non-regular
+// file or a file over maxGateDefinitionBytes is an error that names the path.
+func readInRoot(dir, name string) (data []byte, err error) {
+	root, err := os.OpenRoot(dir)
 	if err != nil {
 		return nil, err
 	}
-	data, err := io.ReadAll(f)
-	return data, errors.Join(err, f.Close())
+	defer func() { err = errors.Join(err, root.Close()) }()
+	data, err = core.ReadRegularCapped(root, name, maxGateDefinitionBytes)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", filepath.Join(dir, name), err)
+	}
+	return data, nil
 }

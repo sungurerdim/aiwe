@@ -3,9 +3,12 @@ package core_test
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sungurerdim/aiwe/internal/core"
 )
@@ -39,6 +42,38 @@ func configTestWriteState(t *testing.T, files map[string]string) string {
 		}
 	}
 	return dir
+}
+
+// configTestWriteSized writes a valid settings object of exactly size bytes to path.
+func configTestWriteSized(t *testing.T, path string, size int) {
+	t.Helper()
+	head, tail := `{"logLevel": "`, `"}`
+	body := head + strings.Repeat("e", size-len(head)-len(tail)) + tail
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("write state file %s: %v", path, err)
+	}
+}
+
+// configTestResolveWithin resolves the state directory dir and returns the error, failing when
+// the read still blocks after 1 s; a writer opened on path then releases a blocked FIFO open.
+func configTestResolveWithin(t *testing.T, dir, path string) error {
+	t.Helper()
+	done := make(chan error, 1)
+	go func() {
+		_, err := core.ResolveConfig(configTestSettings(), nil, configTestGetenv(nil), dir)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(time.Second):
+		if w, err := os.OpenFile(path, os.O_WRONLY, 0); err == nil {
+			_ = w.Close()
+		}
+		<-done
+		t.Fatalf("ResolveConfig of %s still blocked after 1 s; want config_invalid", path)
+		return nil
+	}
 }
 
 // configTestFind returns the resolved value of name, failing when it is missing or listed twice.
@@ -280,6 +315,67 @@ func TestConfig(t *testing.T) {
 		got, err := core.ResolveConfig(configTestSettings(), nil, configTestGetenv(nil), dir)
 		if !errors.Is(err, core.ErrConfigInvalid) {
 			t.Fatalf("ResolveConfig = %+v, %v; want an error that is core.ErrConfigInvalid", got, err)
+		}
+	})
+
+	t.Run("settings file that is not a regular file of bounded size read as settings", func(t *testing.T) {
+		// SPEC §5.12: a settings file is a regular file of at most 64 KiB, checked on the open
+		// handle; anything else is config_invalid, returned without hanging (#199).
+		const settingsCap = 64 << 10
+		tests := []struct {
+			name      string
+			unix      bool
+			make      func(t *testing.T, path string)
+			wantValid bool
+		}{
+			{name: "file at the cap refused", wantValid: true,
+				make: func(t *testing.T, path string) { configTestWriteSized(t, path, settingsCap) }},
+			{name: "file one byte over the cap accepted",
+				make: func(t *testing.T, path string) { configTestWriteSized(t, path, settingsCap+1) }},
+			{name: "directory under the settings name skipped",
+				make: func(t *testing.T, path string) {
+					if err := os.Mkdir(path, 0o700); err != nil {
+						t.Fatal(err)
+					}
+				}},
+			{name: "FIFO under the settings name blocks the read", unix: true,
+				make: func(t *testing.T, path string) {
+					if out, err := exec.CommandContext(t.Context(), "mkfifo", "-m", "600", path).CombinedOutput(); err != nil {
+						t.Fatalf("mkfifo %s: %v: %s", path, err, out)
+					}
+				}},
+		}
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				if tc.unix && runtime.GOOS == "windows" {
+					t.Skip("a FIFO is a Unix file type")
+				}
+				dir := configTestWriteState(t, nil)
+				path := filepath.Join(dir, "settings.json")
+				tc.make(t, path)
+				err := configTestResolveWithin(t, dir, path)
+				if tc.wantValid && err != nil {
+					t.Fatalf("ResolveConfig: %v; want a settings file at the cap read", err)
+				}
+				if !tc.wantValid && !errors.Is(err, core.ErrConfigInvalid) {
+					t.Fatalf("ResolveConfig = %v; want an error that is core.ErrConfigInvalid", err)
+				}
+				if !tc.wantValid && !strings.Contains(err.Error(), "settings.json") {
+					t.Errorf("ResolveConfig = %v; want the error to name settings.json", err)
+				}
+			})
+		}
+	})
+
+	t.Run("oversized settings file read whole before the cap is checked", func(t *testing.T) {
+		dir := configTestWriteState(t, nil)
+		configTestWriteSized(t, filepath.Join(dir, "settings.json"), 16<<20)
+		var before, after runtime.MemStats
+		runtime.ReadMemStats(&before)
+		_, err := core.ResolveConfig(configTestSettings(), nil, configTestGetenv(nil), dir)
+		runtime.ReadMemStats(&after)
+		if alloc := after.TotalAlloc - before.TotalAlloc; !errors.Is(err, core.ErrConfigInvalid) || alloc > 1<<20 {
+			t.Errorf("ResolveConfig of a 16 MiB settings file allocated %d bytes, error %v; want config_invalid within 1 MiB", alloc, err)
 		}
 	})
 
