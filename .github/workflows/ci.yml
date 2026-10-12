@@ -1,0 +1,36 @@
+# Minimal build and test workflow; sk-04 grows it to the full gate.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      # why: the build, vet and test steps need the source tree.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # why: the toolchain must match the go line of go.mod.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      # why: a change that does not compile on this OS fails here.
+      - run: go build ./...
+      # why: vet catches suspicious constructs the compiler accepts.
+      - run: go vet ./...
+      # why: the tests prove the behaviour on this OS.
+      - run: go test ./...
