@@ -35,8 +35,9 @@ func engineOwner(repo string) (*core.Owner, error) {
 }
 
 // readDefinition reads and parses gate.json at the repository root. A missing file is an error,
-// never a green gate (DR-13). The read stays inside repo: a gate.json link that leads out of it is
-// refused.
+// never a green gate (DR-13). The read goes through an os.Root: a gate.json symlink or junction that
+// leads out of repo is refused. A hardlink to a file outside repo, on the same volume, is read; the
+// root cannot see it (SPEC §5.6).
 func readDefinition(repo string) (Definition, error) {
 	path, err := core.ResolvePath(repo, "gate.json")
 	if err != nil {
