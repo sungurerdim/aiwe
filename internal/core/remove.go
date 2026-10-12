@@ -61,11 +61,8 @@ type Owner struct {
 // namedPath is a real path with the name used in errors.
 type namedPath struct{ name, path string }
 
-// OpenOwner checks the roots of r and loads, or makes, the owner key in the state root. A state,
-// temp or cache root that is, or contains, the home, a canonical repository or a file-system root,
-// a temp or cache root that is or contains the state root, and a root that is not owner-only fail
-// with ErrRootUnsafe; nothing is created under it. The state root is checked by location first,
-// so a refused home or "/" is never named for an access change. The owner records self as it is: a ProcessID built by hand gets no start identity.
+// OpenOwner checks the roots of r (checkRootsSafe), creating nothing under a refused one, then loads
+// or makes the owner key in the state root. A hand-built ProcessID self gets no start identity.
 func OpenOwner(r OwnedRoots, self ProcessID) (*Owner, error) {
 	if self.PID <= 0 || self.Start.IsZero() {
 		return nil, fmt.Errorf("owner process %+v: want a pid and a start time", self)
@@ -82,23 +79,32 @@ func OpenOwner(r OwnedRoots, self ProcessID) (*Owner, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := checkRootSafe(namedPath{"state root", paths["state"]}, protected[1:]); err != nil {
-		return nil, fmt.Errorf("%w; next: set %s to a state root apart from the home, every repository and the file-system root",
-			err, productEnv("HOME"))
-	}
-	for _, n := range []string{"temp", "cache"} {
-		if err := checkRootSafe(namedPath{n + " root", paths[n]}, protected); err != nil {
-			return nil, err
-		}
-		if err := checkOwnerOnly(paths[n]); err != nil {
-			return nil, fmt.Errorf("%s root: %w", n, err)
-		}
+	if err := checkRootsSafe(paths, protected); err != nil {
+		return nil, err
 	}
 	key, err := loadOwnerKey(paths["state"])
 	if err != nil {
 		return nil, err
 	}
 	return &Owner{state: paths["state"], temp: paths["temp"], cache: paths["cache"], key: key, self: self}, nil
+}
+
+// checkRootsSafe refuses (ErrRootUnsafe) a root that is or contains a file-system root, the home or a
+// repository, and a temp or cache root that holds the state root (protected[0]) or is not owner-only.
+// The state root is checked first, by location: its next step names another state root, not access.
+func checkRootsSafe(paths map[string]string, protected []namedPath) error {
+	if err := checkRootSafe(namedPath{"state root", paths["state"]}, protected[1:]); err != nil {
+		return fmt.Errorf("%w; next: set %s to a state root apart from the home, repositories and file-system roots", err, productEnv("HOME"))
+	}
+	for _, n := range []string{"temp", "cache"} {
+		if err := checkRootSafe(namedPath{n + " root", paths[n]}, protected); err != nil {
+			return err
+		}
+		if err := checkOwnerOnly(paths[n]); err != nil {
+			return fmt.Errorf("%s root: %w", n, err)
+		}
+	}
+	return nil
 }
 
 // resolveOwnedRoot returns the real path of the root n. A missing root is made owner-only, and a
