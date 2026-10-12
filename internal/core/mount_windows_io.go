@@ -1,3 +1,5 @@
+//go:build windows
+
 package core
 
 import (
@@ -42,9 +44,10 @@ func mountPointAt(dir *os.File, name string) (mount bool, err error) {
 	if info.attrs&windows.FILE_ATTRIBUTE_REPARSE_POINT == 0 || info.tag != windows.IO_REPARSE_TAG_MOUNT_POINT {
 		return false, nil
 	}
-	buf := make([]byte, windows.MAXIMUM_REPARSE_DATA_BUFFER_SIZE)
+	const size = windows.MAXIMUM_REPARSE_DATA_BUFFER_SIZE
+	buf := make([]byte, size)
 	var n uint32
-	if err := windows.DeviceIoControl(h, windows.FSCTL_GET_REPARSE_POINT, nil, 0, &buf[0], uint32(len(buf)), &n, nil); err != nil {
+	if err := windows.DeviceIoControl(h, windows.FSCTL_GET_REPARSE_POINT, nil, 0, &buf[0], size, &n, nil); err != nil {
 		return false, &fs.PathError{Op: "read reparse point", Path: p, Err: err}
 	}
 	target, err := mountPointTarget(buf[:n])
