@@ -3,6 +3,7 @@ package core_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf16"
+
+	"golang.org/x/sys/windows"
 
 	"github.com/sungurerdim/aiwe/internal/core"
 )
@@ -176,7 +179,12 @@ func startsDecidedLauncher(t *testing.T, program, dir, decided string) {
 func TestLauncherCommandLineLimit(t *testing.T) {
 	const limit = 8191
 	launcher := writeProcessLauncher(t, t.TempDir())
-	shell := filepath.Join(os.Getenv("SystemRoot"), "System32", "cmd.exe")
+	// The system directory as Start finds it (GetSystemDirectoryW), not from SystemRoot, which may differ.
+	sysDir, err := windows.GetSystemDirectory()
+	if err != nil {
+		t.Fatalf("find the system directory: %v", err)
+	}
+	shell := filepath.Join(sysDir, "cmd.exe")
 	// The line Start builds for the launcher with the arguments filler and "--next", without filler.
 	fixed := utf16Len(`"` + shell + `" /d /e:ON /v:OFF /s /c ""` + launcher + `" "" "--next""`)
 	units := []struct{ name, r string }{
@@ -215,8 +223,11 @@ func TestLauncherCommandLineLimit(t *testing.T) {
 						t.Fatalf("Start with a %d-unit cmd.exe line = nil error (Wait = %v), want a refusal naming %d",
 							tc.size, waitErr, limit)
 					}
-					if want := "8191"; !strings.Contains(err.Error(), want) {
-						t.Errorf("Start refused a %d-unit line with %v; want the error to name the limit %s", tc.size, err, want)
+					// The temp path in the error may hold any digits, so each match names what it is.
+					for _, want := range []string{fmt.Sprintf("limit of %d", limit), fmt.Sprintf("%d UTF-16 units", tc.size)} {
+						if !strings.Contains(err.Error(), want) {
+							t.Errorf("Start refused a %d-unit line with %v; want the error to hold %q", tc.size, err, want)
+						}
 					}
 					if statErr == nil {
 						t.Errorf("Start refused a %d-unit line with %v, but the launcher ran", tc.size, err)
