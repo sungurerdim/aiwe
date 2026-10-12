@@ -355,6 +355,18 @@ func TestCommitMessageClosingKeywords(t *testing.T) {
 		has(t, "fix: x\n\ncloses GH-8\n"+refLine, "closing_keyword_form", 3)
 	})
 
+	for _, tc := range []struct{ name, line string }{
+		{"pull request URL", "Fixes https://github.com/octo-org/widget/pull/8"},
+		{"www issue URL", "Closes https://www.github.com/octo-org/widget/issues/8"},
+		{"no-break space after the keyword", "Fixes\u00a0#8"},
+		{"em space after the keyword", "Resolves\u2003octo-org/widget#8"},
+		{"space before the colon", "Fixes :#8"},
+	} {
+		t.Run("closing keyword with a "+tc.name, func(t *testing.T) {
+			has(t, "fix: x\n\n"+tc.line+"\n"+refLine, "closing_keyword_form", 3)
+		})
+	}
+
 	t.Run("closing word without an issue reference is prose", func(t *testing.T) {
 		no(t, "fix: the fix closes the gap\n\nThe step fixes the exit code.\n"+refLine, "closing_keyword_form")
 	})
