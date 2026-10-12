@@ -102,12 +102,14 @@ func TestDeps(t *testing.T) {
 	})
 }
 
-// doctorRepo writes a go.mod with the given go line and tool entries into a fresh directory.
+// doctorRepo writes a go.mod with the given go line into a fresh directory, and the tool entries
+// into its tools module, tools/go.mod.
 func doctorRepo(t *testing.T, goLine string) string {
 	t.Helper()
 	dir := t.TempDir()
-	mod := strings.Join([]string{
-		"module " + fixtureModule,
+	writeFixture(t, dir, "go.mod", "module "+fixtureModule+"\n\ngo "+goLine+"\n")
+	writeFixture(t, dir, "tools/go.mod", strings.Join([]string{
+		"module " + fixtureModule + "/tools",
 		"",
 		"go " + goLine,
 		"",
@@ -118,11 +120,20 @@ func doctorRepo(t *testing.T, goLine string) string {
 		"\tgolang.org/x/vuln/cmd/govulncheck",
 		")",
 		"",
-	}, "\n")
-	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(mod), 0o600); err != nil {
-		t.Fatalf("write go.mod: %v", err)
-	}
+	}, "\n"))
 	return dir
+}
+
+// writeFixture writes body to the slash-separated path rel below dir, creating its directory.
+func writeFixture(t *testing.T, dir, rel, body string) {
+	t.Helper()
+	path := filepath.Join(dir, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("create the directory of %s: %v", rel, err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("write %s: %v", rel, err)
+	}
 }
 
 // doctorTools are the tool entries doctorRepo writes.
@@ -379,9 +390,9 @@ func TestDoctor(t *testing.T) {
 		}
 	})
 
-	t.Run("a go tool entry that does not resolve names a command that leaves go.mod unchanged", func(t *testing.T) {
-		// Guards against `go get -tool`, which rewrites go.mod; `go mod download` only fetches
-		// the modules go.mod already pins.
+	t.Run("a go tool entry that does not resolve names a command that leaves tools/go.mod unchanged", func(t *testing.T) {
+		// Guards against `go get -tool`, which rewrites the module file, and against a download
+		// for go.mod, which no longer pins the tools; this one fetches what tools/go.mod pins.
 		env := doctorEnv(doctorRepo(t, "1.27.9"), "linux", "go1.27.9")
 		env.ResolveTool = func(string) error { return errors.New("no such tool") }
 		got, err := repocheck.Doctor(env)
@@ -390,9 +401,47 @@ func TestDoctor(t *testing.T) {
 		}
 		for _, name := range doctorTools() {
 			p := prerequisite(t, got, name)
-			if !strings.HasPrefix(p.Install, "go mod download") || strings.Contains(p.Install, "go get") {
-				t.Errorf("Doctor %s install = %q, want a `go mod download` command", name, p.Install)
+			if p.Install != "go mod download -modfile=tools/go.mod" {
+				t.Errorf("Doctor %s install = %q, want `go mod download -modfile=tools/go.mod`", name, p.Install)
 			}
+		}
+	})
+
+	t.Run("the tool entries are read from tools/go.mod", func(t *testing.T) {
+		// Guards against reading tool lines from go.mod, which then requires every tool dependency.
+		got, err := repocheck.Doctor(doctorEnv(doctorRepo(t, "1.27.9"), "linux", "go1.27.9"))
+		if err != nil {
+			t.Fatalf("Doctor error = %v, want nil", err)
+		}
+		if len(got) != 2+len(doctorTools()) {
+			t.Fatalf("Doctor = %+v, want git, go and the %d tools of tools/go.mod", got, len(doctorTools()))
+		}
+		for _, name := range doctorTools() {
+			if p := prerequisite(t, got, name); !p.Present {
+				t.Errorf("Doctor %s = %+v, want present", name, p)
+			}
+		}
+	})
+
+	t.Run("a tool line left in go.mod is an error", func(t *testing.T) {
+		// Guards against a tool that runs only through the main module: go.mod requires what the
+		// binary links, nothing else.
+		repo := doctorRepo(t, "1.27.9")
+		writeFixture(t, repo, "go.mod", "module "+fixtureModule+"\n\ngo 1.27.9\n\ntool golang.org/x/vuln/cmd/govulncheck\n")
+		got, err := repocheck.Doctor(doctorEnv(repo, "linux", "go1.27.9"))
+		if err == nil {
+			t.Fatalf("Doctor(tool line in go.mod) = %+v, nil error; want an error", got)
+		}
+	})
+
+	t.Run("a repository without tools/go.mod is an error", func(t *testing.T) {
+		// Guards against reporting no tools as every tool present: an unread tools module is
+		// nothing measured.
+		repo := t.TempDir()
+		writeFixture(t, repo, "go.mod", "module "+fixtureModule+"\n\ngo 1.27.9\n")
+		got, err := repocheck.Doctor(doctorEnv(repo, "linux", "go1.27.9"))
+		if err == nil {
+			t.Fatalf("Doctor(no tools/go.mod) = %+v, nil error; want an error", got)
 		}
 	})
 

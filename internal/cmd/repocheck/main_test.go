@@ -53,25 +53,29 @@ func TestRepocheckCommands(t *testing.T) {
 	tests := []struct {
 		name     string
 		goMod    string
+		toolsMod string
 		wantZero bool
 		wantText []string
 	}{
 		{
 			name:     "exits 0 when git, Go and every tool are present",
 			goMod:    "module example.com/fixture\n\ngo 1.24\n",
+			toolsMod: "module example.com/fixture/tools\n\ngo 1.24\n",
 			wantZero: true,
 			wantText: []string{"git", "go"},
 		},
 		{
-			name: "exits non-zero when a go tool entry does not resolve",
-			goMod: "module example.com/fixture\n\ngo 1.24\n\n" +
+			name:  "exits non-zero when a go tool entry does not resolve",
+			goMod: "module example.com/fixture\n\ngo 1.24\n",
+			toolsMod: "module example.com/fixture/tools\n\ngo 1.24\n\n" +
 				"tool example.invalid/absent/cmd/absenttool\n",
 			wantZero: false,
-			wantText: []string{"example.invalid/absent/cmd/absenttool", "go mod download"},
+			wantText: []string{"example.invalid/absent/cmd/absenttool", "go mod download -modfile=tools/go.mod"},
 		},
 		{
 			name:     "exits non-zero when Go is below the go.mod version",
 			goMod:    "module example.com/fixture\n\ngo 1.999\n",
+			toolsMod: "module example.com/fixture/tools\n\ngo 1.24\n",
 			wantZero: false,
 			wantText: []string{"go"},
 		},
@@ -85,6 +89,12 @@ func TestRepocheckCommands(t *testing.T) {
 			repo := t.TempDir()
 			if err := os.WriteFile(filepath.Join(repo, "go.mod"), []byte(tc.goMod), 0o600); err != nil {
 				t.Fatalf("write go.mod: %v", err)
+			}
+			if err := os.Mkdir(filepath.Join(repo, "tools"), 0o700); err != nil {
+				t.Fatalf("create tools: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(repo, "tools", "go.mod"), []byte(tc.toolsMod), 0o600); err != nil {
+				t.Fatalf("write tools/go.mod: %v", err)
 			}
 			var out bytes.Buffer
 			code := core.RunCLI(context.Background(), commands(), []string{"doctor", "--repo", repo}, &out, io.Discard)

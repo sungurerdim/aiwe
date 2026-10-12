@@ -2,6 +2,7 @@ package repocheck_test
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -165,5 +166,26 @@ func TestDoctorGoFilesNotRegular(t *testing.T) {
 				t.Fatal("GoFiles still blocked after 1 s; want a named error")
 			}
 		})
+	}
+}
+
+// TestMachineDoctorEnvResolvesToolsModule catches a tool resolution that asks the main module: a
+// tool is a line of tools/go.mod, so only `go tool -modfile=tools/go.mod` finds it.
+func TestMachineDoctorEnvResolvesToolsModule(t *testing.T) {
+	// No module download and no toolchain switch: the fixture tool is a package of the repository.
+	t.Setenv("GOPROXY", "off")
+	t.Setenv("GOTOOLCHAIN", "local")
+	t.Setenv("GOFLAGS", "-mod=readonly")
+	const tool = "example.com/fixture/cmd/fixturetool"
+	repo := t.TempDir()
+	writeFixture(t, repo, "go.mod", "module example.com/fixture\n\ngo 1.24\n")
+	writeFixture(t, repo, "tools/go.mod", "module example.com/fixture\n\ngo 1.24\n\ntool "+tool+"\n")
+	writeFixture(t, repo, "cmd/fixturetool/main.go", "package main\n\nfunc main() {}\n")
+	env := repocheck.MachineDoctorEnv(context.Background(), repo)
+	if err := env.ResolveTool(tool); err != nil {
+		t.Fatalf("ResolveTool(%s) = %v, want nil: the tool is a line of tools/go.mod", tool, err)
+	}
+	if err := env.ResolveTool("example.com/fixture/cmd/absent"); err == nil {
+		t.Fatal("ResolveTool(absent) = nil, want an error: tools/go.mod has no such line")
 	}
 }
