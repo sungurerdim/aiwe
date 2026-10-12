@@ -165,6 +165,32 @@ func TestRules(t *testing.T) {
 		}
 	})
 
+	t.Run("a full stop inside the list does not end it", func(t *testing.T) {
+		// Guards against a list read only up to its first full stop: an abbreviation such as
+		// "e.g." ends the first sentence early, yet the files after it in the same paragraph are
+		// still required, so a deleted workflow file is a finding, not a pass.
+		spec := rulesSpecWithout(
+			"### 12.1 Repository files",
+			"`LICENSE` e.g. `README.md` · `go.mod`. See also `.github/workflows/ci.yml` (the only",
+			"workflow). No issue form; no `CHANGELOG.md`.",
+			"",
+			"`README.md`, in order: `zentra adapters list`.",
+		)
+		skip := map[string]bool{"go.mod": true, ".github/workflows/ci.yml": true}
+		got, err := repocheck.Rules(rulesRepoSpec(t, spec, skip))
+		if err != nil {
+			t.Fatalf("Rules error = %v, want nil", err)
+		}
+		if len(got) != len(skip) {
+			t.Errorf("Rules = %+v, want exactly %d findings", got, len(skip))
+		}
+		for f := range skip {
+			if !hasFinding(got, "missing_repo_file", f) {
+				t.Errorf("Rules = %+v, want a missing_repo_file finding for %s", got, f)
+			}
+		}
+	})
+
 	t.Run("a spec without a file list is an error, not a pass", func(t *testing.T) {
 		// Guards against absence read as evidence (DR-6): a §12.1 that Rules cannot find, or one
 		// that names no file, means the file rule was not checked.
