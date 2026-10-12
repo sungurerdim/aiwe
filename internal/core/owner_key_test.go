@@ -73,7 +73,6 @@ func removeTestEditRecord(t *testing.T, r OwnedRoots, d OwnedDir, edit func(line
 // that removal accepts (§5.15), and a record whose start_id is not bound by its HMAC, so a forged
 // start identity passes the ownership check.
 func TestOwnedHMAC(t *testing.T) {
-	ctx := context.Background()
 	t.Run("key lives in the state root and stays out of the marker", func(t *testing.T) {
 		r := removeTestRoots(t, t.TempDir())
 		d := removeTestCreate(t, removeTestOpen(t, r), TempRoot)
@@ -132,7 +131,7 @@ func TestOwnedHMAC(t *testing.T) {
 			removeTestWrite(t, keep, "work\n")
 			tc.tamper(t, r, d)
 			fresh := removeTestOpen(t, r)
-			err := fresh.RemoveOwned(ctx, OwnedDir{path: d.Path()})
+			err := fresh.RemoveOwned(t.Context(), OwnedDir{path: d.Path()})
 			if !errors.Is(err, ErrNotOwned) {
 				t.Fatalf("RemoveOwned after %s = %v, want %v", tc.name, err, ErrNotOwned)
 			}
@@ -143,7 +142,7 @@ func TestOwnedHMAC(t *testing.T) {
 				return
 			}
 			// The untouched sibling proves the refusal comes from the tampering.
-			if err := fresh.RemoveOwned(ctx, OwnedDir{path: control.Path()}); err != nil {
+			if err := fresh.RemoveOwned(t.Context(), OwnedDir{path: control.Path()}); err != nil {
 				t.Fatalf("RemoveOwned of the untouched dir: %v", err)
 			}
 		})
@@ -260,7 +259,7 @@ func TestOwnedRecordFields(t *testing.T) {
 // ownerKeyTestGrant gives Authenticated Users (SID S-1-5-11) the access perm on p with icacls.
 func ownerKeyTestGrant(t *testing.T, p, perm string) {
 	t.Helper()
-	out, err := exec.Command("icacls", p, "/grant", "*S-1-5-11:"+perm).CombinedOutput()
+	out, err := exec.CommandContext(t.Context(), "icacls", p, "/grant", "*S-1-5-11:"+perm).CombinedOutput()
 	if err != nil {
 		t.Fatalf("icacls %s /grant *S-1-5-11:%s: %v: %s", p, perm, err, out)
 	}
@@ -281,7 +280,7 @@ func ownerKeyTestSDDL(t *testing.T, p string) (string, string) {
 	t.Helper()
 	script := "[Security.Principal.WindowsIdentity]::GetCurrent().User.Value; (Get-Acl -LiteralPath '" +
 		strings.ReplaceAll(p, "'", "''") + "').Sddl"
-	out, err := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", script).CombinedOutput()
+	out, err := exec.CommandContext(t.Context(), "powershell", "-NoProfile", "-NonInteractive", "-Command", script).CombinedOutput()
 	if err != nil {
 		t.Fatalf("read the ACL of %s: %v: %s", p, err, out)
 	}
