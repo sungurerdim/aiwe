@@ -123,8 +123,12 @@ type removalHooks struct {
 	rmdirChecked func(name string)       // after removeDirEntry checked the held handle
 	closeFail    func(what string) error // an error to add at the close named what
 
-	// mountCheck, when set, stands in for mountPointAt (refuseMounts).
-	mountCheck func(dir *os.File, name string) (bool, error)
+	// These stand in for the kernel calls refuseMounts and emptyEntries make: mountPointAt, the
+	// walk's (*os.File).ReadDir, and removeEntryTree. A test uses the last two where a mode cannot
+	// deny a read or refuse a removal, as under root (#243).
+	mountCheck  func(dir *os.File, name string) (bool, error)
+	walkRead    func(dir *os.File) ([]fs.DirEntry, error)
+	entryRemove func(sub *os.Root, name string) error
 }
 
 // hookAt runs the hook f with name when f is set.
@@ -312,8 +316,8 @@ func openChecked(rt *os.Root, name string, fi fs.FileInfo) (*os.Root, error) {
 
 // emptyOwned removes every entry of the sub-root sub, the marker last. It first proves that sub is
 // the directory fi describes, then that no entry under it is a mount point (refuseMounts), else it
-// fails with ErrNotOwned and removes nothing; a refusal names outcome. It reports whether it began
-// removing entries.
+// fails with ErrNotOwned and removes nothing; a refusal names outcome. It reports whether it
+// removed an entry, so a later refusal names a partial removal only after one actually went (#243).
 func (h removalHooks) emptyOwned(sub *os.Root, name string, fi fs.FileInfo, outcome string) (bool, error) {
 	d, err := sub.Open(".")
 	if err != nil {
@@ -333,17 +337,12 @@ func (h removalHooks) emptyOwned(sub *os.Root, name string, fi fs.FileInfo, outc
 	if err := errors.Join(err, d.Close()); err != nil {
 		return false, err
 	}
-	var errs []error
-	for _, n := range names {
-		if n != markerFile {
-			errs = append(errs, removeEntryTree(sub, n))
-		}
-	}
-	if err := errors.Join(errs...); err != nil {
-		return true, err
+	removed, err := h.emptyEntries(sub, names)
+	if err != nil {
+		return removed, err
 	}
 	if err := sub.Remove(markerFile); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return true, err
+		return removed, err
 	}
 	return len(names) > 0, nil
 }

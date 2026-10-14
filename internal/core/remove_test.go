@@ -3,7 +3,9 @@ package core
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -11,10 +13,8 @@ import (
 	"time"
 )
 
-// removeTestRoots builds a safe set of roots under one t.TempDir: temp, cache, a user home and a
-// canonical repository, each a real directory, none inside another. The state root is named but
-// left missing: OpenOwner makes it owner-only, and a state dir made beforehand inherits the
-// parent's ACL, which may let other users in.
+// removeTestRoots builds a safe set of roots under one t.TempDir: temp, cache, a home and a
+// repository, none inside another. The state root stays missing, for OpenOwner to make owner-only.
 func removeTestRoots(t *testing.T, base string) OwnedRoots {
 	t.Helper()
 	r := OwnedRoots{
@@ -30,33 +30,26 @@ func removeTestRoots(t *testing.T, base string) OwnedRoots {
 	return r
 }
 
-// removeTestRootDir makes the root dir owner-only when it is missing, the same as OpenOwner: a dir
-// made with MkdirAll on Windows inherits the parent's ACL, which may let other users in.
+// removeTestRootDir makes the root dir owner-only: MkdirAll alone would inherit the parent's ACL.
 func removeTestRootDir(t *testing.T, dir string) {
 	t.Helper()
 	mkdir := func(p string) error { return os.MkdirAll(p, 0o700) }
 	if _, err := os.Lstat(dir); errors.Is(err, os.ErrNotExist) {
 		mkdir = mkdirOwnerOnly
 	}
-	if err := mkdir(dir); err != nil {
-		t.Fatalf("mkdir %s: %v", dir, err)
-	}
+	removeTestErr(t, mkdir(dir), "mkdir %s", dir)
 }
 
 // removeTestMkdir makes dir with MkdirAll; on Windows it inherits the parent's ACL.
 func removeTestMkdir(t *testing.T, dir string) {
 	t.Helper()
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatalf("mkdir %s: %v", dir, err)
-	}
+	removeTestErr(t, os.MkdirAll(dir, 0o755), "mkdir %s", dir)
 }
 
 func removeTestWrite(t *testing.T, path, content string) {
 	t.Helper()
 	removeTestMkdir(t, filepath.Dir(path))
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatalf("write %s: %v", path, err)
-	}
+	removeTestErr(t, os.WriteFile(path, []byte(content), 0o644), "write %s", path)
 }
 
 func removeTestExists(t *testing.T, path string) bool {
@@ -72,30 +65,31 @@ func removeTestExists(t *testing.T, path string) bool {
 	return false
 }
 
+// removeTestErr fails the test on err, so the plain error check stays one line.
+func removeTestErr(t *testing.T, err error, format string, a ...any) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf(format+": %v", append(a, err)...)
+	}
+}
+
 func removeTestOpen(t *testing.T, r OwnedRoots) *Owner {
 	t.Helper()
 	self, err := CurrentProcess()
-	if err != nil {
-		t.Fatalf("CurrentProcess: %v", err)
-	}
+	removeTestErr(t, err, "CurrentProcess")
 	o, err := OpenOwner(r, self)
-	if err != nil {
-		t.Fatalf("OpenOwner(%+v): %v", r, err)
-	}
+	removeTestErr(t, err, "OpenOwner(%+v)", r)
 	return o
 }
 
 func removeTestCreate(t *testing.T, o *Owner, root OwnedRoot) OwnedDir {
 	t.Helper()
 	d, err := o.CreateOwned(t.Context(), root, "run-20261010-0001")
-	if err != nil {
-		t.Fatalf("CreateOwned: %v", err)
-	}
+	removeTestErr(t, err, "CreateOwned")
 	return d
 }
 
-// removeTestLink makes link point at target: a symlink where the OS allows it, else (Windows
-// without the symlink privilege) a directory junction, which needs no privilege.
+// removeTestLink makes link point at target: a symlink where the OS allows it, else a junction.
 func removeTestLink(t *testing.T, target, link string) {
 	t.Helper()
 	err := os.Symlink(target, link)
@@ -108,32 +102,31 @@ func removeTestLink(t *testing.T, target, link string) {
 	JunctionForTest(t, target, link)
 }
 
-// TestOwnedRemove catches recursive removal of a directory the engine did not create, register
-// and mark as its own (DR-11, §5.15).
+// removeTestUnderRoot fails the test unless dir is a real directory under the real root.
+func removeTestUnderRoot(t *testing.T, dir, root string) {
+	t.Helper()
+	realRoot, err := filepath.EvalSymlinks(root)
+	removeTestErr(t, err, "resolve root %q", root)
+	realDir, err := filepath.EvalSymlinks(dir)
+	removeTestErr(t, err, "created dir %q does not exist", dir)
+	if !strings.HasPrefix(realDir, realRoot+string(filepath.Separator)) {
+		t.Fatalf("created dir %q is not under the root %q", realDir, realRoot)
+	}
+}
+
+// TestOwnedRemove catches recursive removal of a dir the engine did not create and mark as its own (DR-11).
 func TestOwnedRemove(t *testing.T) {
 	t.Run("created temp dir is removed with its contents", func(t *testing.T) {
 		base := filepath.Join(t.TempDir(), "çalışma-ağacı")
 		r := removeTestRoots(t, base)
 		o := removeTestOpen(t, r)
 		d := removeTestCreate(t, o, TempRoot)
-		realTemp, err := filepath.EvalSymlinks(r.Temp)
-		if err != nil {
-			t.Fatal(err)
-		}
-		realDir, err := filepath.EvalSymlinks(d.Path())
-		if err != nil {
-			t.Fatalf("created dir %q does not exist: %v", d.Path(), err)
-		}
-		if !strings.HasPrefix(realDir, realTemp+string(filepath.Separator)) {
-			t.Fatalf("created dir %q is not under the temp root %q", realDir, realTemp)
-		}
+		removeTestUnderRoot(t, d.Path(), r.Temp)
 		if !removeTestExists(t, filepath.Join(d.Path(), ".owner")) {
 			t.Fatalf("created dir %q has no .owner marker", d.Path())
 		}
 		removeTestWrite(t, filepath.Join(d.Path(), "src", "main.go"), "package main\n")
-		if err := o.RemoveOwned(t.Context(), d); err != nil {
-			t.Fatalf("RemoveOwned of an owned dir: %v", err)
-		}
+		removeTestErr(t, o.RemoveOwned(t.Context(), d), "RemoveOwned of an owned dir")
 		if removeTestExists(t, d.Path()) {
 			t.Fatalf("owned dir %q is still there after RemoveOwned", d.Path())
 		}
@@ -143,20 +136,8 @@ func TestOwnedRemove(t *testing.T) {
 		r := removeTestRoots(t, t.TempDir())
 		o := removeTestOpen(t, r)
 		d := removeTestCreate(t, o, CacheRoot)
-		realCache, err := filepath.EvalSymlinks(r.Cache)
-		if err != nil {
-			t.Fatal(err)
-		}
-		realDir, err := filepath.EvalSymlinks(d.Path())
-		if err != nil {
-			t.Fatalf("created dir %q does not exist: %v", d.Path(), err)
-		}
-		if !strings.HasPrefix(realDir, realCache+string(filepath.Separator)) {
-			t.Fatalf("created dir %q is not under the cache root %q", realDir, realCache)
-		}
-		if err := o.RemoveOwned(t.Context(), d); err != nil {
-			t.Fatalf("RemoveOwned of an owned cache dir: %v", err)
-		}
+		removeTestUnderRoot(t, d.Path(), r.Cache)
+		removeTestErr(t, o.RemoveOwned(t.Context(), d), "RemoveOwned of an owned cache dir")
 		if removeTestExists(t, d.Path()) {
 			t.Fatalf("owned dir %q is still there after RemoveOwned", d.Path())
 		}
@@ -168,16 +149,13 @@ func TestOwnedRemove(t *testing.T) {
 		d := removeTestCreate(t, o, TempRoot)
 		removeTestWrite(t, filepath.Join(d.Path(), "sub", "a.txt"), "a\n")
 		removeTestLink(t, filepath.Join(d.Path(), "sub"), filepath.Join(d.Path(), "inner"))
-		if err := o.RemoveOwned(t.Context(), d); err != nil {
-			t.Fatalf("RemoveOwned with an inner link: %v", err)
-		}
+		removeTestErr(t, o.RemoveOwned(t.Context(), d), "RemoveOwned with an inner link")
 		if removeTestExists(t, d.Path()) {
 			t.Fatalf("owned dir %q is still there after RemoveOwned", d.Path())
 		}
 	})
 
-	// Each refusal case leaves a user file that must survive, and the call must fail with
-	// ErrNotOwned.
+	// Each refusal case leaves a user file that must survive, and the call must fail with ErrNotOwned.
 	refusals := []struct {
 		name string
 		// setup returns the forged handle to remove and the paths that must still exist.
@@ -213,9 +191,7 @@ func TestOwnedRemove(t *testing.T) {
 		{"unregistered dir under the temp root with a copied marker", func(t *testing.T, base string, r OwnedRoots, o *Owner) (OwnedDir, []string) {
 			d := removeTestCreate(t, o, TempRoot)
 			marker, err := os.ReadFile(filepath.Join(d.Path(), ".owner"))
-			if err != nil {
-				t.Fatalf("read marker: %v", err)
-			}
+			removeTestErr(t, err, "read marker")
 			x := filepath.Join(filepath.Dir(d.Path()), "unregistered")
 			removeTestWrite(t, filepath.Join(x, ".owner"), string(marker))
 			removeTestWrite(t, filepath.Join(x, "data.bin"), "data\n")
@@ -228,18 +204,14 @@ func TestOwnedRemove(t *testing.T) {
 		}},
 		{"owned dir whose marker is gone", func(t *testing.T, base string, r OwnedRoots, o *Owner) (OwnedDir, []string) {
 			d := removeTestCreate(t, o, TempRoot)
-			if err := os.Remove(filepath.Join(d.Path(), ".owner")); err != nil {
-				t.Fatal(err)
-			}
+			removeTestErr(t, os.Remove(filepath.Join(d.Path(), ".owner")), "remove the marker")
 			keep := filepath.Join(d.Path(), "work.txt")
 			removeTestWrite(t, keep, "work\n")
 			return OwnedDir{path: d.Path()}, []string{keep}
 		}},
 		{"owned dir whose ledger record is gone", func(t *testing.T, base string, r OwnedRoots, o *Owner) (OwnedDir, []string) {
 			d := removeTestCreate(t, o, TempRoot)
-			if err := os.WriteFile(filepath.Join(r.State, "ledger.jsonl"), nil, 0o644); err != nil {
-				t.Fatal(err)
-			}
+			removeTestErr(t, os.WriteFile(filepath.Join(r.State, "ledger.jsonl"), nil, 0o644), "empty the ledger")
 			keep := filepath.Join(d.Path(), "work.txt")
 			removeTestWrite(t, keep, "work\n")
 			return OwnedDir{path: d.Path()}, []string{keep}
@@ -255,9 +227,7 @@ func TestOwnedRemove(t *testing.T) {
 		{"owned dir swapped for a link to a user dir", func(t *testing.T, base string, r OwnedRoots, o *Owner) (OwnedDir, []string) {
 			d := removeTestCreate(t, o, TempRoot)
 			moved := filepath.Join(base, "moved-out")
-			if err := os.Rename(d.Path(), moved); err != nil {
-				t.Fatalf("rename: %v", err)
-			}
+			removeTestErr(t, os.Rename(d.Path(), moved), "rename out of the temp root")
 			keep := filepath.Join(moved, "report.docx")
 			removeTestWrite(t, keep, "docx\n")
 			removeTestLink(t, moved, d.Path())
@@ -272,8 +242,7 @@ func TestOwnedRemove(t *testing.T) {
 			forged, keep := tc.setup(t, base, r, o)
 			// A fresh owner reads every record from disk, as after a restart.
 			fresh := removeTestOpen(t, r)
-			err := fresh.RemoveOwned(t.Context(), forged)
-			if !errors.Is(err, ErrNotOwned) {
+			if err := fresh.RemoveOwned(t.Context(), forged); !errors.Is(err, ErrNotOwned) {
 				t.Fatalf("RemoveOwned(%q) = %v, want %v", forged.path, err, ErrNotOwned)
 			}
 			for _, p := range keep {
@@ -302,20 +271,21 @@ func TestOwnedRemove(t *testing.T) {
 	})
 }
 
-// TestOwnedRoot catches a temp or cache root that is, or contains, the user's home, the state
-// root, a canonical repository or a file-system root and is accepted instead of root_unsafe
-// (§5.15). Each unsafe case names the refusal it needs, so another check cannot hide a gap.
+// testSep is the separator of a file-system root path.
+const testSep = string(filepath.Separator)
+
+// TestOwnedRoot catches a root that is, or contains, the home, the state root, a repository or a
+// file-system root (§5.15); each unsafe case names the refusal it needs, so no check hides a gap.
 func TestOwnedRoot(t *testing.T) {
 	self, err := CurrentProcess()
-	if err != nil {
-		t.Fatalf("CurrentProcess: %v", err)
-	}
+	removeTestErr(t, err, "CurrentProcess")
 	home, state, repo := "is or contains the home", "is or contains the state root", "is or contains the canonical repository"
-	cases := []struct {
+	type rootCase struct {
 		name   string
 		adjust func(t *testing.T, base string, r *OwnedRoots)
 		refuse string // the refusal text; empty for safe roots
-	}{
+	}
+	cases := []rootCase{
 		{"separate roots", func(t *testing.T, base string, r *OwnedRoots) {}, ""},
 		{"cache inside the home", func(t *testing.T, base string, r *OwnedRoots) {
 			r.Cache = filepath.Join(r.Home, ".cache", "engine")
@@ -325,35 +295,21 @@ func TestOwnedRoot(t *testing.T) {
 		}, ""},
 		{"temp is the home", func(t *testing.T, base string, r *OwnedRoots) { r.Temp = r.Home }, home},
 		{"cache is the home", func(t *testing.T, base string, r *OwnedRoots) { r.Cache = r.Home }, home},
-		{"temp contains the home", func(t *testing.T, base string, r *OwnedRoots) {
-			r.Home = filepath.Join(r.Temp, "users", "ayşe")
-		}, home},
-		{"cache contains the home", func(t *testing.T, base string, r *OwnedRoots) {
-			r.Home = filepath.Join(r.Cache, "users", "ayşe")
-		}, home},
+		{"temp contains the home", func(t *testing.T, base string, r *OwnedRoots) { r.Home = filepath.Join(r.Temp, "users", "ayşe") }, home},
+		{"cache contains the home", func(t *testing.T, base string, r *OwnedRoots) { r.Home = filepath.Join(r.Cache, "users", "ayşe") }, home},
 		{"temp is the state root", func(t *testing.T, base string, r *OwnedRoots) { r.Temp = r.State }, state},
-		{"temp contains the state root", func(t *testing.T, base string, r *OwnedRoots) {
-			r.State = filepath.Join(r.Temp, "state")
-		}, state},
-		{"cache contains the state root", func(t *testing.T, base string, r *OwnedRoots) {
-			r.State = filepath.Join(r.Cache, "state")
-		}, state},
-		{"temp is a canonical repository", func(t *testing.T, base string, r *OwnedRoots) {
-			r.Temp = r.Canonical[0]
-		}, repo},
+		{"temp contains the state root", func(t *testing.T, base string, r *OwnedRoots) { r.State = filepath.Join(r.Temp, "state") }, state},
+		{"cache contains the state root", func(t *testing.T, base string, r *OwnedRoots) { r.State = filepath.Join(r.Cache, "state") }, state},
+		{"temp is a canonical repository", func(t *testing.T, base string, r *OwnedRoots) { r.Temp = r.Canonical[0] }, repo},
 		{"cache contains a canonical repository", func(t *testing.T, base string, r *OwnedRoots) {
 			r.Canonical = append(r.Canonical, filepath.Join(r.Cache, "src", "app"))
 		}, repo},
-		{"temp is a file-system root", func(t *testing.T, base string, r *OwnedRoots) {
-			r.Temp = filepath.VolumeName(base) + string(filepath.Separator)
-		}, "is a file-system root"},
-		{"cache is a file-system root", func(t *testing.T, base string, r *OwnedRoots) {
-			r.Cache = filepath.VolumeName(base) + string(filepath.Separator)
-		}, "is a file-system root"},
+		{"temp is a file-system root", func(t *testing.T, base string, r *OwnedRoots) { r.Temp = filepath.VolumeName(base) + testSep }, "is a file-system root"},
+		{"cache is a file-system root", func(t *testing.T, base string, r *OwnedRoots) { r.Cache = filepath.VolumeName(base) + testSep }, "is a file-system root"},
 		{"temp climbs to the home through ..", func(t *testing.T, base string, r *OwnedRoots) {
 			removeTestMkdir(t, filepath.Join(r.Temp, "x"))
-			r.Temp = filepath.Join(r.Temp, "x") + string(filepath.Separator) + ".." +
-				string(filepath.Separator) + ".." + string(filepath.Separator) + "home"
+			r.Temp = filepath.Join(r.Temp, "x") + testSep + ".." +
+				testSep + ".." + testSep + "home"
 		}, home},
 		{"temp is a link to the home's parent", func(t *testing.T, base string, r *OwnedRoots) {
 			link := filepath.Join(base, "link-to-base")
@@ -365,13 +321,7 @@ func TestOwnedRoot(t *testing.T) {
 		}, home},
 	}
 	if runtime.GOOS == "windows" {
-		cases = append(cases, struct {
-			name   string
-			adjust func(t *testing.T, base string, r *OwnedRoots)
-			refuse string
-		}{"temp is the home in other letter case", func(t *testing.T, base string, r *OwnedRoots) {
-			r.Temp = strings.ToUpper(r.Home)
-		}, home})
+		cases = append(cases, rootCase{"temp is the home in other letter case", func(t *testing.T, base string, r *OwnedRoots) { r.Temp = strings.ToUpper(r.Home) }, home})
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -382,14 +332,10 @@ func TestOwnedRoot(t *testing.T) {
 				removeTestRootDir(t, d)
 			}
 			_, err := OpenOwner(r, self)
-			if tc.refuse != "" {
-				if !errors.Is(err, ErrRootUnsafe) || !strings.Contains(err.Error(), tc.refuse) {
-					t.Fatalf("OpenOwner(%+v) = %v, want %v that %s", r, err, ErrRootUnsafe, tc.refuse)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("OpenOwner(%+v) of safe roots: %v", r, err)
+			if tc.refuse == "" {
+				removeTestErr(t, err, "OpenOwner(%+v) of safe roots", r)
+			} else if !errors.Is(err, ErrRootUnsafe) || !strings.Contains(err.Error(), tc.refuse) {
+				t.Fatalf("OpenOwner(%+v) = %v, want %v that %s", r, err, ErrRootUnsafe, tc.refuse)
 			}
 		})
 	}
@@ -407,9 +353,8 @@ func removeTestResidueRow(t *testing.T) OutcomeRow {
 	return OutcomeRow{}
 }
 
-// TestOwnedRemoveLocked catches a removal that gives up on a held file too early or under another
-// outcome: SPEC §6.4 retries 5 times, 200 ms apart, then reports residue_locked, and the next
-// removal still finds the directory owned.
+// TestOwnedRemoveLocked: SPEC §6.4 retries 5 times, 200 ms apart, then reports residue_locked; the
+// next removal still finds the directory owned.
 func TestOwnedRemoveLocked(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("an open handle blocks removal only on Windows")
@@ -420,9 +365,7 @@ func TestOwnedRemoveLocked(t *testing.T) {
 	held := filepath.Join(d.Path(), "build", "report.txt")
 	removeTestWrite(t, held, "held open by another process")
 	f, err := os.Open(held)
-	if err != nil {
-		t.Fatalf("open %s: %v", held, err)
-	}
+	removeTestErr(t, err, "open %s", held)
 	closed := false
 	t.Cleanup(func() {
 		if !closed {
@@ -438,8 +381,7 @@ func TestOwnedRemoveLocked(t *testing.T) {
 	if err == nil {
 		t.Fatalf("RemoveOwned of a dir with a held file = nil, want residue_locked")
 	}
-	// 5 attempts with 4 waits of 200 ms: at least 800 ms; a sixth attempt or a doubling wait
-	// reaches 1 000 ms.
+	// 5 attempts with 4 waits of 200 ms: at least 800 ms; a sixth attempt or a doubling wait 1 s.
 	if took < 800*time.Millisecond || took >= 1000*time.Millisecond {
 		t.Errorf("RemoveOwned gave up after %v, want 5 attempts 200 ms apart (800 ms to 1 s)", took)
 	}
@@ -455,20 +397,15 @@ func TestOwnedRemoveLocked(t *testing.T) {
 	}
 
 	closed = true
-	if err := f.Close(); err != nil {
-		t.Fatalf("close %s: %v", held, err)
-	}
-	if err := o.RemoveOwned(ctx, d); err != nil {
-		t.Fatalf("RemoveOwned after the handle closed: %v; the next removal must still find the dir owned", err)
-	}
+	removeTestErr(t, f.Close(), "close %s", held)
+	removeTestErr(t, o.RemoveOwned(ctx, d), "RemoveOwned after the handle closed; the next removal must still find the dir owned")
 	if removeTestExists(t, d.Path()) {
 		t.Errorf("dir %q left after the handle closed", d.Path())
 	}
 }
 
 // TestRemoveTreeNilApproved catches a removeTree that, given no approved identity, approves the dir
-// it finds and empties it (#109, finding 2a). Only the ownership check may approve a dir, so a nil
-// approval fails with ErrNotOwned and removes nothing.
+// it finds and empties it (#109, finding 2a), so a nil approval fails with ErrNotOwned.
 func TestRemoveTreeNilApproved(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "temp")
 	name := "run-20261011-0006-0123456789abcdef"
@@ -481,5 +418,82 @@ func TestRemoveTreeNilApproved(t *testing.T) {
 	}
 	if !removeTestExists(t, keep) {
 		t.Errorf("file %q was removed though no ownership check approved %q", keep, name)
+	}
+}
+
+// removeTestWalkDeny makes the read of dir fail for the walk, as a mode without read on Unix or a
+// deny ACE on Windows does; where root bypasses the mode, hooks.walkRead fails it the same way.
+func removeTestWalkDeny(t *testing.T, o *Owner, dir string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		icacls := func(args ...string) {
+			out, err := exec.CommandContext(context.Background(), "icacls", append([]string{dir}, args...)...).CombinedOutput()
+			if err != nil {
+				t.Fatalf("icacls %s %v: %v: %s", dir, args, err, out)
+			}
+		}
+		icacls("/deny", "*S-1-1-0:(RD)")
+		t.Cleanup(func() { icacls("/remove:d", "*S-1-1-0") })
+	} else {
+		removeTestErr(t, os.Chmod(dir, 0o111), "chmod %s 0111", dir)
+		t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	}
+	if _, err := os.ReadDir(dir); err == nil {
+		o.hooks.walkRead = func(*os.File) ([]fs.DirEntry, error) { return nil, fs.ErrPermission }
+	}
+}
+
+// removeTestHold makes the removal of keep fail while the walk still lists it: a held handle on
+// Windows, a mode without write on Unix; where root bypasses the mode, hooks.entryRemove fails it.
+func removeTestHold(t *testing.T, o *Owner, keep string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		f, err := os.Open(keep)
+		removeTestErr(t, err, "open %s", keep)
+		t.Cleanup(func() { _ = f.Close() })
+		return
+	}
+	removeTestErr(t, os.Chmod(filepath.Dir(keep), 0o555), "chmod %s 0555", filepath.Dir(keep))
+	t.Cleanup(func() { _ = os.Chmod(filepath.Dir(keep), 0o700) })
+	if os.Geteuid() == 0 { // root bypasses the mode through CAP_DAC_OVERRIDE
+		o.hooks.entryRemove = func(*os.Root, string) error { return errors.New("remove: the entry is busy (test)") }
+	}
+}
+
+// TestRemoveOwnedWalkDenied catches a denied walk refused at once as an unknown mount state (#243).
+func TestRemoveOwnedWalkDenied(t *testing.T) {
+	o := removeTestOpen(t, removeTestRoots(t, t.TempDir()))
+	d := removeTestCreate(t, o, TempRoot)
+	keep := filepath.Join(d.Path(), "locked", "keep.txt")
+	removeTestWrite(t, keep, "owned work\n")
+	var start time.Time // when the removal starts: the walk deny itself spawns icacls on Windows
+	o.hooks.ownedChecked = func(string) { removeTestWalkDeny(t, o, filepath.Dir(keep)); start = time.Now() }
+	err := o.RemoveOwned(t.Context(), d)
+	if took := time.Since(start); !errors.Is(err, ErrNotOwned) || !strings.Contains(err.Error(), "mount state is unknown") || took >= removeWait {
+		t.Errorf("RemoveOwned over a dir whose read is denied = %v after %v; want an at-once not_owned refusal for an unknown mount state", err, took)
+	}
+	if !removeTestExists(t, keep) {
+		t.Errorf("file %q was removed under a refused walk", keep)
+	}
+}
+
+// TestRemoveOwnedNoEntryRemoved catches a refusal that claims a partial removal though no entry went (#243).
+func TestRemoveOwnedNoEntryRemoved(t *testing.T) {
+	o := removeTestOpen(t, removeTestRoots(t, t.TempDir()))
+	d := removeTestCreate(t, o, TempRoot)
+	keep := filepath.Join(d.Path(), "locked", "keep.txt")
+	removeTestWrite(t, keep, "owned work\n")
+	removeTestHold(t, o, keep)
+	tries := 0
+	o.hooks.removeCheck = func(string) { tries++ }
+	o.hooks.mountCheck = func(*os.File, string) (bool, error) {
+		if tries > 1 {
+			return false, errors.New("statx: the system does not report a mount root (test)")
+		}
+		return false, nil
+	}
+	if err := o.RemoveOwned(t.Context(), d); err == nil || !errors.Is(err, ErrNotOwned) ||
+		strings.Contains(err.Error(), "partial removal") || !removeTestExists(t, keep) {
+		t.Errorf("RemoveOwned with every entry removal failing = %v (kept %v); want not_owned that never claims a partial removal", err, removeTestExists(t, keep))
 	}
 }
