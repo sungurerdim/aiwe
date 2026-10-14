@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/sungurerdim/aiwe/internal/core"
+	"github.com/sungurerdim/aiwe/internal/engine"
 	"github.com/sungurerdim/aiwe/internal/gates"
 )
 
@@ -24,6 +25,7 @@ func registry() []core.Command {
 			Purpose: "print the version of this binary", Run: runVersion},
 	}
 	cmds = append(cmds, core.ConfigCommands()...)
+	cmds = append(cmds, engine.Commands()...)
 	return append(cmds, gates.Commands()...)
 }
 

@@ -63,32 +63,31 @@ type Unit struct {
 
 // ParseUnit reads a unit issue body: the Scope In file set, the Verification commands and the To
 // do test items; every sentinel above and a MissingSectionError name its refusals (§5.13, §8.4).
+// A refused body gets every fault, joined in body order, so one run names all a session must fix.
 func ParseUnit(body string) (Unit, error) {
 	if len(body) > MaxUnitBodySize {
 		return Unit{}, fmt.Errorf("%w: %d bytes", ErrUnitBodyTooLarge, len(body))
 	}
 	sections := unitSections(body)
-	files, err := scopeFiles(sections["Scope"])
-	if err != nil {
+	files, scopeErr := scopeFiles(sections["Scope"])
+	verify, verifyErr := verificationCommands(sections["Verification"])
+	tests, items, toDoErr := toDoTests(sections["To do"], files)
+	// No item can test an empty file set: the To do list is then missing only when it has no item.
+	noTests := len(tests) == 0 && (items == 0 || (scopeErr == nil && len(files) > 0))
+	if err := errors.Join(sectionFault(scopeErr, len(files) == 0, "Scope"),
+		sectionFault(verifyErr, len(verify) == 0, "Verification"),
+		sectionFault(toDoErr, noTests, "To do")); err != nil {
 		return Unit{}, err
-	}
-	verify, err := verificationCommands(sections["Verification"])
-	if err != nil {
-		return Unit{}, err
-	}
-	tests, err := toDoTests(sections["To do"], files)
-	if err != nil {
-		return Unit{}, err
-	}
-	switch {
-	case len(files) == 0:
-		return Unit{}, &MissingSectionError{Section: "Scope"}
-	case len(verify) == 0:
-		return Unit{}, &MissingSectionError{Section: "Verification"}
-	case len(tests) == 0:
-		return Unit{}, &MissingSectionError{Section: "To do"}
 	}
 	return Unit{Files: files, Verify: verify, Tests: tests}, nil
+}
+
+// sectionFault returns the faults of a section's lines, else its MissingSectionError when it is empty.
+func sectionFault(err error, empty bool, section string) error {
+	if err == nil && empty {
+		return &MissingSectionError{Section: section}
+	}
+	return err
 }
 
 // unitSections maps each `## <name>` heading of body to the lines under it, up to the next heading.
@@ -109,9 +108,10 @@ func unitSections(body string) map[string][]string {
 }
 
 // scopeFiles returns the paths of the In: list of a Scope section and ignores the Out: list and
-// everything after it; an unsafe entry and a set over the DR-7 ceiling are refused, named (§8.4).
+// everything after it; each unsafe entry and a set over the DR-7 ceiling are refused, named (§8.4).
 func scopeFiles(lines []string) ([]string, error) {
 	var files []string
+	var faults []error
 	in, sources := false, 0
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
@@ -123,27 +123,19 @@ func scopeFiles(lines []string) ([]string, error) {
 			continue
 		}
 		paths, err := scopeLineFiles(line)
-		if err != nil {
-			return nil, err
+		faults = append(faults, err) // errors.Join drops a nil fault
+		for _, path := range paths {
+			if countsAsSource(path) {
+				sources++
+			}
 		}
-		sources += sourceCount(paths)
 		files = append(files, paths...)
 	}
 	if sources > maxScopeSources {
-		return nil, fmt.Errorf("%w: %d source files, the ceiling is %d",
-			ErrUnitScopeTooWide, sources, maxScopeSources)
+		faults = append(faults, fmt.Errorf("%w: %d source files, the ceiling is %d",
+			ErrUnitScopeTooWide, sources, maxScopeSources))
 	}
-	return files, nil
-}
-
-// sourceCount counts the paths of one Scope In line that count against the DR-7 ceiling (SPEC §8.4).
-func sourceCount(paths []string) (n int) {
-	for _, path := range paths {
-		if countsAsSource(path) {
-			n++
-		}
-	}
-	return
+	return files, errors.Join(faults...)
 }
 
 // countsAsSource reports whether one file-set path counts against the ceiling of DR-7: a test, lock
@@ -181,17 +173,20 @@ func scopeLineFiles(line string) ([]string, error) {
 }
 
 // filePaths returns the paths of the Scope In entries: each entry with its `(new)` marker dropped,
-// refused with its name when what stays is no plain repository path (SPEC §8.4).
+// refused with its name when what stays is no plain repository path; the safe paths are returned
+// beside the refusals (SPEC §8.4).
 func filePaths(entries []string) ([]string, error) {
 	var out []string
+	var faults []error
 	for _, entry := range entries {
 		path := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(entry), "(new)"))
 		if path == "" || strings.ContainsAny(path, " \t`*?[]{}()<>|;&$!'\"#") || pathOutside(path) {
-			return nil, &UnsafePathError{Path: strings.TrimSpace(entry)}
+			faults = append(faults, &UnsafePathError{Path: strings.TrimSpace(entry)})
+			continue
 		}
 		out = append(out, path)
 	}
-	return out, nil
+	return out, errors.Join(faults...)
 }
 
 // pathOutside reports whether path is no repository path a unit may change: absolute or Windows
@@ -211,23 +206,25 @@ func pathOutside(path string) bool {
 
 // verificationCommands returns the commands of a Verification section; a line is either a backticked
 // `<command>` → <signal> or a plain <command> → <signal>. A command that would run a
-// shell, counts from HEAD or starts with no plain program name is refused, named (SPEC §8.4).
+// shell, counts from HEAD or starts with no plain program name is refused, named, each one (§8.4).
 func verificationCommands(lines []string) ([]string, error) {
 	var cmds []string
+	var faults []error
 	for _, line := range lines {
 		cmd, ok := verificationCommand(line)
 		if !ok {
 			continue
 		}
-		if shellOperator(cmd) || countsFromHead(cmd) {
-			return nil, fmt.Errorf("%w: %q", ErrUnitVerifyUnsafe, cmd)
+		switch {
+		case shellOperator(cmd) || countsFromHead(cmd):
+			faults = append(faults, fmt.Errorf("%w: %q", ErrUnitVerifyUnsafe, cmd))
+		case !resolvableFirstToken(cmd):
+			faults = append(faults, fmt.Errorf("%w: %q", ErrUnitVerifyUnresolved, cmd))
+		default:
+			cmds = append(cmds, cmd)
 		}
-		if !resolvableFirstToken(cmd) {
-			return nil, fmt.Errorf("%w: %q", ErrUnitVerifyUnresolved, cmd)
-		}
-		cmds = append(cmds, cmd)
 	}
-	return cmds, nil
+	return cmds, errors.Join(faults...)
 }
 
 // resolvableFirstToken reports whether the first token of command is a plain program name: the
@@ -298,23 +295,26 @@ func countsFromHead(command string) bool {
 }
 
 // toDoTests returns the text of each To do item whose check runs or names a test of the unit's
-// file set; a line that is no `task — verify: <check> → <signal>` item is refused, named, as is a
-// body whose list holds no item at all (SPEC §8.4).
-func toDoTests(lines []string, files []string) ([]string, error) {
-	var tests []string
+// file set, and its item count; each line that is no `task — verify: <check> → <signal>` item misses
+// a required part, so it is refused, named, under ErrUnitSectionMissing (SPEC §5.3, §8.4).
+func toDoTests(lines []string, files []string) (tests []string, items int, err error) {
+	var faults []error
 	for _, line := range lines {
 		item := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "- "))
 		if item == "" {
 			continue
 		}
+		items++
 		if !completeToDoItem(item) {
-			return nil, fmt.Errorf("unit: To do item %q is not `task — verify: <check> → <signal>`", item)
+			faults = append(faults, fmt.Errorf("%w: To do item %q is not `task — verify: <check> → <signal>`",
+				ErrUnitSectionMissing, item))
+			continue
 		}
 		if isTestItem(item, files) {
 			tests = append(tests, item)
 		}
 	}
-	return tests, nil
+	return tests, items, errors.Join(faults...)
 }
 
 // completeToDoItem reports whether one To do item follows the standard: `task — verify: <check> →

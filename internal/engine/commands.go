@@ -30,7 +30,7 @@ type UnitCheckInput struct {
 }
 
 // UnitCheck reads in.Body as a unit issue body and returns the file set, the verify commands and
-// the test items it holds. A body that breaks the standard is refused with the fault named — a
+// the test items it holds. A body that breaks the standard is refused with every fault named — a
 // missing section, a To do item without its verify and signal, or a file set over the ceiling of
 // DR-7 — so only a well-formed unit body passes (SPEC §8.4).
 func UnitCheck(in UnitCheckInput) (core.Result[any], error) {
@@ -42,15 +42,23 @@ func UnitCheck(in UnitCheckInput) (core.Result[any], error) {
 		Detail: unitDetail(unit)}, nil
 }
 
-// unitRefusal maps one ParseUnit refusal to the error `unit check` prints: the sentinel it wraps
-// names the outcome row of the table, so the reader gets that row's status and next action, and the
-// fault stays in found (SPEC §5.3, §8.4). A refusal with no row of its own stays an error (DR-6).
+// unitRefusal maps one ParseUnit refusal to the error `unit check` prints: the sentinel its first
+// fault wraps names the outcome row of the table, so the reader gets that row's status and next
+// action, and every fault stays in found (SPEC §5.3, §8.4). A refusal with no row of its own stays
+// an error (DR-6).
 func unitRefusal(err error) error {
-	for _, sentinel := range []error{ErrUnitSectionMissing, ErrUnitBodyTooLarge, ErrUnitPathUnsafe,
-		ErrUnitVerifyUnsafe, ErrUnitScopeTooWide, ErrUnitVerifyUnresolved} {
-		if errors.Is(err, sentinel) {
-			return &core.Error{Outcome: core.Outcome(sentinel.Error()), Err: err,
-				Expected: "a unit body that follows the issue standard", Found: err.Error()}
+	faults := []error{err}
+	var joined interface{ Unwrap() []error }
+	if errors.As(err, &joined) {
+		faults = joined.Unwrap()
+	}
+	for _, fault := range faults {
+		for _, sentinel := range []error{ErrUnitSectionMissing, ErrUnitBodyTooLarge, ErrUnitPathUnsafe,
+			ErrUnitVerifyUnsafe, ErrUnitScopeTooWide, ErrUnitVerifyUnresolved} {
+			if errors.Is(fault, sentinel) {
+				return &core.Error{Outcome: core.Outcome(sentinel.Error()), Err: err,
+					Expected: "a unit body that follows the issue standard", Found: err.Error()}
+			}
 		}
 	}
 	return err
