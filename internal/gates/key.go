@@ -16,8 +16,10 @@ type Fingerprint struct {
 	LockDigests []string
 }
 
-// KeyInput is everything that identifies one check (SPEC §7.8): the argv, the digest of the
-// step's declared inputs and the env fingerprint.
+// KeyInput is everything that identifies one check (SPEC §7.8): the argv, the digest of the step's
+// declared inputs from git objects — the whole tracked tree when the step declares none — and the
+// env fingerprint. Neither the step's id nor the directory a check runs in is part of it, so the
+// same tree in a fresh clone (§6.5) hits the cache instead of running the check again.
 type KeyInput struct {
 	Argv         []string
 	InputsDigest string
@@ -26,7 +28,10 @@ type KeyInput struct {
 
 // CheckKey returns the sha256 hex digest of in. The same inputs return the same key; a change to
 // the argv, the tree digest or any fingerprint field returns another key, so a stored result is
-// never served for a different check (DR-8, SPEC §7.8).
+// never served for a changed tree or a changed tool (DR-8, SPEC §7.8). The step's id is not part of
+// the key: a caller that shares a key labels the stored result with the step it asked for (§7.3
+// step 6). The directory a check runs in is not part of the key either: the same tree in a fresh
+// clone maps to the same key (§6.5).
 func CheckKey(in KeyInput) string {
 	h := sha256.New()
 	h.Write([]byte("gates.CheckKey"))

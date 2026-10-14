@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/sungurerdim/aiwe/internal/core"
@@ -152,6 +153,9 @@ func TestVerifyRunsOncePerKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Verify: %v", err)
 	}
+	if first.Step != step.ID || first.ExitCode != 4 || first.Result != gates.ResultRed {
+		t.Fatalf("catches a verify that did not run the step: %+v", first)
+	}
 	second, err := Verify(context.Background(), runner, req)
 	if err != nil {
 		t.Fatalf("Verify again: %v", err)
@@ -159,9 +163,9 @@ func TestVerifyRunsOncePerKey(t *testing.T) {
 	if runs := verifyTestRuns(t, record); runs != 1 {
 		t.Fatalf("catches a verify that ran %d times for one key, want once", runs)
 	}
-	if second.Step != first.Step || second.Result != first.Result || second.ExitCode != first.ExitCode ||
-		second.Tail != first.Tail || !slices.Equal(second.Command, first.Command) {
-		t.Errorf("catches a second verify that does not return the stored result: %+v, want %+v", second, first)
+	if second.Step != step.ID || second.Result != gates.ResultRed || second.ExitCode != 4 ||
+		!strings.Contains(second.Tail, "verify detail tail") || !slices.Equal(second.Command, step.Command) {
+		t.Errorf("catches a second verify that does not return the stored result: %+v", second)
 	}
 	changed := req
 	changed.Key.InputsDigest = verifyTestDigest("tree after the fix round")
@@ -170,5 +174,176 @@ func TestVerifyRunsOncePerKey(t *testing.T) {
 	}
 	if runs := verifyTestRuns(t, record); runs != 2 {
 		t.Fatalf("catches a changed tree served from the stored key: %d runs, want 2", runs)
+	}
+}
+
+// TestVerifyFreshCloneHitsKey catches a key bound to the directory a check ran in: a run works in
+// its own fresh clone (SPEC §6.5), so the same tree content, argv and tool versions in another
+// directory must return the stored result instead of running the step again (DR-8, SPEC §7.8).
+// The key changes with the tree, never with its path.
+func TestVerifyFreshCloneHitsKey(t *testing.T) {
+	t.Setenv(verifyTestEnv(), "1")
+	record := filepath.Join(t.TempDir(), "ran.txt")
+	step := verifyTestStep(record)
+	runner := &gates.Runner{Owner: verifyTestOwner(t)}
+	cache := gates.NewCache()
+	key := verifyTestKey(step)
+	first := VerifyRequest{Step: step, Dir: t.TempDir(), Key: key, Cache: cache}
+	if _, err := Verify(context.Background(), runner, first); err != nil {
+		t.Fatalf("Verify the tree: %v", err)
+	}
+	clone := VerifyRequest{Step: step, Dir: t.TempDir(), Key: key, Cache: cache}
+	second, err := Verify(context.Background(), runner, clone)
+	if err != nil {
+		t.Fatalf("Verify the same tree in a fresh clone: %v", err)
+	}
+	if runs := verifyTestRuns(t, record); runs != 1 {
+		t.Fatalf("catches a verify that ran %d times for one key in a fresh clone, want once", runs)
+	}
+	if second.ExitCode != 4 || second.Result != gates.ResultRed || !strings.Contains(second.Tail, "verify detail tail") {
+		t.Errorf("catches a fresh clone served %+v, want the stored red result", second)
+	}
+	changed := clone
+	changed.Key.InputsDigest = verifyTestDigest("tree after the fix round")
+	if _, err := Verify(context.Background(), runner, changed); err != nil {
+		t.Fatalf("Verify the changed tree in the fresh clone: %v", err)
+	}
+	if runs := verifyTestRuns(t, record); runs != 2 {
+		t.Fatalf("catches a changed tree served from the stored key in a fresh clone: %d runs, want 2", runs)
+	}
+}
+
+// TestVerifySharedArgvServesStoredResult catches two defects of a shared key: a key that includes
+// the step's id, so two steps that share an argv and a tree run one check twice (SPEC §7.8 keys a
+// check by its argv, its input digest and its fingerprint), and a report labelled with the stored
+// step instead of the step the caller asked for (DR-8, SPEC §7.3 step 6).
+func TestVerifySharedArgvServesStoredResult(t *testing.T) {
+	t.Setenv(verifyTestEnv(), "1")
+	record := filepath.Join(t.TempDir(), "ran.txt")
+	first := verifyTestStep(record)
+	second := first
+	second.ID = "engine-second"
+	runner := &gates.Runner{Owner: verifyTestOwner(t)}
+	cache := gates.NewCache()
+	for i, step := range []gates.GateStep{first, second} {
+		res, err := Verify(context.Background(), runner, VerifyRequest{
+			Step: step, Dir: t.TempDir(), Key: verifyTestKey(step), Cache: cache,
+		})
+		if err != nil {
+			t.Fatalf("Verify step %d: %v", i+1, err)
+		}
+		if res.Step != step.ID {
+			t.Errorf("catches a verify labelled %q, want the step it asked for: %q", res.Step, step.ID)
+		}
+		if res.ExitCode != 4 || res.Result != gates.ResultRed || !strings.Contains(res.Tail, "verify detail tail") {
+			t.Errorf("catches a verify of step %q that did not return the stored red result: %+v", step.ID, res)
+		}
+	}
+	if runs := verifyTestRuns(t, record); runs != 1 {
+		t.Fatalf("catches %d runs for two steps that share an argv and a tree, want 1 (one key)", runs)
+	}
+}
+
+// TestVerifyRefusesEmptyInputsDigest catches a unit verify that stores a result under a key that
+// covers no tree: an empty InputsDigest is refused before the step runs or a result is stored (DR-8,
+// SPEC §7.8).
+func TestVerifyRefusesEmptyInputsDigest(t *testing.T) {
+	t.Setenv(verifyTestEnv(), "1")
+	record := filepath.Join(t.TempDir(), "ran.txt")
+	step := verifyTestStep(record)
+	cache := gates.NewCache()
+	key := verifyTestKey(step)
+	key.InputsDigest = ""
+	_, err := Verify(context.Background(), &gates.Runner{Owner: verifyTestOwner(t)}, VerifyRequest{
+		Step: step, Dir: t.TempDir(), Key: key, Cache: cache,
+	})
+	if err == nil {
+		t.Fatalf("catches a verify that accepts an empty InputsDigest")
+	}
+	if _, ok := cache.Lookup(gates.CheckKey(key)); ok {
+		t.Errorf("catches an empty InputsDigest stored as a successful key")
+	}
+	if _, err := os.Stat(record); err == nil {
+		t.Errorf("catches a verify that ran its command for an empty InputsDigest")
+	}
+}
+
+// TestVerifyConcurrentCallersRunOnce catches a cache that two callers share: two goroutines with the
+// same cache and key run the command once, never twice and never a concurrent map write (DR-8, SPEC
+// §7.8).
+func TestVerifyConcurrentCallersRunOnce(t *testing.T) {
+	t.Setenv(verifyTestEnv(), "1")
+	record := filepath.Join(t.TempDir(), "ran.txt")
+	step := verifyTestStep(record)
+	runner := &gates.Runner{Owner: verifyTestOwner(t)}
+	cache := gates.NewCache()
+	req := VerifyRequest{Step: step, Dir: t.TempDir(), Key: verifyTestKey(step), Cache: cache}
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			if _, err := Verify(context.Background(), runner, req); err != nil {
+				errs <- err
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Errorf("Verify: %v", err)
+	}
+	if runs := verifyTestRuns(t, record); runs != 1 {
+		t.Fatalf("catches two callers that ran the command %d times, want once", runs)
+	}
+}
+
+// TestVerifyTwoKeysShareOneRunner catches a verify that writes the shared runner's output field
+// while another key runs: two different keys run at the same time (DR-3), so each report must carry
+// its own step's output tail, and the runner's own field must stay untouched. Under `go test -race`
+// a write to that shared field is a data race too.
+func TestVerifyTwoKeysShareOneRunner(t *testing.T) {
+	t.Setenv(verifyTestEnv(), "1")
+	first := verifyTestStep(filepath.Join(t.TempDir(), "first.txt"))
+	second := verifyTestStep(filepath.Join(t.TempDir(), "second.txt"))
+	second.Command = append(slices.Clone(second.Command), "second")
+	second.ID = "engine-second"
+	if slices.Equal(first.Command, second.Command) {
+		t.Fatalf("catches two steps that share an argv, so they share one key")
+	}
+	runner := &gates.Runner{Owner: verifyTestOwner(t)}
+	cache := gates.NewCache()
+	dirs := []string{t.TempDir(), t.TempDir()}
+	type outcome struct {
+		step gates.GateStep
+		res  VerifyReport
+		err  error
+	}
+	results := make(chan outcome, 2)
+	for i, step := range []gates.GateStep{first, second} {
+		go func(step gates.GateStep, dir string) {
+			res, err := Verify(context.Background(), runner, VerifyRequest{
+				Step: step, Dir: dir, Key: verifyTestKey(step), Cache: cache})
+			results <- outcome{step: step, res: res, err: err}
+		}(step, dirs[i])
+	}
+	for i := 0; i < 2; i++ {
+		got := <-results
+		if got.err != nil {
+			t.Fatalf("Verify step %q: %v", got.step.ID, got.err)
+		}
+		if got.res.Step != got.step.ID || got.res.ExitCode != 4 || got.res.Result != gates.ResultRed {
+			t.Errorf("catches step %q served %+v, want its own red result", got.step.ID, got.res)
+		}
+		if !strings.Contains(got.res.Tail, "verify detail tail") {
+			t.Errorf("catches step %q served another run's tail: %q", got.step.ID, got.res.Tail)
+		}
+	}
+	if runner.Output != nil {
+		t.Errorf("catches a verify that left the shared runner's output writer set: %v", runner.Output)
 	}
 }
