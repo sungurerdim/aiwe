@@ -18,8 +18,6 @@ const (
 const ciFixture = `name: ci
 
 on:
-  push:
-    branches: [main]
   pull_request:
   workflow_dispatch:
     inputs:
@@ -91,9 +89,9 @@ func lineOf(t *testing.T, body, text string) int {
 }
 
 // TestCIShape catches a CI step without a `# why:` comment, a `uses:` reference that is not a full
-// commit SHA, a trigger other than pull_request, push with branches [main] and workflow_dispatch,
-// or a concurrency other than group ci-${{ github.ref }} cancelled for pull requests only, that
-// passes repo/ci-shape (DR-22, SPEC §12.2).
+// commit SHA, a trigger other than pull_request and workflow_dispatch (a push included: a main push
+// starts no run, SPEC §12.2), or a concurrency other than group ci-${{ github.ref }} cancelled for
+// pull requests only, that passes repo/ci-shape (DR-22, SPEC §12.2).
 func TestCIShape(t *testing.T) {
 	t.Run("accepts the prescribed shape and counts its jobs and steps", func(t *testing.T) {
 		rep := ciShapeOf(t, ciFixture)
@@ -107,7 +105,6 @@ func TestCIShape(t *testing.T) {
 
 	accepted := []struct{ name, old, repl string }{
 		{"a quoted pinned reference", "- uses: " + checkoutRef, "- uses: '" + checkoutRef + "'"},
-		{"a block list of branches", "branches: [main]", "branches:\n      - main"},
 		{"a quoted on key", "\non:\n", "\n'on':\n"},
 		{"an expression without inner spaces",
 			"${{ github.event_name == 'pull_request' }}", "${{github.event_name == 'pull_request'}}"},
@@ -143,12 +140,12 @@ func TestCIShape(t *testing.T) {
 		{"a job-level reusable workflow on a tag", "    needs: static\n",
 			"    needs: static\n    uses: octo-org/ci/.github/workflows/test.yml@v1\n",
 			"uses_not_pinned", "octo-org/ci/.github/workflows/test.yml@v1"},
-		{"push on another branch too", "branches: [main]", "branches: [main, 'unit/**']", "trigger_shape", "branches:"},
-		{"push on another branch only", "branches: [main]", "branches: [develop]", "trigger_shape", "branches:"},
-		{"push without a branch filter", "  push:\n    branches: [main]\n", "  push:\n", "trigger_shape", "  push:"},
-		{"push on tags", "    branches: [main]\n", "    branches: [main]\n    tags: ['v*']\n", "trigger_shape", "tags:"},
-		{"push with a paths filter", "    branches: [main]\n", "    branches: [main]\n    paths: ['**.go']\n",
-			"trigger_shape", "paths:"},
+		{"a push trigger", "  pull_request:\n", "  push:\n    branches: [main]\n  pull_request:\n",
+			"trigger_shape", "  push:"},
+		{"a push trigger without a branch filter", "  pull_request:\n", "  push:\n  pull_request:\n",
+			"trigger_shape", "  push:"},
+		{"a push trigger after the dispatch block", "\nconcurrency:\n",
+			"\n  push:\n    branches: [main]\nconcurrency:\n", "trigger_shape", "  push:"},
 		{"pull_request with a paths filter", "  pull_request:\n", "  pull_request:\n    paths-ignore: ['docs/**']\n",
 			"trigger_shape", "paths-ignore:"},
 		{"an extra trigger", "  pull_request:\n", "  pull_request:\n  schedule:\n    - cron: '0 3 * * *'\n",
@@ -157,8 +154,8 @@ func TestCIShape(t *testing.T) {
 			"trigger_shape", "on:"},
 		{"no workflow_dispatch", "  workflow_dispatch:\n    inputs:\n      all-os:\n        description: run the test job on every OS\n        type: boolean\n        default: false\n",
 			"", "trigger_shape", "on:"},
-		{"a flow list of triggers", "on:\n  push:\n    branches: [main]\n  pull_request:\n",
-			"on: [push, pull_request]\nx:\n", "trigger_shape", "on:"},
+		{"a flow list of triggers", "on:\n  pull_request:\n",
+			"on: [pull_request]\nx:\n", "trigger_shape", "on:"},
 		{"another concurrency group", "group: ci-${{ github.ref }}", "group: ci-${{ github.workflow }}",
 			"concurrency_shape", "group:"},
 		{"a group without the ci prefix", "group: ci-${{ github.ref }}", "group: ${{ github.ref }}",

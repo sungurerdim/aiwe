@@ -41,10 +41,10 @@ type CIShapeReport struct {
 }
 
 // CIShape checks the CI workflow of the tree fsys against SPEC §12.2: every step carries a
-// `# why:` comment, every `uses:` names a full commit SHA, the triggers are push on main,
-// pull_request and workflow_dispatch, the concurrency is the prescribed one, and ci.yml is the
-// only workflow. present is false when the tree has no ci.yml: the shape was not measured, and
-// the caller reports it so, never green (DR-6).
+// `# why:` comment, every `uses:` names a full commit SHA, the triggers are pull_request and
+// workflow_dispatch with no push, the concurrency is the prescribed one, and ci.yml is the only
+// workflow. present is false when the tree has no ci.yml: the shape was not measured, and the
+// caller reports it so, never green (DR-6).
 func CIShape(fsys fs.FS) (rep CIShapeReport, present bool, err error) {
 	body, err := fs.ReadFile(fsys, ciWorkflowPath)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -98,21 +98,20 @@ func workflowShape(roots []*yamlNode) CIShapeReport {
 	return rep
 }
 
-// checkTriggers checks the `on` key: exactly push on main, pull_request and workflow_dispatch.
+// checkTriggers checks the `on` key: exactly pull_request and workflow_dispatch, and no push, so a
+// main push starts no run (SPEC §12.2).
 func checkTriggers(on *yamlNode, add func(string, int)) {
 	if on == nil || on.value != "" {
 		add(ruleTriggerShape, lineOrZero(on))
 		return
 	}
-	for _, name := range []string{"push", "pull_request", "workflow_dispatch"} {
+	for _, name := range []string{"pull_request", "workflow_dispatch"} {
 		if child(on.children, name) == nil {
 			add(ruleTriggerShape, on.line)
 		}
 	}
 	for _, t := range on.children {
 		switch t.key {
-		case "push":
-			checkPush(t, add)
 		case "pull_request":
 			if hasBody(t) {
 				add(ruleTriggerShape, firstLine(t))
@@ -120,19 +119,6 @@ func checkTriggers(on *yamlNode, add func(string, int)) {
 		case "workflow_dispatch":
 		default:
 			add(ruleTriggerShape, t.line)
-		}
-	}
-}
-
-// checkPush checks the push trigger: one key, branches, that lists main alone.
-func checkPush(push *yamlNode, add func(string, int)) {
-	branches := child(push.children, "branches")
-	if push.value != "" || branches == nil {
-		add(ruleTriggerShape, push.line)
-	}
-	for _, c := range push.children {
-		if c.key != "branches" || !slices.Equal(listValues(c), []string{"main"}) {
-			add(ruleTriggerShape, c.line)
 		}
 	}
 }
@@ -184,24 +170,6 @@ func hasWhy(n *yamlNode) bool {
 		}
 	})
 	return found
-}
-
-// listValues returns the scalars of a flow list (`[a, b]`) or a block list below n.
-func listValues(n *yamlNode) []string {
-	var out []string
-	if inner, ok := strings.CutPrefix(n.value, "["); ok {
-		for v := range strings.SplitSeq(strings.TrimSuffix(inner, "]"), ",") {
-			out = append(out, unquote(strings.TrimSpace(v)))
-		}
-		return out
-	}
-	if n.value != "" {
-		return []string{unquote(n.value)}
-	}
-	for _, c := range n.children {
-		out = append(out, unquote(c.value))
-	}
-	return out
 }
 
 // hasBody reports whether n has an inline value or nodes below it.
