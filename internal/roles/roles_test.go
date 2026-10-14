@@ -10,7 +10,7 @@ import (
 // non-empty, every entry fills all three fields, and a second read returns the same list.
 func TestPinnedListPerRole(t *testing.T) {
 	t.Parallel()
-	for _, id := range []string{"engineer", "test-author", "auditor"} {
+	for _, id := range []string{"engineer", "test-author", "auditor", "security-reviewer"} {
 		t.Run(id, func(t *testing.T) {
 			t.Parallel()
 			pins := Pins(id)
@@ -36,7 +36,6 @@ func TestPinnedListUnknownRole(t *testing.T) {
 	tests := []struct{ name, id string }{
 		{name: "empty id", id: ""},
 		{name: "architect", id: "architect"},
-		{name: "security-reviewer", id: "security-reviewer"},
 		{name: "doc-writer", id: "doc-writer"},
 		{name: "unknown role", id: "no-such-role"},
 	}

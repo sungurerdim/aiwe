@@ -108,6 +108,12 @@ func skeletonCards() []skeletonCard {
 			limits: []string{"writer", "VERDICT"},
 			gates:  []string{"DR-5", "D14", "verdict_in_branch"},
 		},
+		{
+			id: "security-reviewer", tier: "raised", purpose: "Attacks the change",
+			method: []string{"threat model", "location", "reproduction", "result", "severity", "not_measured"},
+			limits: []string{"fix", "reproduction"},
+			gates:  []string{"DR-8"},
+		},
 	}
 }
 
@@ -158,7 +164,7 @@ func TestShippedCardsStateMethodAndLimits(t *testing.T) {
 // that Lookup serves the same card (SPEC §9.1).
 func TestCardsReturnsShippedSet(t *testing.T) {
 	t.Parallel()
-	want := map[string]bool{"engineer": false, "test-author": false, "auditor": false}
+	want := map[string]bool{"engineer": false, "test-author": false, "auditor": false, "security-reviewer": false}
 	seen := map[string]Card{}
 	for _, c := range Cards() {
 		if _, dup := seen[c.ID]; dup {
@@ -188,7 +194,6 @@ func TestLookupMissesUnshippedRole(t *testing.T) {
 	tests := []struct{ name, id string }{
 		{name: "empty id", id: ""},
 		{name: "architect", id: "architect"},
-		{name: "security-reviewer", id: "security-reviewer"},
 		{name: "doc-writer", id: "doc-writer"},
 		{name: "unknown role", id: "no-such-role"},
 	}
