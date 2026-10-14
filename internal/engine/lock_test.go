@@ -92,6 +92,7 @@ func TestClaims(t *testing.T) {
 
 	t.Run("a dead holder's lock is reclaimed", func(t *testing.T) {
 		// Catches a lock left by a run that died, which would block the unit forever.
+		ctx := t.Context()
 		const deadUnit = 37
 		if err := claims.Take(ctx, Claim{Unit: deadUnit, RunID: engineTestDeadRunID, Owner: engineTestDeadProcess(t)}); err != nil {
 			t.Fatalf("Take unit %d for a dead holder: %v", deadUnit, err)

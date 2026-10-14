@@ -305,12 +305,13 @@ func TestRepocheckCommitMsg(t *testing.T) {
 	}
 	repo := t.TempDir()
 	for _, args := range [][]string{{"init", "-q"}, {"remote", "add", "origin", "git@github.com:octo-org/widget.git"}} {
-		if out, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput(); err != nil {
+		cmd := exec.CommandContext(t.Context(), "git", append([]string{"-C", repo}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git %v: %v: %s", args, err, out)
 		}
 	}
 	noOrigin := t.TempDir()
-	if out, err := exec.Command("git", "-C", noOrigin, "init", "-q").CombinedOutput(); err != nil {
+	if out, err := exec.CommandContext(t.Context(), "git", "-C", noOrigin, "init", "-q").CombinedOutput(); err != nil {
 		t.Fatalf("git init: %v: %s", err, out)
 	}
 	const closes = "fix: the gate step reports its exit code\n\nEffect: 3 → 0\nCloses octo-org/widget#7\n"
