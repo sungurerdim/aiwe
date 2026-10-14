@@ -2,6 +2,7 @@ package core
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -21,14 +22,9 @@ type ownedMarker struct {
 	HMAC  string    `json:"hmac"`
 }
 
-// markerShapeError is a refusal whose text is fixed at compile time, so it can be a const.
-type markerShapeError string
-
-func (e markerShapeError) Error() string { return string(e) }
-
-// errMarkerShape is the refusal of a marker that is not a plain file of at most maxMarkerBytes;
-// TestMarkerShapeText holds its number to maxMarkerBytes.
-const errMarkerShape markerShapeError = "not a plain file of at most 4096 bytes"
+// errMarkerShape is the sentinel refusal of a marker that is not a plain file of at most
+// maxMarkerBytes (SPEC §5.3); TestMarkerShapeText holds its text to maxMarkerBytes.
+var errMarkerShape = errors.New("not a plain file of at most 4096 bytes")
 
 // matchMarker checks that the marker bytes b, read from p, match rec under the key.
 func (o *Owner) matchMarker(rootPath, p string, b []byte, rec ownedRecord) error {
