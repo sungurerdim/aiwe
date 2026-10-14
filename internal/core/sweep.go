@@ -316,9 +316,8 @@ func openChecked(rt *os.Root, name string, fi fs.FileInfo) (*os.Root, error) {
 
 // emptyOwned removes every entry of the sub-root sub, the marker last. It first proves that sub is
 // the directory fi describes, then that no entry under it is a mount point (refuseMounts), else it
-// fails with ErrNotOwned and removes nothing; a refusal names outcome. It reports whether it
-// removed anything, a part of a failed entry included, so a later refusal names a partial removal
-// exactly when something went (#243).
+// fails with ErrNotOwned and removes nothing; a refusal names outcome. It reports whether anything
+// went, a part of a failed entry included, so a later refusal names a partial removal (#243).
 func (h removalHooks) emptyOwned(sub *os.Root, name string, fi fs.FileInfo, outcome string) (bool, error) {
 	d, err := sub.Open(".")
 	if err != nil {
