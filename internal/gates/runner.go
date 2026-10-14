@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -118,15 +119,12 @@ func checkOnly(def Definition, only []string) error {
 }
 
 // runStep runs one step as a process tree in fresh roots, streams its output while it runs and
-// judges it by its declared exit code and the roots it leaves (SPEC §7.8). A step that cannot
-// start, is stopped before it exits, or declares an output expectation is not_measured. A test
-// step that exits as declared is then judged by its package durations (SPEC §5.13).
+// judges it by its declared exit code, its output expectations and the roots it leaves (SPEC §7.8,
+// §8.3). A step that cannot start or is stopped before it exits is not_measured. A test step that
+// exits as declared is then judged by its package durations (SPEC §5.13).
 func (r *Runner) runStep(ctx context.Context, step GateStep, dir string, proof *Proof) StepReport {
 	if err := ctx.Err(); err != nil {
 		return unmeasured(step.ID, "not started: "+err.Error())
-	}
-	if step.Expect.OutputMatches != "" || step.Expect.OutputRejects != "" {
-		return unmeasured(step.ID, "an output expectation cannot be checked: the runner does not match output against it")
 	}
 	step, note, err := r.prepare(step, proof)
 	if err != nil {
@@ -157,16 +155,57 @@ func (r *Runner) runStep(ctx context.Context, step GateStep, dir string, proof *
 	return roots.close(ctx, report)
 }
 
-// judgeStep judges a step that exited by its declared exit code; a test step that exits as
-// declared is then judged by its package durations (SPEC §5.13).
+// judgeStep judges a step that exited by its declared exit code, by the output expectations it
+// declares, and, for a test step that exits as declared, by its package durations (SPEC §5.13,
+// §8.3).
 func judgeStep(step GateStep, code int, note string, out []byte) StepReport {
 	if code != step.Expect.ExitCode {
 		return StepReport{ID: step.ID, Result: ResultRed, ExitCode: code, Detail: note}
+	}
+	if result, detail := judgeOutput(step.Expect, out); result != ResultGreen {
+		return StepReport{ID: step.ID, Result: result, ExitCode: code, Detail: joinDetail(note, detail)}
 	}
 	if step.ID != testStepID {
 		return StepReport{ID: step.ID, Result: ResultGreen, ExitCode: code, Detail: note}
 	}
 	return judgeDurations(step, code, note, out)
+}
+
+// judgeOutput judges the output expectations of SPEC §8.3 over the lines of out: a line that an
+// outputRejects pattern matches makes the step red, and an outputMatches pattern that matches no
+// line makes it red. A pattern that does not compile decides nothing, so the step is not_measured,
+// never green (DR-6). A step with no output expectation is green.
+func judgeOutput(expect Expect, out []byte) (Result, string) {
+	for _, rule := range []struct{ name, pattern string }{
+		{"outputMatches", expect.OutputMatches},
+		{"outputRejects", expect.OutputRejects},
+	} {
+		if rule.pattern == "" {
+			continue
+		}
+		re, err := regexp.Compile(rule.pattern)
+		if err != nil {
+			return ResultNotMeasured, fmt.Sprintf("%s pattern %q: %v", rule.name, rule.pattern, err)
+		}
+		line, matched := matchOutputLine(re, out)
+		switch {
+		case rule.name == "outputRejects" && matched:
+			return ResultRed, fmt.Sprintf("output line %q matches outputRejects %q", line, rule.pattern)
+		case rule.name == "outputMatches" && !matched:
+			return ResultRed, fmt.Sprintf("no output line matches outputMatches %q", rule.pattern)
+		}
+	}
+	return ResultGreen, ""
+}
+
+// matchOutputLine returns the first line of out that re matches, and whether one matched.
+func matchOutputLine(re *regexp.Regexp, out []byte) (string, bool) {
+	for _, line := range strings.Split(string(out), "\n") {
+		if re.MatchString(line) {
+			return strings.TrimRight(line, "\r"), true
+		}
+	}
+	return "", false
 }
 
 // prepare returns the step as it runs and the note its report carries. Every other step runs as
