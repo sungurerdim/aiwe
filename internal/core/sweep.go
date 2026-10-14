@@ -317,7 +317,8 @@ func openChecked(rt *os.Root, name string, fi fs.FileInfo) (*os.Root, error) {
 // emptyOwned removes every entry of the sub-root sub, the marker last. It first proves that sub is
 // the directory fi describes, then that no entry under it is a mount point (refuseMounts), else it
 // fails with ErrNotOwned and removes nothing; a refusal names outcome. It reports whether it
-// removed an entry, so a later refusal names a partial removal only after one actually went (#243).
+// removed anything, a part of a failed entry included, so a later refusal names a partial removal
+// exactly when something went (#243).
 func (h removalHooks) emptyOwned(sub *os.Root, name string, fi fs.FileInfo, outcome string) (bool, error) {
 	d, err := sub.Open(".")
 	if err != nil {
@@ -327,8 +328,9 @@ func (h removalHooks) emptyOwned(sub *os.Root, name string, fi fs.FileInfo, outc
 	if err == nil && !os.SameFile(fi, di) {
 		err = fmt.Errorf("%w: %q was swapped after the check (a link is never followed)", ErrNotOwned, name)
 	}
+	var walked []string
 	if err == nil {
-		err = h.refuseMounts(sub, name, ".", outcome)
+		err = h.refuseMounts(sub, name, ".", outcome, &walked)
 	}
 	var names []string
 	if err == nil {
@@ -337,7 +339,7 @@ func (h removalHooks) emptyOwned(sub *os.Root, name string, fi fs.FileInfo, outc
 	if err := errors.Join(err, d.Close()); err != nil {
 		return false, err
 	}
-	removed, err := h.emptyEntries(sub, names)
+	removed, err := h.emptyEntries(sub, names, walked)
 	if err != nil {
 		return removed, err
 	}
