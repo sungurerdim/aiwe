@@ -72,6 +72,12 @@ func (l *Loop) Run(ctx context.Context, req RunRequest) (core.Result[RunReport],
 	if req.RunID == "" {
 		return core.Result[RunReport]{}, ErrRunIDMissing
 	}
+	return l.run(ctx, req, key)
+}
+
+// run runs one role with the key its caller read, so a provider that reads the key before its own
+// requests reads it once (SPEC §10.2, DR-19).
+func (l *Loop) run(ctx context.Context, req RunRequest, key Secret) (core.Result[RunReport], error) {
 	if req.Model == "" {
 		req.Model = DefaultModel
 	}
@@ -193,7 +199,9 @@ func (r *loopRun) toolResult(ctx context.Context, call wireToolCall) string {
 
 // report returns the result of one run: the served model, the usage and the cost rolled over every
 // answered turn — a count no turn named stays unknown, never 0 (DR-6) — the named outcome and the
-// turns that answered it (SPEC §10.2).
+// turns that answered it (SPEC §10.2). The status is the one the outcome table gives the named
+// outcome, so a run stopped at a limit is never reported as done; a run that ended well is ok/ok,
+// as every provider's success is (SPEC §5.3).
 func (r *loopRun) report(outcome core.Outcome) core.Result[RunReport] {
 	usage := RollUsage(r.usages)
 	data := RunReport{
@@ -203,5 +211,20 @@ func (r *loopRun) report(outcome core.Outcome) core.Result[RunReport] {
 		Turns:   len(r.usages),
 		Cost:    r.prices.Cost(r.served, usage),
 	}
-	return core.Result[RunReport]{Status: core.StatusOK, Outcome: core.OutcomeOK, Data: data}
+	status := outcomeStatus(outcome)
+	if status == core.StatusOK {
+		return core.Result[RunReport]{Status: status, Outcome: core.OutcomeOK, Data: data}
+	}
+	return core.Result[RunReport]{Status: status, Outcome: outcome, Data: data}
+}
+
+// outcomeStatus returns the status the outcome table gives o; an outcome with no row is an error,
+// never a success (fail-closed, SPEC §5.3).
+func outcomeStatus(o core.Outcome) core.Status {
+	for _, row := range core.Outcomes() {
+		if row.Outcome == o {
+			return row.Status
+		}
+	}
+	return core.StatusError
 }

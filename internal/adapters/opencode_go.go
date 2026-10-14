@@ -28,6 +28,10 @@ const DefaultModel = "deepseek-v4.1-flash"
 // maxQuotaBytes caps the usage answer one run reads, so an endless body is refused fail-closed.
 const maxQuotaBytes = 1 << 20
 
+// defaultRunLimit is the run limit a role run takes before the ledger holds the greens its own limit
+// derives from, so no run waits without a limit (SPEC §7.4, DR-1).
+const defaultRunLimit = 60 * time.Minute
+
 // ErrRunIDMissing reports a run without the run id the session header needs (SPEC §10.2).
 var ErrRunIDMissing = errors.New("run_id_missing")
 
@@ -38,29 +42,36 @@ type Endpoints struct {
 }
 
 // OpenCodeGoConfig wires the OpenCode Go client: the environment it reads OPENCODE_API_KEY from,
-// the host, the user-agent version and the HTTP client (SPEC §10.2, DR-19).
+// the host, the user-agent version, the HTTP client and the turn and time limits of a role run;
+// a turn limit of 0 sets none (SPEC §10.2, DR-19).
 type OpenCodeGoConfig struct {
-	Env     Env
-	Base    string
-	Version string
-	Prices  PriceTable
-	Log     *slog.Logger
-	HTTP    *http.Client
+	Env       Env
+	Base      string
+	Version   string
+	Prices    PriceTable
+	Log       *slog.Logger
+	HTTP      *http.Client
+	MaxTurns  int
+	TimeLimit time.Duration
 }
 
-// OpenCodeGo is the OpenCode Go model API client: it reads the Go quota, then runs one chat turn
-// (SPEC §10.2, O14).
+// OpenCodeGo is the OpenCode Go model API client: it reads the Go quota, then runs a role through
+// the agent loop (SPEC §10.2, O14).
 type OpenCodeGo struct {
 	cfg OpenCodeGoConfig
 }
 
-// NewOpenCodeGo returns the client of cfg; an empty host or price table takes the pinned defaults.
+// NewOpenCodeGo returns the client of cfg; an empty host, price table or time limit takes the
+// pinned default.
 func NewOpenCodeGo(cfg OpenCodeGoConfig) *OpenCodeGo {
 	if cfg.Base == "" {
 		cfg.Base = openCodeHost
 	}
 	if cfg.Prices == nil {
 		cfg.Prices = DefaultPrices()
+	}
+	if cfg.TimeLimit <= 0 {
+		cfg.TimeLimit = defaultRunLimit
 	}
 	return &OpenCodeGo{cfg: cfg}
 }
@@ -79,12 +90,13 @@ func (p *OpenCodeGo) Endpoints() Endpoints {
 	return Endpoints{Chat: p.cfg.Base + openCodeChatPath, Usage: p.cfg.Base + openCodeUsagePath}
 }
 
-// chatConfig wires the chat client of this provider, so one turn shares the one request vocabulary
-// (SPEC §10.2).
-func (p *OpenCodeGo) chatConfig() ChatConfig {
-	return ChatConfig{
+// loopConfig wires the agent loop of this provider: its chat endpoint, session header, key name and
+// the limits of a role run, so every turn shares the one request vocabulary (SPEC §10.2, O14).
+func (p *OpenCodeGo) loopConfig() LoopConfig {
+	return LoopConfig{
 		Env: p.cfg.Env, Endpoint: p.Endpoints().Chat, SessionHeader: openCodeSessionKey,
 		KeyEnv: openCodeKeyEnv, Version: p.cfg.Version, Prices: p.cfg.Prices, Log: p.cfg.Log, HTTP: p.cfg.HTTP,
+		MaxTurns: p.cfg.MaxTurns, TimeLimit: p.cfg.TimeLimit,
 	}
 }
 
@@ -97,9 +109,9 @@ func (p *OpenCodeGo) Detect(_ context.Context, env Env) Detection {
 	return Detection{Present: true, Version: p.cfg.Version}
 }
 
-// Run reads the Go quota, then runs one chat turn. The key is read by name at run time, the quota
-// read carries it, and the report names the served model, usage, cost and quota (SPEC §10.2,
-// DR-19).
+// Run reads the Go quota, then runs the role through aiwe's own agent loop to a named outcome. The
+// key is read by name at run time, once, the quota read and every turn carry it, and the report
+// names the served model, usage, cost, quota, outcome and turns (SPEC §10.2, DR-19, O14).
 func (p *OpenCodeGo) Run(ctx context.Context, req RunRequest) (core.Result[RunReport], error) {
 	key, err := Key(p.cfg.Env, openCodeKeyEnv)
 	if err != nil {
@@ -109,10 +121,7 @@ func (p *OpenCodeGo) Run(ctx context.Context, req RunRequest) (core.Result[RunRe
 		return core.Result[RunReport]{}, ErrRunIDMissing
 	}
 	quota := p.readQuota(ctx, key)
-	if req.Model == "" {
-		req.Model = DefaultModel
-	}
-	res, err := NewChatClient(p.chatConfig()).Turn(ctx, req)
+	res, err := NewLoop(p.loopConfig()).run(ctx, req, key)
 	if err != nil {
 		return core.Result[RunReport]{}, err
 	}
