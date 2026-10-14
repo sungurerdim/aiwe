@@ -83,10 +83,10 @@ func TestRunner(t *testing.T) {
 	expectTwo.Expect = Expect{ExitCode: 2}
 	rejects := green1
 	rejects.ID = "deadcode"
-	rejects.Expect = Expect{ExitCode: 0, OutputRejects: `\S`}
-	matches := green2
+	rejects.Expect = Expect{ExitCode: 0, OutputRejects: `go version`}
+	matches := green1
 	matches.ID = "repo"
-	matches.Expect = Expect{ExitCode: 0, OutputMatches: `^ok$`}
+	matches.Expect = Expect{ExitCode: 0, OutputMatches: `go version`}
 
 	cases := []struct {
 		name string
@@ -116,9 +116,9 @@ func TestRunner(t *testing.T) {
 		{name: "declared exit code", catches: "a step judged by exit code 0 instead of its declared expect.exitCode (SPEC §8.3)",
 			steps: []GateStep{green1, expectTwo}, gate: "green",
 			stepResult: map[string]string{"format": "green", "tidy": "green"}},
-		{name: "output expectation without capture", catches: "a step that declares outputRejects or outputMatches read green on its exit code alone, though the runner never saw its output (DR-6)",
-			steps: []GateStep{rejects, matches}, gate: "incomplete",
-			stepResult: map[string]string{"deadcode": "not_measured", "repo": "not_measured"}},
+		{name: "output expectation measured", catches: "a step whose outputRejects pattern matches a line read not_measured or green, so a red output passes unseen (#116)",
+			steps: []GateStep{rejects, matches}, gate: "red",
+			stepResult: map[string]string{"deadcode": "red", "repo": "green"}},
 		{name: "unrun step before red step", catches: "an unmeasured step hiding a red step, so the gate reads incomplete instead of red: red beats incomplete (#116)",
 			steps: []GateStep{missing, red}, gate: "red",
 			stepResult: map[string]string{"lint": "not_measured", "vuln": "red"}},
@@ -155,6 +155,61 @@ func TestRunner(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestRunnerOutputExpectation pins the output rules of SPEC §8.3: a step that declares
+// outputMatches or outputRejects is measured from its output, so a line its outputRejects pattern
+// matches is red and a step its outputMatches pattern misses is red. Left not_measured, a red
+// output would pass unseen (DR-6, #116).
+func TestRunnerOutputExpectation(t *testing.T) {
+	goBin := runnerTestGo(t)
+	// go version prints one line, "go version goX ...", on stdout and exits 0.
+	base := GateStep{ID: "format", Command: []string{goBin, "version"}, Required: true}
+	cases := []struct {
+		name, catches string
+		expect        Expect
+		want          Result
+	}{
+		{"a matching reject line is red (#116)", "an outputRejects step whose pattern matches a line read not_measured or green, so a red output passes unseen", Expect{ExitCode: 0, OutputRejects: `go version`}, ResultRed},
+		{"an output the reject misses is green", "an outputRejects step whose pattern matches no line not reported green", Expect{ExitCode: 0, OutputRejects: `no such output`}, ResultGreen},
+		{"an output the match finds is green", "an outputMatches step whose pattern matches its output not reported green", Expect{ExitCode: 0, OutputMatches: `go version`}, ResultGreen},
+		{"an output the match misses is red (#116)", "an outputMatches step whose pattern matches no line read not_measured or green, so a red output passes unseen", Expect{ExitCode: 0, OutputMatches: `no such output`}, ResultRed},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			step := base
+			step.Expect = tc.expect
+			report, err := (&Runner{Owner: rootsTestOwner(t)}).Run(context.Background(),
+				Definition{FormatVersion: 1, Steps: []GateStep{step}}, t.TempDir(), nil)
+			if err != nil {
+				t.Fatalf("catches %s: Run returned an error, but a decided gate is a result (SPEC §5.3): %v", tc.catches, err)
+			}
+			s := report.Steps[0]
+			if s.Result != tc.want || s.ExitCode != 0 {
+				t.Errorf("catches %s: step result = %q (exit code %d, detail %q), want %q on the declared exit 0", tc.catches, s.Result, s.ExitCode, s.Detail, tc.want)
+			}
+			if tc.want == ResultRed && s.Detail == "" {
+				t.Errorf("catches %s: the red step reports no cause", tc.catches)
+			}
+			if report.Result != tc.want {
+				t.Errorf("catches %s: gate result = %q, want %q", tc.catches, report.Result, tc.want)
+			}
+		})
+	}
+}
+
+// TestRunnerMissingTool catches a step whose tool is not installed reported green, or not_measured
+// without naming the tool, so the cause stays unseen (DR-6, #116).
+func TestRunnerMissingTool(t *testing.T) {
+	_, _, _, missing := runnerTestSteps(t)
+	report, err := (&Runner{Owner: rootsTestOwner(t)}).Run(context.Background(),
+		Definition{FormatVersion: 1, Steps: []GateStep{missing}}, t.TempDir(), nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if s := report.Steps[0]; s.Result != ResultNotMeasured || !strings.Contains(s.Detail, missing.Command[0]) {
+		t.Errorf("missing tool reported %q (detail %q), want not_measured naming the tool %q", s.Result, s.Detail, missing.Command[0])
 	}
 }
 
