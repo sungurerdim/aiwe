@@ -190,6 +190,21 @@ func TestOutcomes(t *testing.T) {
 		}
 	})
 
+	// #238: two errors that wrap the same core.Error name the outcome once, not once per copy.
+	t.Run("joined errors wrapping the same core.Error name the outcome once", func(t *testing.T) {
+		e := &core.Error{Outcome: core.OutcomeUsage, Expected: "a gate file", Found: "none", Next: "run init"}
+		prefix := string(core.OutcomeUsage) + ": "
+		body := strings.TrimPrefix(e.Error(), prefix)
+		d := core.ErrorResult(errors.Join(fmt.Errorf("a: %w", e), fmt.Errorf("b: %w", e))).Detail
+		want := prefix + "a: " + body + `\x0a` + "b: " + body
+		if got := strings.Count(d, prefix); got != 1 {
+			t.Errorf("Detail = %q names the outcome %d times, want 1", d, got)
+		}
+		if d != want {
+			t.Errorf("Detail = %q, want %q: every wrapped copy drops its outcome prefix", d, want)
+		}
+	})
+
 	// Guards against an outcome string used in code that is missing from the outcome table.
 	t.Run("outcome string used in code missing from the outcome table", func(t *testing.T) {
 		used := outcomesUsedInSource(t, filepath.Join("..", ".."))

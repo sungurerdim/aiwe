@@ -166,8 +166,9 @@ func ErrorResult(err error) Result[any] {
 	return Result[any]{Status: r.Status, Outcome: r.Outcome, Detail: lineEscape(outcomeFirst(err))}
 }
 
-// outcomeFirst returns the message of err with the "<outcome>: " of its first *Error moved to the
-// front; the context the callers added stays, in order.
+// outcomeFirst returns the message of err with the "<outcome>: " of every copy of its first *Error
+// moved to the front; the context the callers added stays, in order. An errors.Join can wrap the
+// same *Error more than once, so each copy drops its prefix, not only the last one (#238).
 func outcomeFirst(err error) string {
 	msg := err.Error()
 	var e *Error
@@ -175,10 +176,10 @@ func outcomeFirst(err error) string {
 		return msg
 	}
 	inner := e.Error()
-	i := strings.LastIndex(msg, inner)
-	if i <= 0 {
+	prefix := string(e.Outcome) + ": "
+	body := strings.TrimPrefix(inner, prefix)
+	if body == inner || !strings.Contains(msg, inner) {
 		return msg
 	}
-	prefix := string(e.Outcome) + ": "
-	return prefix + msg[:i] + strings.TrimPrefix(inner, prefix) + msg[i+len(inner):]
+	return prefix + strings.ReplaceAll(msg, inner, body)
 }
