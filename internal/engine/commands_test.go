@@ -145,9 +145,10 @@ func TestUnitCheckRefusesAMalformedBody(t *testing.T) {
 			names:    `"To do"`,
 		},
 		{
-			name:  "a To do line carries neither verify nor signal",
-			body:  unitBodyFor(scope, good+"\n- Polish the wording", verify),
-			names: "Polish the wording",
+			name:     "a To do line carries neither verify nor signal",
+			body:     unitBodyFor(scope, good+"\n- Polish the wording", verify),
+			sentinel: ErrUnitSectionMissing,
+			names:    "Polish the wording",
 		},
 		{
 			name: "the file set is over the five-source ceiling",
@@ -163,13 +164,54 @@ func TestUnitCheckRefusesAMalformedBody(t *testing.T) {
 			if err == nil {
 				t.Fatalf("UnitCheck accepted a body that breaks the standard")
 			}
-			if tc.sentinel != nil && !errors.Is(err, tc.sentinel) {
+			if !errors.Is(err, tc.sentinel) {
 				t.Errorf("UnitCheck error = %v, want errors.Is %v", err, tc.sentinel)
+			}
+			var named *core.Error
+			if !errors.As(err, &named) || named.Outcome != core.Outcome(tc.sentinel.Error()) {
+				t.Errorf("UnitCheck error = %v, want the named outcome %q", err, tc.sentinel)
 			}
 			if !strings.Contains(err.Error(), tc.names) {
 				t.Errorf("UnitCheck error %q does not name the fault %q", err, tc.names)
 			}
 		})
+	}
+}
+
+// TestUnitCheckNamesEveryFault covers the purpose of the check: a body with an unsafe scope path, a
+// verify that would run a shell and two malformed To do items is refused with each fault named, so
+// the session fixes the body in one pass instead of one fault per run. The outcome is the first
+// fault's row, so the reader gets one named next action (SPEC §5.3, §8.4).
+func TestUnitCheckNamesEveryFault(t *testing.T) {
+	body := unitBodyFor("- internal/engine/unit.go\n- ../outside.go",
+		"- Write the parser tests — verify: `go test ./internal/engine/...` → pass\n"+
+			"- Polish the wording\n- Review the diff → PASS",
+		"`go test ./internal/engine/... | tee report.txt` → exit 0")
+	_, err := UnitCheck(UnitCheckInput{Body: body})
+	if err == nil {
+		t.Fatalf("UnitCheck accepted a body with four faults")
+	}
+	faults := []struct {
+		catches  string
+		sentinel error
+		names    string
+	}{
+		{"an unsafe scope path dropped once a later fault is found", ErrUnitPathUnsafe, `"../outside.go"`},
+		{"a shell verify dropped behind the scope fault", ErrUnitVerifyUnsafe, "tee report.txt"},
+		{"the first malformed To do item dropped behind earlier faults", ErrUnitSectionMissing, "Polish the wording"},
+		{"a second malformed To do item dropped behind the first", ErrUnitSectionMissing, "Review the diff → PASS"},
+	}
+	for _, f := range faults {
+		if !errors.Is(err, f.sentinel) {
+			t.Errorf("%s: error %v, want errors.Is %v", f.catches, err, f.sentinel)
+		}
+		if !strings.Contains(err.Error(), f.names) {
+			t.Errorf("%s: error %q does not name %q", f.catches, err, f.names)
+		}
+	}
+	var named *core.Error
+	if !errors.As(err, &named) || named.Outcome != core.Outcome(ErrUnitPathUnsafe.Error()) {
+		t.Errorf("UnitCheck error = %v, want the outcome of the first fault %q", err, ErrUnitPathUnsafe)
 	}
 }
 
@@ -262,7 +304,7 @@ func TestRunCLIUnitCheckReadsTheBody(t *testing.T) {
 			catches: "a malformed body accepted on the command line as if the unit followed the standard",
 			body:    unitBodyFor(scope, good+"\n- Polish the wording", verify),
 			code:    core.StatusError.ExitCode(),
-			outcome: core.OutcomeError,
+			outcome: core.Outcome(ErrUnitSectionMissing.Error()),
 			names:   "Polish the wording",
 		},
 	}

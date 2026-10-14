@@ -81,6 +81,28 @@ func TestVersion(t *testing.T) {
 	}
 }
 
+// TestRegistryServesUnitCheck proves the binary's registry serves `unit check`: a call without a body
+// reaches the engine command and gets its usage refusal, not an unknown-command error. A registry
+// that leaves the engine commands out ships a binary in which no session can check a unit body
+// (SPEC §5.7, §7.2).
+func TestRegistryServesUnitCheck(t *testing.T) {
+	var out, stream bytes.Buffer
+	code := core.RunCLI(t.Context(), registry(), []string{"unit", "check", "--format", "json"}, &out, &stream)
+	if code != core.StatusUsage.ExitCode() {
+		t.Fatalf("unit check without a body exit code = %d, want %d; stdout %q",
+			code, core.StatusUsage.ExitCode(), out.String())
+	}
+	var env struct {
+		Detail string `json:"detail"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &env); err != nil {
+		t.Fatalf("unit check printed no JSON envelope: %v; stdout %q", err, out.String())
+	}
+	if !strings.Contains(env.Detail, "pass the unit body") {
+		t.Errorf("unit check detail = %q, want the engine's refusal that asks for the unit body", env.Detail)
+	}
+}
+
 func runBin(t *testing.T, bin string, args ...string) (stdout, stderr string, code int) {
 	t.Helper()
 	cmd := exec.CommandContext(t.Context(), bin, args...)
