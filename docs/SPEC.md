@@ -1,11 +1,10 @@
 # aiwe — Product Specification
 
-Status: target design, revision 8, 2026-10-12. This file holds product, architecture and contracts only (L1). The
+Status: target design, revision 9, 2026-10-14. This file holds product, architecture and contracts only (L1). The
 delivery plan lives in the tracker: one goal issue per milestone, units as its sub-issues (§13). Decisions: §16.
-Facts: §17.
-Labels: **fact** = traced to §17 · **default** = chosen here; the owner may reverse it. An unmeasured value is
-`unknown` (DR-6). Each fact lives in one place; other places cite it by id (DR-n, §n, Sn, Mn, On, Ln, Qn).
-Decision order: owner decisions, then the value order (§1.4), then necessity (DR-22).
+Facts: §17. Labels: **fact** = traced to §17 · **default** = chosen here; the owner may reverse it. An unmeasured
+value is `unknown` (DR-6). Each fact lives in one place; other places cite it by id (DR-n, §n, Sn, Mn, On, Ln,
+Qn). Decision order: owner decisions, then the value order (§1.4), then necessity (DR-22).
 ## 1. Purpose, users, problems, value, metrics
 ### 1.1 Purpose
 aiwe turns a goal issue into verified, merged code, using the AI subscriptions and API keys you already have. It runs
@@ -78,7 +77,7 @@ gate step `repo`. Test paths are relative to `internal/`.
 | DR-2 | Work whose answer is determined by its input is code, never a model call. Anything else comes from the adaptation ladder (§7.7); its stored artefact is reused while its input hash is unchanged. | test `engine/synthesis_test.go` |
 | DR-3 | No OS, device, shell, path, core count, memory, harness, model, provider, stack or tracker is assumed. Each difference lives in one adapter file or data row, and capacity is measured at run time (§6.4, §6.6). | test `core/capacity_test.go` |
 | DR-4 | A managed project needs no file, setting or setup step. The product needs nothing installed except git: one binary per OS and architecture (§6.2). A project `gate.json`, if present, wins over the derived gate. | CI step `clean-os-smoke` (§12.2) |
-| DR-5 | A judging run is separate from the writing run. It starts with a clean context on the most independent source available (§8.1 point 5). Its verdict counts only from its own result bound to its RunID. | test `engine/judge_test.go` |
+| DR-5 | A judging run is separate from the writing run and starts with a clean context; it never shares a run or context with the writer; a different model or source is not required (§8.1 point 5). Its verdict counts only from its own result bound to its RunID. | test `engine/judge_test.go` |
 | DR-6 | Absence is not evidence: a skipped step makes the gate `incomplete`. An unknown stack, empty output, missing tool or zero collected tests is `not_measured` or red. Prices, quotas, scores and metrics are measured or `unknown` with a reason (`no_price`, `no_usage_data`, `subscription`), never `0`. | test `gates/runner_test.go` |
 | DR-7 | A unit is dispatched only when its issue parses (§8.4) with a verify and a file set. The file set holds at most 5 source files; test, lock, generated files and `go.mod`/`go.sum` do not count (Q25). A behaviour unit has a To do line whose verify names a test. | test `engine/unit_test.go` |
 | DR-8 | Only the engine runs checks: an agent requests its unit verify through `aiwe verify`, the auditor reads recorded results, and a check runs at most once per key (§7.8). | test `gates/cache_test.go` |
@@ -320,21 +319,20 @@ intake parses it again.
 | 6 verify | M | The engine runs the unit verify once per key when the agent asks through `aiwe verify` and returns red output to it. |
 | 7 collect | M | Run branch to a run ref; residue recorded; clone removed. |
 | 8 scope check | M | `<base>...<tip>` against the file set (DR-9). |
-| 9 audit | J | An auditor on a separate source (DR-5) compares the done criteria with the diff using engine evidence only. Every `path:line` and identifier a RED verdict cites must resolve on the tip, else `unverified_finding` and a new auditor run. |
+| 9 audit | J | An auditor in a separate run with a clean context (DR-5) compares the done criteria with the diff using engine evidence only. Every `path:line` and identifier a RED verdict cites must resolve on the tip, else `unverified_finding` and a new auditor run. |
 | 10 fix loop | J | Returned or red → an engineer fix round, at most 2 (§7.4), then `quarantined`. A second red moves the next run up the assignment (§8.1 point 9). |
 | 11 integrate | M | Push the run branch; open one pull request; wait for its CI (red → a fix round, step 10); squash-merge only while head = `AuditedTip` (DR-14). Title: `<type>(<scope>): ` of the first non-test commit, then the issue title with a lower-case first letter; the whole title is cut to 50 characters. Message per §12.3: `Effect: <before> → <after>`, `Closes <owner>/<repo>#N`, the same for the goal when this is its last open sub-issue, and `Run-Id` (L7). A breaking marker waits for the owner (§12.3). |
 | 12 main CI | M | Wait for the squash commit's `main` CI. Red → a revert pull request, merged once its CI is green; the unit issue reopens and requeues. Red revert CI → `revert_red`; no run in time → `ci_not_observed`. A milestone whose issues are all closed is closed. |
 | 13 closeout | M | Append run and check records (§8.5); delete the claim ref and the remote run branch. |
 
-After the skeleton, these join (§13): an **already-done** check before step 3 (base verify; ambiguous → scout); the
+After the skeleton, these join (§13): an **already-done** check before step 3 (base verify; ambiguous → analyst); the
 stored **gate** on a clean clone of the tip after step 8, reusing recorded keys; **D-checks** and **mutation** before
 the audit (§11); **security-reviewer** and **ux-reviewer** beside the auditor (a `not_measured` UI review does not
 block, Q10); **batches** of unit pull requests gated together on the working-branch tip, a red batch split in halves
 until each red pull request is isolated (a removed one stays open and returns as a fix round, Q21; a second refusal
 because `main` moved → `push_rejected`); the **debugger** on a repeated red; the **ladder** (§7.7).
 ### 7.4 Failure paths
-Red signature = step id + sorted failing test ids + exit code + first error line, with digits, hashes and temp paths
-normalised.
+Red signature = step id + sorted failing test ids + exit code + first error line, with digits, hashes and temp paths normalised.
 
 | Event | Outcome | Engine action |
 |---|---|---|
@@ -468,8 +466,8 @@ Escalation moves up the list. No run recomputes the list.
    median duration; for judging roles also verdicts later contradicted by an escaped defect (M3).
 5. **Candidates**: discovered models on `active` sources below their ceiling and spend cap, minus `exclude`, minus
    models that miss a required capability. A judging run excludes the writer's provider when another provider has a
-   candidate; otherwise it takes the same provider's other model, then a new instance (L13). One source still works
-   (Q6); the run records the level it got.
+   candidate; otherwise it takes the same provider's other model, then a new instance (L13). A different model or source
+   is not required (Q6); one source still works; the run records the level it got.
 6. **Role fit**: shipped data per role (`roles/`) names the measured fields its quality uses and their weights
    (writing roles: coding index first; planning: intelligence index first; judging: both), its required capabilities
    (tool use, context window) and a floor score. A writing role never takes a candidate below its floor.
@@ -569,42 +567,44 @@ harness that reports only session totals converts them per run or reports `unkno
 ## 9. Roles and the standard agent contract
 ### 9.1 Role cards
 A role exists only with its own kind of work and a gated boundary (DR-22). Skeleton: engineer, auditor, test-author.
-Next: architect, security-reviewer, doc-writer. Later: scout, debugger, ux-reviewer. Operator: deferred with operation
+Next: architect, security-reviewer, doc-writer. Later: analyst, debugger, ux-reviewer. Operator: deferred with operation
 units (O4).
 
 **Resolution** (DR-15), from the unit's type and labels, its file set, its diff paths after collect and §8.2: `aiwe
 plan` or a plan artefact → architect, auditor · another artefact → engineer, auditor · type `documentation` or only
 document paths → doc-writer, auditor (a non-document path → `role_unresolved`) · any other unit → engineer, auditor,
 with test-author first for a risky unit (L17) · a diff path in the security or UI table adds security-reviewer or
-ux-reviewer · the same red signature twice adds debugger · an ambiguous already-done check runs scout. A **risky
+ux-reviewer · the same red signature twice adds debugger · an ambiguous already-done check runs analyst. A **risky
 unit** (L17) has Severity `critical` or `high`, or a file-set path that is in the security table (§8.2) or has a
 segment containing `identity`, `authz`, `delete`, `purge`, `migrat`, `routing`, `router` or `matching` (default).
 
 | Role | Purpose | May not (gate) | Tier |
 |---|---|---|---|
-| architect | Splits a goal into unit texts (§8.4). | write files (read-only clone); name a worker model or a missing plain path (parser) | raised |
+| architect | Splits a goal into unit texts with order and dependencies (§8.4). | write files, commits or branches; name a worker model; name a path, name or library the survey did not place (parser) | raised |
 | test-author | Writes the unit's tests before code, one commit. | write production code; add skipped, focused or empty tests (D1, D10, D11) | base |
 | engineer | Implements the unit inside the file set. | touch the test-author's files or leave the file set (D1, DR-9); weaken tests, ignore errors, add TODOs, secrets or unregistered dependencies (D2, D4, D7, D9, D15, D16, D17) | base |
-| doc-writer | Updates documents; creates one only when listed `(new)`. | write a non-document path (D1) | base |
-| auditor | Judges work it did not write. | share a run or context with the writer, or use a less independent source (DR-5, D14); write `VERDICT:` into a branch commit (`verdict_in_branch`) | raised |
+| doc-writer | Updates the given document, proved by the project's document gate; a new document only when the unit lists one `(new)`. | write a non-document path (D1) | base |
+| auditor | Judges work it did not write. | share a run or context with the writer (DR-5, D14); write `VERDICT:` into a branch commit (`verdict_in_branch`) | raised |
 | security-reviewer | Attacks the change; proves each finding. | fix; run a reproduction itself (DR-8) | raised |
 | ux-reviewer | Judges changed screens per width. | fix | base |
-| scout | Answers "already done on base?". | write files | base |
+| analyst | Measures facts read-only before planning or work; answers "already done on base?". | write files; decide or plan (D1) | base |
 | debugger | Proves the root cause of a repeated red. | change code; run an experiment itself (DR-8) | raised |
 
-Method per role (the card body): **architect**: each unit has one problem, its scope, Done criteria, To do lines with
-verify and dependencies; outcome items taken = items placed; omissions are named. **test-author**: tests check the
-Done criteria through the production entry point and fail on base for the missing behaviour, never for an import,
-syntax or fixture error. **engineer**: "red before" only from a recorded result; a structural change removes no check
-(DR-12); a deliberate behaviour change goes under Scope deviation; three reds with no new cause → stop.
-**doc-writer**: every fact is checked against code or a recorded result; an unverified line goes under Not done.
-**auditor**: the writer's return is a claim; each Done criterion gets PASS or FAIL with one evidence line; it looks for
-silent scope change, weakened assertion, removed check, compatibility shim, scratch file and fail-open reasoning; a
-test that only matches source text proves nothing; it never fixes. **security-reviewer**: a one-line threat model; a
-finding = location · reproduction the engine runs · result · severity; unreproduced → `not_measured`.
-**ux-reviewer**: the project's UI rules (none → `not_measured`); widths 375, 768, 1440 and 1920 px (default); empty,
-loading, error, filled and unauthorised states; targets ≥ 44 px; contrast, keyboard, focus. **scout**: facts carry
-file and line. **debugger**: one hypothesis, one experiment through `aiwe verify` that changes one variable.
+Method per role (the card body): **architect**: each unit has one problem, its scope, a file boundary, Done criteria, To do
+lines with verify and expected signal, and dependencies; outcome items taken = items placed; omissions are named.
+**test-author**: tests check the Done criteria through the production entry point and fail on base for the missing
+behaviour, never for an import, syntax or fixture error. **engineer**: "red before" only from a recorded result; a
+structural change removes no check (DR-12); a deliberate behaviour change goes under Scope deviation; three reds with no
+new cause → stop. **doc-writer**: the project's document gate proves the change; every fact is checked against code or a
+recorded result, and an unverified line goes under Not done. **auditor**: the writer's return is a claim; each Done
+criterion gets PASS or FAIL with one evidence line; it looks for silent scope change, weakened assertion, removed check,
+compatibility shim, scratch file and fail-open reasoning; a test that only matches source text proves nothing; it never
+fixes. **security-reviewer**: a one-line threat model; a finding = location · reproduction the engine runs · result ·
+severity; unreproduced → `not_measured`. **ux-reviewer**: the project's UI rules (none → `not_measured`); widths 375, 768,
+1440 and 1920 px (default); empty, loading, error, filled and unauthorised states; targets ≥ 44 px; contrast,
+keyboard, focus. **analyst**: measures facts read-only before planning or work and answers "already done on base?";
+each fact carries file and line, an unmeasured item is `not_measured`. **debugger**: one hypothesis, one experiment
+through `aiwe verify` that changes one variable; a root cause flips that variable red → green and back.
 
 **Card format**: `id, purpose, trigger, needs, output, tier (the starting tier, §8.1 point 7), may, may_not[{text,
 gate}]` and a body without shell commands; no harness, model, tool or path names; embedded and served as `roles/<id>`.
@@ -828,7 +828,7 @@ Each decision keeps its id.
 | Q2 | Product name aiwe, read from one constant (DR-17). | valid |
 | Q3 | Nothing is published before the trust milestone; the first version is `1.0.0`. | superseded by L9 |
 | Q4 | The repository is on a personal account; issue type follows the GraphQL rule of §8.4; contract tests prove both paths. | valid |
-| Q6 | Independent audit as DR-5 states; the ledger records the level; one source is never refused. | valid |
+| Q6 | Audit independence is its own run with a clean context, as DR-5 states; the ledger records the level; a different model or source is not required, and one source is never refused (owner, 2026-10-14). | valid |
 | Q7 | Code signing: none until M-Trust closes; the owner decides then. | valid |
 | Q8 | The operator only plans; the engine performs the access. | deferred with operation units (O4) |
 | Q9 | Live approval is the terminal-only `aiwe ops approve`, which asks for the digest. | deferred with operation units (O4) |
