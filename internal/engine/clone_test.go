@@ -58,12 +58,13 @@ func engineTestRepoNew(t *testing.T, dir string) engineTestRepo {
 
 // engineTestRoots makes the roots of one test under one t.TempDir: the home and the canonical
 // repository. The state, temp and cache roots are named but left missing, so OpenOwner makes them
-// owner-only the same way it does in production: a directory made here with MkdirAll inherits the
-// ACL of the temp parent, which may let other users in, and OpenOwner would refuse its own fixture
-// on Windows (SPEC §5.15).
+// owner-only as in production: a MkdirAll directory inherits the temp parent's ACL, which may let
+// other users in, so OpenOwner would refuse it on Windows (SPEC §5.15). The state root override,
+// where core.Git keeps its hooks directory, points here, never at a gate's fresh roots (SPEC §7.8).
 func engineTestRoots(t *testing.T) core.OwnedRoots {
 	t.Helper()
 	base := t.TempDir()
+	t.Setenv(strings.ToUpper(core.Product)+"_HOME", filepath.Join(base, "git-state"))
 	roots := core.OwnedRoots{
 		State:     filepath.Join(base, "state"),
 		Temp:      filepath.Join(base, "temp"),
