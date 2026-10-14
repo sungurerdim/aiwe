@@ -51,6 +51,8 @@ func Outcomes() []OutcomeRow {
 			Next: "free space under the footprint the detail names, or raise its ceiling"},
 		{Outcome: "config_invalid", Status: StatusError, Err: ErrConfigInvalid,
 			Next: "correct the state file the detail names to one JSON object of string values"},
+		{Outcome: "prompt_too_large", Status: StatusError,
+			Next: "shorten the card or the unit so the measured size fits the cap"},
 	}
 }
 
