@@ -53,6 +53,30 @@ func Outcomes() []OutcomeRow {
 			Next: "correct the state file the detail names to one JSON object of string values"},
 		{Outcome: "prompt_too_large", Status: StatusError,
 			Next: "shorten the card or the unit so the measured size fits the cap"},
+		// The sentinels the batch commits add live outside package core, so each row below carries
+		// Err nil, as the prompt_too_large row does: the string a sentinel holds is still a row of the
+		// table, and the reader gets one next action for it (#280).
+		{Outcome: "key_missing", Status: StatusError,
+			Next: "set the provider's API key variable, such as OPENCODE_API_KEY, to a non-empty value, " +
+				"then run the command again"},
+		{Outcome: "run_id_missing", Status: StatusError,
+			Next: "start the run through the engine, or pass the run id the command needs"},
+		{Outcome: "unit: required section missing", Status: StatusError,
+			Next: "add the section the detail names to the unit body, then run the command again"},
+		{Outcome: "unit: body too large", Status: StatusError,
+			Next: "shorten the unit body below the size the detail names, then run the command again"},
+		{Outcome: "unit: scope path outside the repository", Status: StatusError,
+			Next: "move the scope path the detail names into the repository, or remove it from the unit"},
+		{Outcome: "unit: verify command would run a shell", Status: StatusError,
+			Next: "write the verify command as a program and its arguments, with no shell between them"},
+		{Outcome: "unit: scope holds too many source files", Status: StatusError,
+			Next: "narrow the unit scope below the file count the detail names, or split the unit"},
+		{Outcome: "unit: verify command does not resolve", Status: StatusError,
+			Next: "correct the verify command to a program that exists, then run the unit again"},
+		{Outcome: "the engine's own environment points a git call at another repository", Status: StatusError,
+			Next: "unset the environment variable the detail names, or run the command from the repository it points at"},
+		{Outcome: "tracker: no token", Status: StatusError,
+			Next: "set GH_TOKEN or GITHUB_TOKEN to a token that reads the tracker, then run the command again"},
 	}
 }
 
