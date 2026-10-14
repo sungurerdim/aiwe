@@ -58,8 +58,7 @@ func Outcomes() []OutcomeRow {
 		{Outcome: "key_missing", Status: StatusError,
 			Next: "set the provider's API key variable, such as OPENCODE_API_KEY, to a non-empty value, " +
 				"then run the command again"},
-		{Outcome: "run_id_missing", Status: StatusError,
-			Next: "start the run through the engine, or pass the run id the command needs"},
+		{Outcome: "run_id_missing", Status: StatusError, Next: "start the run through the engine, or pass the run id the command needs"},
 		{Outcome: "unit: required section missing", Status: StatusError,
 			Next: "add the section the detail names to the unit body, then run the command again"},
 		{Outcome: "unit: body too large", Status: StatusError,
@@ -76,15 +75,16 @@ func Outcomes() []OutcomeRow {
 			Next: "unset the environment variable the detail names, or run the command from the repository it points at"},
 		{Outcome: "tracker: no token", Status: StatusError,
 			Next: "set GH_TOKEN or GITHUB_TOKEN to a token that reads the tracker, then run the command again"},
-		{Outcome: "unaudited_commits", Status: StatusError,
-			Next: "audit the run branch again, then integrate the tip the auditor audited"},
-		{Outcome: "ci_not_observed", Status: StatusError,
-			Next: "wait for the CI run of the batch and read its result, then integrate the unit again"},
+		{Outcome: "unaudited_commits", Status: StatusError, Next: "audit the run branch again, then integrate the tip the auditor audited"},
+		{Outcome: "ci_not_observed", Status: StatusError, Next: "wait for the CI run of the batch and read its result, then integrate the unit again"},
 		{Outcome: "push_rejected", Status: StatusError,
 			Next: "fetch the branch the remote moved, re-run the unit on its new base, then integrate the tip the auditor audited"},
 		{Outcome: "final_answer", Status: StatusOK, Next: "read the report of the result: the run ended with the model's final answer"},
 		{Outcome: "turn_limit", Status: StatusError, Next: "raise the turn limit or narrow the task, then run the unit again"},
 		{Outcome: "time_limit", Status: StatusError, Next: "raise the time limit or narrow the task, then run the unit again"},
+		{Outcome: "path_in_git_dir", Status: StatusError, Next: "change files of the work tree only: the git directory of the clone is the engine's"},
+		{Outcome: "path_through_link", Status: StatusError, Next: "name the file by its own path in the clone, never through a link"},
+		{Outcome: "read_too_large", Status: StatusError, Next: "read a file below the cap the detail names, or split the file or the task"},
 	}
 }
 
