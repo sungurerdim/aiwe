@@ -123,8 +123,20 @@ func CommitMessage(msg, slug string) []Finding {
 // names the repository slug and comes with an Effect line. An Effect line inside a fence does not
 // count.
 func checkIssueLines(body []messageLine, slug string, fenced []bool) []Finding {
-	var found []Finding
-	refs, closes := false, false
+	refs, closes, found := checkIssueRefs(body, slug)
+	if !refs {
+		found = append(found, Finding{Rule: ruleMissingIssueRef, Path: commitMessagePath})
+	}
+	if closes && !hasEffectLine(body, fenced) {
+		found = append(found, Finding{Rule: ruleMissingEffect, Path: commitMessagePath})
+	}
+	return found
+}
+
+// checkIssueRefs walks the issue lines of body: it reports whether body holds a Refs or Closes line
+// and whether it holds a Closes line, with a finding for each Closes line that names another
+// repository or, when slug is empty, no known one.
+func checkIssueRefs(body []messageLine, slug string) (refs, closes bool, found []Finding) {
 	for _, l := range body {
 		m := issueRefPattern.FindStringSubmatch(l.text)
 		if m == nil {
@@ -135,27 +147,31 @@ func checkIssueLines(body []messageLine, slug string, fenced []bool) []Finding {
 			continue
 		}
 		closes = true
-		switch {
-		case slug == "":
-			found = append(found, Finding{Rule: ruleClosesRepoUnknown, Path: commitMessagePath, Line: l.n})
-		case !strings.EqualFold(m[2], slug):
-			found = append(found, Finding{Rule: ruleClosesOtherRepo, Path: commitMessagePath, Line: l.n})
-		}
+		found = append(found, checkClosesRepo(l, m[2], slug)...)
 	}
-	if !refs {
-		found = append(found, Finding{Rule: ruleMissingIssueRef, Path: commitMessagePath})
+	return refs, closes, found
+}
+
+// checkClosesRepo returns a finding for the Closes line l when slug is empty or the repository other
+// it names differs from slug.
+func checkClosesRepo(l messageLine, other, slug string) []Finding {
+	switch {
+	case slug == "":
+		return []Finding{{Rule: ruleClosesRepoUnknown, Path: commitMessagePath, Line: l.n}}
+	case !strings.EqualFold(other, slug):
+		return []Finding{{Rule: ruleClosesOtherRepo, Path: commitMessagePath, Line: l.n}}
 	}
-	hasEffect := false
+	return nil
+}
+
+// hasEffectLine reports whether body holds an Effect line outside a fence.
+func hasEffectLine(body []messageLine, fenced []bool) bool {
 	for i, l := range body {
 		if !fenced[i] && effectPattern.MatchString(l.text) {
-			hasEffect = true
-			break
+			return true
 		}
 	}
-	if closes && !hasEffect {
-		found = append(found, Finding{Rule: ruleMissingEffect, Path: commitMessagePath})
-	}
-	return found
+	return false
 }
 
 // checkClosingKeywords reports any GitHub closing keyword in lines, the header included, that is
