@@ -41,6 +41,7 @@ type Command struct {
 // Dictionary returns the one parameter dictionary: one name, one meaning, everywhere.
 func Dictionary() []ParamDef {
 	return []ParamDef{
+		{Name: "body", Meaning: "the unit issue body to check"},
 		{Name: "format", Meaning: "output format of the result envelope: text or json"},
 		{Name: "repo", Meaning: "repository root; a relative value resolves once against the working directory"},
 		{Name: "step", Meaning: "comma-separated gate step ids to run; every other step is reported not_measured"},

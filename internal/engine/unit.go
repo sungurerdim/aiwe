@@ -22,11 +22,10 @@ var (
 	ErrUnitPathUnsafe     = errors.New("unit: scope path outside the repository")
 	ErrUnitVerifyUnsafe   = errors.New("unit: verify command would run a shell")
 	ErrUnitScopeTooWide   = errors.New("unit: scope holds too many source files")
+	// ErrUnitVerifyUnresolved is the refusal of a verify whose first token is no plain program name
+	// that can resolve on PATH, such as the path-qualified `./missing.sh` (SPEC §8.4).
+	ErrUnitVerifyUnresolved = errors.New("unit: verify command does not resolve")
 )
-
-// ErrUnitVerifyUnresolved is the refusal of a verify whose first token is no plain program name
-// that can resolve on PATH, such as the path-qualified `./missing.sh` (SPEC §8.4).
-var ErrUnitVerifyUnresolved = errors.New("unit: verify command does not resolve")
 
 // MissingSectionError names the §8.4 section a body must carry but does not.
 type MissingSectionError struct {
@@ -62,9 +61,8 @@ type Unit struct {
 	Tests  []string
 }
 
-// ParseUnit reads a unit issue body: the Scope In file set, the Verification commands and the To do
-// test items. ErrUnitBodyTooLarge, ErrUnitPathUnsafe, ErrUnitScopeTooWide, ErrUnitVerifyUnsafe,
-// ErrUnitVerifyUnresolved and a MissingSectionError name its refusals (SPEC §5.13, §8.4).
+// ParseUnit reads a unit issue body: the Scope In file set, the Verification commands and the To
+// do test items; every sentinel above and a MissingSectionError name its refusals (§5.13, §8.4).
 func ParseUnit(body string) (Unit, error) {
 	if len(body) > MaxUnitBodySize {
 		return Unit{}, fmt.Errorf("%w: %d bytes", ErrUnitBodyTooLarge, len(body))
@@ -78,7 +76,10 @@ func ParseUnit(body string) (Unit, error) {
 	if err != nil {
 		return Unit{}, err
 	}
-	tests := toDoTests(sections["To do"], files)
+	tests, err := toDoTests(sections["To do"], files)
+	if err != nil {
+		return Unit{}, err
+	}
 	switch {
 	case len(files) == 0:
 		return Unit{}, &MissingSectionError{Section: "Scope"}
@@ -107,9 +108,8 @@ func unitSections(body string) map[string][]string {
 	return sections
 }
 
-// scopeFiles returns the paths of the In: list of a Scope section, and ignores the Out: list and
-// everything after it. An entry that names no plain repository path and a file set over the ceiling
-// of DR-7 are refused, naming the entry or the count (SPEC §8.4).
+// scopeFiles returns the paths of the In: list of a Scope section and ignores the Out: list and
+// everything after it; an unsafe entry and a set over the DR-7 ceiling are refused, named (§8.4).
 func scopeFiles(lines []string) ([]string, error) {
 	var files []string
 	in, sources := false, 0
@@ -136,15 +136,14 @@ func scopeFiles(lines []string) ([]string, error) {
 	return files, nil
 }
 
-// sourceCount counts the paths of one Scope In line that count against the ceiling of DR-7 (SPEC §8.4).
-func sourceCount(paths []string) int {
-	n := 0
+// sourceCount counts the paths of one Scope In line that count against the DR-7 ceiling (SPEC §8.4).
+func sourceCount(paths []string) (n int) {
 	for _, path := range paths {
 		if countsAsSource(path) {
 			n++
 		}
 	}
-	return n
+	return
 }
 
 // countsAsSource reports whether one file-set path counts against the ceiling of DR-7: a test, lock
@@ -155,18 +154,17 @@ func countsAsSource(path string) bool {
 		strings.HasSuffix(base, "_generated.go") || strings.HasSuffix(base, ".pb.go") {
 		return false
 	}
-	lower := strings.ToLower(base)
-	switch lower {
+	switch lower := strings.ToLower(base); lower {
 	case "npm-shrinkwrap.json", "packages.lock.json", "gradle.lockfile":
 		return false
+	default:
+		return !strings.HasSuffix(lower, ".lock") && !strings.HasSuffix(lower, ".lockb") &&
+			!strings.HasSuffix(lower, ".sum") && !strings.HasSuffix(lower, "-lock.json")
 	}
-	return !strings.HasSuffix(lower, ".lock") && !strings.HasSuffix(lower, ".lockb") &&
-		!strings.HasSuffix(lower, ".sum") && !strings.HasSuffix(lower, "-lock.json")
 }
 
 // scopeLineFiles returns the paths one Scope In line names: its backticked spans when it carries
-// any, else its plain list item. A plain item counts only as one whitespace-free token that looks
-// like a repository path, so prose and a placeholder such as `none` never become paths (§8.4).
+// any, else one whitespace-free `- ` token that looks like a repository path; prose and `none` name none (§8.4).
 func scopeLineFiles(line string) ([]string, error) {
 	if paths := backticked(line); len(paths) > 0 {
 		return filePaths(paths)
@@ -196,17 +194,15 @@ func filePaths(entries []string) ([]string, error) {
 	return out, nil
 }
 
-// pathOutside reports whether path is not a repository path a unit may change: an absolute path, a
-// volume prefix, a Windows separator, a `..` element, or an element of the repository's control
-// data, `.git` or `.githooks`, without case or the trailing dots and spaces Windows strips (§8.4).
+// pathOutside reports whether path is no repository path a unit may change: absolute or Windows
+// separated, holding `..`, or under `.git`/`.githooks`, case-blind, trailing dots stripped (§8.4).
 func pathOutside(path string) bool {
 	if strings.HasPrefix(path, "/") || strings.Contains(path, `\`) || (len(path) > 1 && path[1] == ':') {
 		return true
 	}
 	parts := strings.Split(path, "/")
 	for _, part := range parts {
-		part = strings.TrimRight(part, ". ")
-		if strings.EqualFold(part, ".git") || strings.EqualFold(part, ".githooks") {
+		if part = strings.TrimRight(part, ". "); strings.EqualFold(part, ".git") || strings.EqualFold(part, ".githooks") {
 			return true
 		}
 	}
@@ -214,7 +210,7 @@ func pathOutside(path string) bool {
 }
 
 // verificationCommands returns the commands of a Verification section; a line is either a backticked
-// `` `<command>` → <signal> `` or a plain `` <command> → <signal> ``. A command that would run a
+// `<command>` → <signal> or a plain <command> → <signal>. A command that would run a
 // shell, counts from HEAD or starts with no plain program name is refused, named (SPEC §8.4).
 func verificationCommands(lines []string) ([]string, error) {
 	var cmds []string
@@ -242,15 +238,13 @@ func resolvableFirstToken(command string) bool {
 	if len(fields) == 0 {
 		return false
 	}
-	first := fields[0]
-	return !strings.ContainsAny(first, `/\`) && !strings.HasPrefix(first, "-") &&
-		!strings.HasPrefix(first, ".")
+	return !strings.ContainsAny(fields[0], `/\`) && !strings.HasPrefix(fields[0], "-") &&
+		!strings.HasPrefix(fields[0], ".")
 }
 
 // verificationCommand returns the command of one Verification line: the backticked span before the
-// arrow, or the plain text before it. The span after `→` is the signal and is never part of the
-// command, so a signal never becomes an argument the engine runs; a list item is never a verify
-// line, backticked or not (SPEC §8.4).
+// arrow, or the plain text before it; the span after `→` is the signal, never an argument the
+// engine runs, and a list item is never a verify line, backticked or not (SPEC §8.4).
 func verificationCommand(line string) (string, bool) {
 	if strings.HasPrefix(strings.TrimSpace(line), "- ") {
 		return "", false
@@ -304,34 +298,42 @@ func countsFromHead(command string) bool {
 }
 
 // toDoTests returns the text of each To do item whose check runs or names a test of the unit's
-// file set, without its `- ` list marker; a body with none is refused (SPEC §8.4).
-func toDoTests(lines []string, files []string) []string {
+// file set; a line that is no `task — verify: <check> → <signal>` item is refused, named, as is a
+// body whose list holds no item at all (SPEC §8.4).
+func toDoTests(lines []string, files []string) ([]string, error) {
 	var tests []string
 	for _, line := range lines {
-		item, ok := strings.CutPrefix(strings.TrimSpace(line), "- ")
-		if !ok {
+		item := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "- "))
+		if item == "" {
 			continue
 		}
-		item = strings.TrimSpace(item)
+		if !completeToDoItem(item) {
+			return nil, fmt.Errorf("unit: To do item %q is not `task — verify: <check> → <signal>`", item)
+		}
 		if isTestItem(item, files) {
 			tests = append(tests, item)
 		}
 	}
-	return tests
+	return tests, nil
 }
 
-// isTestItem reports whether a To do line's check is a test of the unit's file set: a check that
+// completeToDoItem reports whether one To do item follows the standard: `task — verify: <check> →
+// <signal>` carries the task, the check and the signal, none of the three empty (§8.4).
+func completeToDoItem(item string) bool {
+	task, rest, ok := strings.Cut(item, "verify:")
+	if !ok || strings.TrimSpace(task) == "" {
+		return false
+	}
+	check, signal, ok := strings.Cut(rest, "→")
+	return ok && strings.TrimSpace(check) != "" && strings.TrimSpace(signal) != ""
+}
+
+// isTestItem reports whether one To do item's check is a test of the unit's file set: a check that
 // names test files counts when the set lists them, and a `go test` run counts when one of its
-// package or directory arguments holds a file of the set. A run of another package is no test of
-// this unit, so an unrelated check never stands for its test (SPEC §8.4).
+// arguments holds a file of the set; the caller passes an item completeToDoItem accepted (SPEC §8.4).
 func isTestItem(item string, files []string) bool {
-	_, check, ok := strings.Cut(item, "verify:")
-	if !ok {
-		check = item
-	}
-	if head, _, arrow := strings.Cut(check, "→"); arrow {
-		check = head
-	}
+	_, rest, _ := strings.Cut(item, "verify:")
+	check, _, _ := strings.Cut(rest, "→")
 	var named []string
 	for _, token := range strings.Fields(check) {
 		if token = strings.Trim(token, "`\"'(),;:[]."); strings.HasSuffix(token, "_test.go") {
@@ -366,8 +368,7 @@ func coversFileSet(check string, files []string) bool {
 }
 
 // targetCovers reports whether one test target names a file of the file set: a `_test.go` target
-// must be in the set itself, and any other target is a directory or import path, so the set must
-// hold a file under it (SPEC §8.4).
+// must be in the set, and any other target is a directory, so the set must hold a file under it (§8.4).
 func targetCovers(target string, files []string) bool {
 	if strings.HasSuffix(target, "_test.go") {
 		return slices.Contains(files, target)
