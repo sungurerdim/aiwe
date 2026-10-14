@@ -83,6 +83,16 @@ func Outcomes() []OutcomeRow {
 			Next: "wait for the CI run of the batch and read its result, then integrate the unit again"},
 		{Outcome: "push_rejected", Status: StatusError,
 			Next: "fetch the branch the remote moved, re-run the unit on its new base, then integrate the tip the auditor audited"},
+		// The named outcomes of the agent loop (#33): a final answer ends the run well, and the two
+		// limits mean the role never finished it. The constants live in package adapters, so each row
+		// carries Err nil, as the prompt_too_large row does; the row still gives the reader one next
+		// action.
+		{Outcome: "final_answer", Status: StatusOK,
+			Next: "read the report of the result: the run ended with the model's final answer"},
+		{Outcome: "turn_limit", Status: StatusError,
+			Next: "raise the turn limit or narrow the task, then run the unit again"},
+		{Outcome: "time_limit", Status: StatusError,
+			Next: "raise the time limit or narrow the task, then run the unit again"},
 	}
 }
 

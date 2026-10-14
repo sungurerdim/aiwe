@@ -40,18 +40,23 @@ type Detection struct {
 // the model (SPEC §10.2).
 type ToolPermissions struct {
 	Read  bool
+	Write bool
 	Edit  bool
+	List  bool
 	Shell bool
 }
 
 // RunRequest is the one request vocabulary of every provider: the run id, the role and task, the
-// model and the tool permissions (SPEC §10.2).
+// model, the tool permissions, the clone the tools stay inside and the reasoning effort of the
+// candidate (SPEC §10.2, DR-15).
 type RunRequest struct {
-	RunID string
-	Role  string
-	Task  string
-	Model string
-	Tools ToolPermissions
+	RunID  string
+	Role   string
+	Task   string
+	Model  string
+	Tools  ToolPermissions
+	Root   string
+	Effort string
 }
 
 // Usage is the token roll of one reply: prompt, cached, completion and reasoning tokens; a count
@@ -63,13 +68,49 @@ type Usage struct {
 	Reasoning  core.Measured[int64]
 }
 
-// RunReport is the one result vocabulary of every provider: the served model, the usage, the cost
-// and the quota of the run (SPEC §10.2).
+// RollUsage sums the usage of every turn of one run: each count is the sum of the counts the turns
+// named, and a count any turn left unnamed is unknown, never 0 (DR-6, SPEC §10.2). A run without an
+// answered turn has unknown counts.
+func RollUsage(turns []Usage) Usage {
+	if len(turns) == 0 {
+		return Usage{}
+	}
+	roll := turns[0]
+	for _, turn := range turns[1:] {
+		roll = roll.add(turn)
+	}
+	return roll
+}
+
+// add returns the sum of the two usages; a count either left unnamed is unknown, so a total is
+// never a measured 0 over a turn that named none (DR-6).
+func (u Usage) add(next Usage) Usage {
+	return Usage{
+		Prompt:     addCount(u.Prompt, next.Prompt),
+		Cached:     addCount(u.Cached, next.Cached),
+		Completion: addCount(u.Completion, next.Completion),
+		Reasoning:  addCount(u.Reasoning, next.Reasoning),
+	}
+}
+
+// addCount returns the sum of two measured token counts; a count either left unnamed stays unknown
+// (DR-6).
+func addCount(sum, next core.Measured[int64]) core.Measured[int64] {
+	if !sum.Known || !next.Known {
+		return core.Measured[int64]{}
+	}
+	return core.Measured[int64]{Value: sum.Value + next.Value, Known: true}
+}
+
+// RunReport is the one result vocabulary of every provider: the served model, the usage, the cost,
+// the quota, the named outcome and the number of turns the run took (SPEC §10.2).
 type RunReport struct {
-	Served string
-	Usage  Usage
-	Cost   core.Measured[float64]
-	Quota  Quota
+	Served  string
+	Usage   Usage
+	Cost    core.Measured[float64]
+	Quota   Quota
+	Outcome core.Outcome
+	Turns   int
 }
 
 // Reset is the time a quota window resets; an unreadable answer leaves it unknown (DR-6).
