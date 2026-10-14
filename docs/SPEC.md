@@ -1,11 +1,10 @@
 # aiwe — Product Specification
 
-Status: target design, revision 8, 2026-10-12. This file holds product, architecture and contracts only (L1). The
+Status: target design, revision 9, 2026-10-14. This file holds product, architecture and contracts only (L1). The
 delivery plan lives in the tracker: one goal issue per milestone, units as its sub-issues (§13). Decisions: §16.
-Facts: §17.
-Labels: **fact** = traced to §17 · **default** = chosen here; the owner may reverse it. An unmeasured value is
-`unknown` (DR-6). Each fact lives in one place; other places cite it by id (DR-n, §n, Sn, Mn, On, Ln, Qn).
-Decision order: owner decisions, then the value order (§1.4), then necessity (DR-22).
+Facts: §17. Labels: **fact** = traced to §17 · **default** = chosen here; the owner may reverse it. An unmeasured
+value is `unknown` (DR-6). Each fact lives in one place; other places cite it by id (DR-n, §n, Sn, Mn, On, Ln,
+Qn). Decision order: owner decisions, then the value order (§1.4), then necessity (DR-22).
 ## 1. Purpose, users, problems, value, metrics
 ### 1.1 Purpose
 aiwe turns a goal issue into verified, merged code, using the AI subscriptions and API keys you already have. It runs
@@ -320,7 +319,7 @@ intake parses it again.
 | 6 verify | M | The engine runs the unit verify once per key when the agent asks through `aiwe verify` and returns red output to it. |
 | 7 collect | M | Run branch to a run ref; residue recorded; clone removed. |
 | 8 scope check | M | `<base>...<tip>` against the file set (DR-9). |
-| 9 audit | J | An auditor on a separate source (DR-5) compares the done criteria with the diff using engine evidence only. Every `path:line` and identifier a RED verdict cites must resolve on the tip, else `unverified_finding` and a new auditor run. |
+| 9 audit | J | An auditor in a separate run with a clean context (DR-5) compares the done criteria with the diff using engine evidence only. Every `path:line` and identifier a RED verdict cites must resolve on the tip, else `unverified_finding` and a new auditor run. |
 | 10 fix loop | J | Returned or red → an engineer fix round, at most 2 (§7.4), then `quarantined`. A second red moves the next run up the assignment (§8.1 point 9). |
 | 11 integrate | M | Push the run branch; open one pull request; wait for its CI (red → a fix round, step 10); squash-merge only while head = `AuditedTip` (DR-14). Title: `<type>(<scope>): ` of the first non-test commit, then the issue title with a lower-case first letter; the whole title is cut to 50 characters. Message per §12.3: `Effect: <before> → <after>`, `Closes <owner>/<repo>#N`, the same for the goal when this is its last open sub-issue, and `Run-Id` (L7). A breaking marker waits for the owner (§12.3). |
 | 12 main CI | M | Wait for the squash commit's `main` CI. Red → a revert pull request, merged once its CI is green; the unit issue reopens and requeues. Red revert CI → `revert_red`; no run in time → `ci_not_observed`. A milestone whose issues are all closed is closed. |
@@ -333,8 +332,7 @@ block, Q10); **batches** of unit pull requests gated together on the working-bra
 until each red pull request is isolated (a removed one stays open and returns as a fix round, Q21; a second refusal
 because `main` moved → `push_rejected`); the **debugger** on a repeated red; the **ladder** (§7.7).
 ### 7.4 Failure paths
-Red signature = step id + sorted failing test ids + exit code + first error line, with digits, hashes and temp paths
-normalised.
+Red signature = step id + sorted failing test ids + exit code + first error line, with digits, hashes and temp paths normalised.
 
 | Event | Outcome | Engine action |
 |---|---|---|
@@ -582,7 +580,7 @@ segment containing `identity`, `authz`, `delete`, `purge`, `migrat`, `routing`, 
 
 | Role | Purpose | May not (gate) | Tier |
 |---|---|---|---|
-| architect | Splits a goal into unit texts with order and dependencies (§8.4). | write files, commits or branches; name a path, name or library the survey did not place (parser) | raised |
+| architect | Splits a goal into unit texts with order and dependencies (§8.4). | write files, commits or branches; name a worker model; name a path, name or library the survey did not place (parser) | raised |
 | test-author | Writes the unit's tests before code, one commit. | write production code; add skipped, focused or empty tests (D1, D10, D11) | base |
 | engineer | Implements the unit inside the file set. | touch the test-author's files or leave the file set (D1, DR-9); weaken tests, ignore errors, add TODOs, secrets or unregistered dependencies (D2, D4, D7, D9, D15, D16, D17) | base |
 | doc-writer | Updates the given document, proved by the project's document gate; a new document only when the unit lists one `(new)`. | write a non-document path (D1) | base |
@@ -603,8 +601,10 @@ criterion gets PASS or FAIL with one evidence line; it looks for silent scope ch
 compatibility shim, scratch file and fail-open reasoning; a test that only matches source text proves nothing; it never
 fixes. **security-reviewer**: a one-line threat model; a finding = location · reproduction the engine runs · result ·
 severity; unreproduced → `not_measured`. **ux-reviewer**: the project's UI rules (none → `not_measured`); widths 375, 768,
-1440 and 1920 px (default); empty, loading, error, filled and unauthorised states; targets ≥ 44 px; contrast, keyboard, focus. **analyst**: measures facts read-only before planning or work and answers "already done on base?";
-each fact carries file and line, an unmeasured item is `not_measured`. **debugger**: one hypothesis, one experiment through `aiwe verify` that changes one variable; a root cause flips that variable red → green and back.
+1440 and 1920 px (default); empty, loading, error, filled and unauthorised states; targets ≥ 44 px; contrast,
+keyboard, focus. **analyst**: measures facts read-only before planning or work and answers "already done on base?";
+each fact carries file and line, an unmeasured item is `not_measured`. **debugger**: one hypothesis, one experiment
+through `aiwe verify` that changes one variable; a root cause flips that variable red → green and back.
 
 **Card format**: `id, purpose, trigger, needs, output, tier (the starting tier, §8.1 point 7), may, may_not[{text,
 gate}]` and a body without shell commands; no harness, model, tool or path names; embedded and served as `roles/<id>`.
