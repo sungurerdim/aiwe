@@ -23,11 +23,14 @@ type OutcomeRow struct {
 }
 
 // Outcomes returns the one outcome table (SPEC §5.3, §5.1): every outcome used in code is a row.
+// The sentinels the batch commits add live outside package core (#280), and so do the named
+// outcomes of the agent loop (#33): a final answer ends the run well, and the two limits mean the
+// role never finished it. Each of those rows carries Err nil, as the prompt_too_large row does: the
+// string a sentinel holds is still a row of the table, and the reader gets one next action for it.
 func Outcomes() []OutcomeRow {
 	return []OutcomeRow{
 		{Outcome: OutcomeOK, Status: StatusOK, Next: "read the data of the result"},
-		{Outcome: OutcomeError, Status: StatusError,
-			Next: "fix the condition the detail names, then run the command again"},
+		{Outcome: OutcomeError, Status: StatusError, Next: "fix the condition the detail names, then run the command again"},
 		{Outcome: OutcomeUsage, Status: StatusUsage, Next: "run " + Product + " --help and correct the call"},
 		{Outcome: "red", Status: StatusRed, Next: "fix the failing step, then run the gate again"},
 		{Outcome: "incomplete", Status: StatusError,
@@ -51,11 +54,7 @@ func Outcomes() []OutcomeRow {
 			Next: "free space under the footprint the detail names, or raise its ceiling"},
 		{Outcome: "config_invalid", Status: StatusError, Err: ErrConfigInvalid,
 			Next: "correct the state file the detail names to one JSON object of string values"},
-		{Outcome: "prompt_too_large", Status: StatusError,
-			Next: "shorten the card or the unit so the measured size fits the cap"},
-		// The sentinels the batch commits add live outside package core, so each row below carries
-		// Err nil, as the prompt_too_large row does: the string a sentinel holds is still a row of the
-		// table, and the reader gets one next action for it (#280).
+		{Outcome: "prompt_too_large", Status: StatusError, Next: "shorten the card or the unit so the measured size fits the cap"},
 		{Outcome: "key_missing", Status: StatusError,
 			Next: "set the provider's API key variable, such as OPENCODE_API_KEY, to a non-empty value, " +
 				"then run the command again"},
@@ -83,16 +82,9 @@ func Outcomes() []OutcomeRow {
 			Next: "wait for the CI run of the batch and read its result, then integrate the unit again"},
 		{Outcome: "push_rejected", Status: StatusError,
 			Next: "fetch the branch the remote moved, re-run the unit on its new base, then integrate the tip the auditor audited"},
-		// The named outcomes of the agent loop (#33): a final answer ends the run well, and the two
-		// limits mean the role never finished it. The constants live in package adapters, so each row
-		// carries Err nil, as the prompt_too_large row does; the row still gives the reader one next
-		// action.
-		{Outcome: "final_answer", Status: StatusOK,
-			Next: "read the report of the result: the run ended with the model's final answer"},
-		{Outcome: "turn_limit", Status: StatusError,
-			Next: "raise the turn limit or narrow the task, then run the unit again"},
-		{Outcome: "time_limit", Status: StatusError,
-			Next: "raise the time limit or narrow the task, then run the unit again"},
+		{Outcome: "final_answer", Status: StatusOK, Next: "read the report of the result: the run ended with the model's final answer"},
+		{Outcome: "turn_limit", Status: StatusError, Next: "raise the turn limit or narrow the task, then run the unit again"},
+		{Outcome: "time_limit", Status: StatusError, Next: "raise the time limit or narrow the task, then run the unit again"},
 	}
 }
 
