@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/sungurerdim/aiwe/internal/core"
 )
 
 // loopUsageFirst and loopUsageSecond are the two usage objects the usage test scripts: each names
@@ -144,6 +146,29 @@ func loopToolResult(body loopTurnBody) (string, bool) {
 	return "", false
 }
 
+// checkStoppedShort fails when a run that ended on a limit reports success: the result carries the
+// named outcome and the status the outcome table gives that row, never ok, so a role that never
+// finished cannot read as done (SPEC §5.3, §10.2).
+func checkStoppedShort(t *testing.T, res core.Result[RunReport], outcome core.Outcome) {
+	t.Helper()
+	var row core.OutcomeRow
+	for _, r := range core.Outcomes() {
+		if r.Outcome == outcome {
+			row = r
+		}
+	}
+	if row.Outcome != outcome {
+		t.Fatalf("the outcome %q is not a row of core.Outcomes(), so it maps to no status (SPEC §5.3)", outcome)
+	}
+	if row.Status == core.StatusOK {
+		t.Fatalf("the outcome table gives %q status %q, want a status that is not success (SPEC §10.2)", outcome, row.Status)
+	}
+	if res.Status != row.Status || res.Outcome != outcome {
+		t.Errorf("a run that ended on %q returned %s/%s, want %s/%s: a role that never finished reads as done (SPEC §5.3, §10.2)",
+			outcome, res.Status, res.Outcome, row.Status, outcome)
+	}
+}
+
 // TestLoopRunsARoleThroughToolsToAFinalAnswer is the done criterion: a role runs end to end through
 // the loop on OpenCode Go, the loop runs every tool the run allows inside the clone, and the run
 // leaves one measured result (SPEC §10.2, O14).
@@ -172,6 +197,10 @@ func TestLoopRunsARoleThroughToolsToAFinalAnswer(t *testing.T) {
 	if res.Data.Outcome != OutcomeFinalAnswer {
 		t.Errorf("the run ended with outcome %q, want %q: a final answer ends the run (SPEC §10.2)",
 			res.Data.Outcome, OutcomeFinalAnswer)
+	}
+	if res.Status != core.StatusOK || res.Outcome != core.OutcomeOK {
+		t.Errorf("a run that ended with the final answer returned %s/%s, want %s/%s (SPEC §5.3, §10.2)",
+			res.Status, res.Outcome, core.StatusOK, core.OutcomeOK)
 	}
 	if res.Data.Turns != 6 {
 		t.Errorf("the run took %d turns, want the five tool turns and the final answer (SPEC §10.2)", res.Data.Turns)
@@ -292,6 +321,7 @@ func TestLoopEndsOnTheTurnLimit(t *testing.T) {
 	if res.Data.Outcome != OutcomeTurnLimit {
 		t.Errorf("the run ended with outcome %q, want %q (SPEC §10.2)", res.Data.Outcome, OutcomeTurnLimit)
 	}
+	checkStoppedShort(t, res, OutcomeTurnLimit)
 	if res.Data.Turns != 2 {
 		t.Errorf("the run took %d turns, want the limit of two (SPEC §10.2)", res.Data.Turns)
 	}
@@ -329,6 +359,7 @@ func TestLoopEndsOnTheTimeLimit(t *testing.T) {
 	if res.Data.Outcome != OutcomeTimeLimit {
 		t.Errorf("the run ended with outcome %q, want %q (SPEC §10.2)", res.Data.Outcome, OutcomeTimeLimit)
 	}
+	checkStoppedShort(t, res, OutcomeTimeLimit)
 }
 
 // TestLoopPassesTheReasoningEffort catches a loop that drops the candidate's effort or invents one

@@ -3,7 +3,9 @@ package adapters
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -108,6 +110,72 @@ func TestToolsRefuseAPathOutsideTheClone(t *testing.T) {
 			}
 			if data, _ := os.ReadFile(outside); string(data) != "outside-secret" {
 				t.Errorf("%s changed the file outside the clone to %q; %s (SPEC §10.2, O2)", tc.tool, data, tc.catch)
+			}
+		})
+	}
+}
+
+// cloneLink makes link a directory link to target: a symlink where the OS allows it, else on
+// Windows a junction, which needs no privilege, so the escape case runs on every OS.
+func cloneLink(t *testing.T, target, link string) {
+	t.Helper()
+	err := os.Symlink(target, link)
+	if err == nil {
+		return
+	}
+	if runtime.GOOS != "windows" {
+		t.Fatalf("symlink %s -> %s: %v", link, target, err)
+	}
+	if out, err := exec.CommandContext(t.Context(), "cmd", "/c", "mklink", "/J", link, target).CombinedOutput(); err != nil {
+		t.Fatalf("mklink /J %s %s: %v: %s", link, target, err, out)
+	}
+}
+
+// TestToolsRefuseALinkOutOfTheClone catches a tool that follows a link inside the clone to a
+// directory outside it: the path itself names no "..", so only the file-system root of the clone
+// can refuse it. Read, write, edit and list each refuse the path through the link, a refused write
+// leaves no file outside and the file outside is never changed (SPEC §5.6, §10.2, O2).
+func TestToolsRefuseALinkOutOfTheClone(t *testing.T) {
+	tests := []struct {
+		name  string
+		tool  string
+		args  map[string]any
+		catch string
+	}{
+		{"read through the link", ToolRead, map[string]any{"path": "escape/secret.txt"},
+			"a read of escape/secret.txt follows the link out of the clone"},
+		{"write through the link", ToolWrite, map[string]any{"path": "escape/made.txt", "content": "x"},
+			"a write of escape/made.txt follows the link out of the clone"},
+		{"edit through the link", ToolEdit,
+			map[string]any{"path": "escape/secret.txt", "old": "outside-secret", "new": "x"},
+			"an edit of escape/secret.txt follows the link out of the clone"},
+		{"list through the link", ToolList, map[string]any{"path": "escape"},
+			"a list of escape follows the link out of the clone"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, root, _ := cloneFixture(t)
+			// The link points at a directory apart from the clone's own tree, so a cleanup that
+			// followed it would never walk back into the clone.
+			vault := t.TempDir()
+			outside := filepath.Join(vault, "secret.txt")
+			if err := os.WriteFile(outside, []byte("outside-secret"), 0o600); err != nil {
+				t.Fatalf("seed the file outside the clone: %v", err)
+			}
+			cloneLink(t, vault, filepath.Join(root, "escape"))
+			tools := NewTools(root, allTools())
+			got, err := tools.Do(context.Background(), tc.tool, tc.args)
+			if err == nil {
+				t.Errorf("%s accepted a path through a link out of the clone; %s (SPEC §5.6, O2)", tc.tool, tc.catch)
+			}
+			if strings.Contains(got, "outside-secret") || strings.Contains(got, "secret.txt") {
+				t.Errorf("%s returned %q from outside the clone; %s (SPEC §5.6, O2)", tc.tool, got, tc.catch)
+			}
+			if _, err := os.Stat(filepath.Join(vault, "made.txt")); err == nil {
+				t.Errorf("%s left a file outside the clone; %s (SPEC §5.6, O2)", tc.tool, tc.catch)
+			}
+			if data, _ := os.ReadFile(outside); string(data) != "outside-secret" {
+				t.Errorf("%s changed the file outside the clone to %q; %s (SPEC §5.6, O2)", tc.tool, data, tc.catch)
 			}
 		})
 	}

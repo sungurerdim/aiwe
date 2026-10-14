@@ -6,6 +6,8 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -43,10 +45,19 @@ func (d noDial) RoundTrip(r *http.Request) (*http.Response, error) {
 }
 
 // newGoFixture returns the OpenCode Go provider of the tests: it talks to the fake host of f, reads
-// its key from env at run time and logs through log (SPEC §10.2).
+// its key from env at run time and logs through log. Its turn and time limits are small, so a
+// fixture that never answers with a final answer ends the run instead of holding the test
+// (SPEC §10.2, DR-1).
 func newGoFixture(f *fakeHost, env Env, log *slog.Logger) *OpenCodeGo {
-	cfg := OpenCodeGoConfig{Env: env, Base: f.srv.URL, Version: chatVersion, Log: log, HTTP: f.srv.Client()}
+	cfg := OpenCodeGoConfig{Env: env, Base: f.srv.URL, Version: chatVersion, Log: log, HTTP: f.srv.Client(),
+		MaxTurns: 5, TimeLimit: time.Minute}
 	return NewOpenCodeGo(cfg)
+}
+
+// goFinalReply is one chat reply that ends a role run: the served model, the final answer with no
+// tool call and every token count (SPEC §10.2).
+func goFinalReply() string {
+	return replyTurn(DefaultModel, assistantText("done"), usageFull)
 }
 
 // registerGoAnswers registers the answer of both endpoints a provider declares: the usage read and
@@ -99,6 +110,77 @@ func TestOpenCodeGoPinnedDefaults(t *testing.T) {
 	if DefaultModel != "deepseek-v4.1-flash" {
 		t.Errorf("DefaultModel = %q, want the model the skeleton runs (SPEC §10.2)", DefaultModel)
 	}
+	if p.cfg.TimeLimit != 60*time.Minute {
+		t.Errorf("a provider built without a time limit runs %v, want the 60 min run limit default, so a role run "+
+			"never waits without a limit (SPEC §7.4, DR-1)", p.cfg.TimeLimit)
+	}
+}
+
+// TestOpenCodeGoRunsARoleThroughTheLoop is the done criterion of the loop: a role runs end to end
+// through the provider. It reads the Go quota once, runs the tool call of the first turn inside the
+// clone, feeds its result back and ends on the final answer, and the result names the turns, the
+// usage of every turn and the quota (SPEC §10.2, O14).
+func TestOpenCodeGoRunsARoleThroughTheLoop(t *testing.T) {
+	log, _ := testLog(t)
+	t.Setenv(envKeyVar, envSecret)
+	root := t.TempDir()
+	f := newFakeHost(t)
+	p := newGoFixture(f, ProcessEnv(), log)
+	registerGoAnswers(t, f, p, answerJSON(usageAnswer), scriptedAnswers(
+		replyTurn(DefaultModel, assistantToolCall("call_1", ToolWrite, `{"path":"out.txt","content":"hello"}`), usageFull),
+		goFinalReply(),
+	))
+	req := RunRequest{RunID: chatRunID, Role: chatRole, Task: chatTask, Tools: ToolPermissions{Write: true}, Root: root}
+	res, err := p.Run(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Status != core.StatusOK || res.Outcome != core.OutcomeOK || res.Data.Outcome != OutcomeFinalAnswer {
+		t.Fatalf("Run returned %s/%s with outcome %q, want %s/%s with %q (SPEC §10.2)",
+			res.Status, res.Outcome, res.Data.Outcome, core.StatusOK, core.OutcomeOK, OutcomeFinalAnswer)
+	}
+	if res.Data.Turns != 2 {
+		t.Errorf("the run took %d turns, want the tool turn and the final answer (SPEC §10.2)", res.Data.Turns)
+	}
+	if data, err := os.ReadFile(filepath.Join(root, "out.txt")); err != nil || string(data) != "hello" {
+		t.Errorf("the clone holds %q, %v, want the file %q the tool turn wrote: the provider ran no loop (SPEC §10.2, O14)",
+			data, err, "hello")
+	}
+	got := f.requests()
+	if len(got) != 3 {
+		t.Fatalf("the provider made %d requests, want the usage read and the two turns (SPEC §10.2)", len(got))
+	}
+	if got[0].Path != endpointPath(t, p.Endpoints().Usage) {
+		t.Errorf("the first request is %s, want the usage read before the first turn (SPEC §10.2)", got[0].Path)
+	}
+	checkHeader(t, got[2], openCodeSessionKey, chatRunID)
+	checkMeasured(t, "prompt tokens", res.Data.Usage.Prompt, measured(2400), "the report sums the prompt tokens of both turns")
+	if !res.Data.Quota.Rolling.Percent.Known {
+		t.Errorf("the report holds quota %+v, want the rolling window the usage read named (SPEC §10.2)", res.Data.Quota)
+	}
+}
+
+// TestOpenCodeGoEndsOnTheTurnLimit catches a provider that reports a role it stopped at the turn
+// limit as done: the result carries the turn_limit outcome and its error status, and the provider
+// sends no turn past the limit (SPEC §5.3, §10.2).
+func TestOpenCodeGoEndsOnTheTurnLimit(t *testing.T) {
+	log, _ := testLog(t)
+	t.Setenv(envKeyVar, envSecret)
+	f := newFakeHost(t)
+	cfg := OpenCodeGoConfig{Env: ProcessEnv(), Base: f.srv.URL, Version: chatVersion, Log: log, HTTP: f.srv.Client(),
+		MaxTurns: 2, TimeLimit: time.Minute}
+	p := NewOpenCodeGo(cfg)
+	registerGoAnswers(t, f, p, answerJSON(usageAnswer), answerJSON(replyTurn(DefaultModel,
+		assistantToolCall("call", ToolList, `{"path":"."}`), usageFull)))
+	req := RunRequest{RunID: chatRunID, Role: chatRole, Task: chatTask, Tools: ToolPermissions{List: true}, Root: t.TempDir()}
+	res, err := p.Run(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Run: %v; a turn limit is a named outcome, not an error (SPEC §10.2)", err)
+	}
+	checkStoppedShort(t, res, OutcomeTurnLimit)
+	if got := len(f.requests()); got != 3 {
+		t.Errorf("the provider made %d requests, want the usage read and the two turns of the limit (SPEC §10.2)", got)
+	}
 }
 
 // TestOpenCodeGoRunsOneTurn is the done criterion: one turn through the provider reads the Go quota
@@ -110,7 +192,7 @@ func TestOpenCodeGoRunsOneTurn(t *testing.T) {
 	t.Setenv(envKeyVar, envSecret)
 	f := newFakeHost(t)
 	p := newGoFixture(f, ProcessEnv(), log)
-	registerGoAnswers(t, f, p, answerJSON(usageAnswer), answerJSON(replyBody(DefaultModel, usageFull)))
+	registerGoAnswers(t, f, p, answerJSON(usageAnswer), answerJSON(goFinalReply()))
 	res, err := p.Run(context.Background(), fixtureRequest(""))
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -180,7 +262,7 @@ func TestOpenCodeGoUnreadableQuotaIsUnknown(t *testing.T) {
 			t.Setenv(envKeyVar, envSecret)
 			f := newFakeHost(t)
 			p := newGoFixture(f, ProcessEnv(), log)
-			registerGoAnswers(t, f, p, tc.answer, answerJSON(replyBody(DefaultModel, usageFull)))
+			registerGoAnswers(t, f, p, tc.answer, answerJSON(goFinalReply()))
 			res, err := p.Run(context.Background(), fixtureRequest(""))
 			if err != nil {
 				t.Fatalf("Run: %v", err)
@@ -214,7 +296,7 @@ func TestOpenCodeGoSendsNothingWithoutKeyOrRunID(t *testing.T) {
 			t.Setenv(envKeyVar, tc.key)
 			f := newFakeHost(t)
 			p := newGoFixture(f, ProcessEnv(), log)
-			registerGoAnswers(t, f, p, answerJSON(usageAnswer), answerJSON(replyBody(DefaultModel, usageFull)))
+			registerGoAnswers(t, f, p, answerJSON(usageAnswer), answerJSON(goFinalReply()))
 			req := fixtureRequest("")
 			req.RunID = tc.runID
 			_, err := p.Run(context.Background(), req)
@@ -258,7 +340,7 @@ func TestOpenCodeGoProviderContract(t *testing.T) {
 		return newGoFixture(f, env, log)
 	}
 	p := newGoFixture(f, ProcessEnv(), log)
-	registerGoAnswers(t, f, p, answerJSON(usageAnswer), answerJSON(replyBody(DefaultModel, usageFull)))
+	registerGoAnswers(t, f, p, answerJSON(usageAnswer), answerJSON(goFinalReply()))
 	tools := ToolPermissions{Read: true, Edit: true}
 	providerContract(t, contractFixture{
 		New:    build,
