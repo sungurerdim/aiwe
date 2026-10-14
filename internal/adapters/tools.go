@@ -19,6 +19,22 @@ const (
 	ToolShell = "shell"
 )
 
+// maxToolReadBytes caps the file one read or edit loads: the content goes into every later turn of
+// the run, so a larger file is refused, never cut (SPEC §10.2). SPEC names no value; 256 KiB holds a
+// source file whole and stays far below the 4 MiB reply cap.
+const maxToolReadBytes = 256 << 10
+
+// The named refusals of a tool call the loop feeds back to the model (SPEC §5.21, §10.2, O2).
+var (
+	// ErrGitPath refuses a path into the git directory of the clone.
+	ErrGitPath = errors.New("path_in_git_dir")
+	// ErrPathLink refuses a path through a link the clone holds, which may point at the git
+	// directory without naming it.
+	ErrPathLink = errors.New("path_through_link")
+	// ErrReadTooLarge refuses a read of a file over maxToolReadBytes.
+	ErrReadTooLarge = errors.New("read_too_large")
+)
+
 // Tools runs the tool calls of one run confined to its clone: the decisions live here and every
 // body that touches the clone lives in loop_io.go, so a call reaches the clone through its
 // file-system root only (SPEC §5.6, §10.2, O2).
@@ -138,8 +154,9 @@ func callPath(args map[string]any) (string, error) {
 	return confinedPath(raw)
 }
 
-// confinedPath returns a path of the clone: an empty path, an absolute one and one that walks
-// above the clone are refused, and the check runs before any read or write (SPEC §10.2, O2).
+// confinedPath returns a path of the clone: an empty path, an absolute one, one that walks above
+// the clone and one into its git directory are refused, and the check runs before any read or
+// write (SPEC §5.21, §10.2, O2).
 func confinedPath(raw string) (string, error) {
 	if raw == "" {
 		return "", errors.New("tools: the call names no path")
@@ -151,7 +168,34 @@ func confinedPath(raw string) (string, error) {
 	if path == ".." || strings.HasPrefix(path, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("tools: the path %q leaves the clone", raw)
 	}
+	for _, part := range strings.FieldsFunc(path, isPathSeparator) {
+		if isGitName(part) {
+			return "", fmt.Errorf("%w: the path %q reaches the git directory of the clone", ErrGitPath, raw)
+		}
+	}
 	return path, nil
+}
+
+// isPathSeparator reports a separator of either OS, so a backslash never hides a component on Unix
+// (SPEC §10.2).
+func isPathSeparator(r rune) bool {
+	return r == '/' || r == '\\'
+}
+
+// isGitName reports a path component one OS resolves to the git directory: .git in any case, with
+// the trailing dots and spaces Windows drops, before an NTFS stream name, or its 8.3 short name
+// GIT~N. A filter or hook written there runs on the engine's next git call (SPEC §5.21, O2).
+func isGitName(part string) bool {
+	name := strings.ToLower(part)
+	if i := strings.IndexByte(name, ':'); i >= 0 {
+		name = name[:i]
+	}
+	name = strings.TrimRight(name, ". ")
+	if name == ".git" {
+		return true
+	}
+	digits, short := strings.CutPrefix(name, "git~")
+	return short && digits != "" && strings.Trim(digits, "0123456789") == ""
 }
 
 // toolArgs reads the arguments of one tool call: the model sends them as a JSON object in a string

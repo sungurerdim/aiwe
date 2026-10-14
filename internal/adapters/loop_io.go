@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -148,19 +150,50 @@ func (t *Tools) open() (*os.Root, error) {
 	return root, nil
 }
 
-// read returns the content of one file of the clone (SPEC §10.2).
+// unlinked walks every component of path inside root and refuses one that is a link or neither a
+// directory nor a regular file, so a link the clone holds never leads a tool to the git directory
+// or out of the clone. It returns what the last component is, or nil when the path does not exist
+// yet (SPEC §5.21, §10.2, O2).
+func unlinked(root *os.Root, path string) (fs.FileInfo, error) {
+	var walked string
+	var info fs.FileInfo
+	for _, part := range strings.FieldsFunc(path, isPathSeparator) {
+		if part == "." {
+			continue
+		}
+		walked = filepath.Join(walked, part)
+		next, err := root.Lstat(walked)
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		if err != nil {
+			return nil, fmt.Errorf("tools: %s: %w", walked, err)
+		}
+		if next.Mode()&fs.ModeSymlink != 0 || (!next.IsDir() && !next.Mode().IsRegular()) {
+			return nil, fmt.Errorf("%w: %s is a link or a special file", ErrPathLink, walked)
+		}
+		info = next
+	}
+	return info, nil
+}
+
+// read returns the content of one regular file of the clone; a file over maxToolReadBytes is
+// refused, never cut (SPEC §10.2).
 func (t *Tools) read(path string) (string, error) {
 	root, err := t.open()
 	if err != nil {
 		return "", err
 	}
 	defer func() { _ = root.Close() }()
-	file, err := root.Open(path)
+	info, err := unlinked(root, path)
 	if err != nil {
 		return "", fmt.Errorf("read: %s: %w", path, err)
 	}
-	defer func() { _ = file.Close() }()
-	data, err := io.ReadAll(file)
+	if info != nil && info.Size() > maxToolReadBytes {
+		return "", fmt.Errorf("read: %w: %s holds %d bytes, over the cap of %d", ErrReadTooLarge, path,
+			info.Size(), maxToolReadBytes)
+	}
+	data, err := core.ReadRegularCapped(root, path, maxToolReadBytes)
 	if err != nil {
 		return "", fmt.Errorf("read: %s: %w", path, err)
 	}
@@ -175,6 +208,9 @@ func (t *Tools) write(path, content string) (string, error) {
 		return "", err
 	}
 	defer func() { _ = root.Close() }()
+	if _, err := unlinked(root, path); err != nil {
+		return "", fmt.Errorf("write: %s: %w", path, err)
+	}
 	file, err := root.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return "", fmt.Errorf("write: %s: %w", path, err)
@@ -211,6 +247,9 @@ func (t *Tools) list(path string) (string, error) {
 		return "", err
 	}
 	defer func() { _ = root.Close() }()
+	if _, err := unlinked(root, path); err != nil {
+		return "", fmt.Errorf("list: %s: %w", path, err)
+	}
 	dir, err := root.Open(path)
 	if err != nil {
 		return "", fmt.Errorf("list: %s: %w", path, err)
