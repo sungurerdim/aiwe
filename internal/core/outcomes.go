@@ -77,6 +77,12 @@ func Outcomes() []OutcomeRow {
 			Next: "unset the environment variable the detail names, or run the command from the repository it points at"},
 		{Outcome: "tracker: no token", Status: StatusError,
 			Next: "set GH_TOKEN or GITHUB_TOKEN to a token that reads the tracker, then run the command again"},
+		{Outcome: "unaudited_commits", Status: StatusError,
+			Next: "audit the run branch again, then integrate the tip the auditor audited"},
+		{Outcome: "ci_not_observed", Status: StatusError,
+			Next: "wait for the CI run of the batch and read its result, then integrate the unit again"},
+		{Outcome: "push_rejected", Status: StatusError,
+			Next: "fetch the branch the remote moved, re-run the unit on its new base, then integrate the tip the auditor audited"},
 	}
 }
 
