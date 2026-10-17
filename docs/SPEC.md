@@ -262,9 +262,15 @@ Serves DR-10 and DR-11.
 - **Restore**: the stack profile's restore command (§8.2) runs inside the clone with the package manager's own
   user-level cache; no junction, hardlink or shared dependency directory.
 - **Environment**: the parent environment minus secret-shaped variables (every `credentialEnv`, tracker tokens, names
-  containing `TOKEN`, `SECRET`, `KEY` or `PASSWORD`, names ending `_PAT` or `_PASS`, `NPM_CONFIG__AUTH`,
-  `GOOGLE_APPLICATION_CREDENTIALS`, and a `_URL` value with `:` after `://` and `@` after that `:`; case-blind) and
-  minus the shell's identity variables. The adapter adds back only its own source's key. The harness starts with
+  containing `TOKEN`, `SECRET`, `KEY` or `PASSWORD`, names ending `_PAT`, `_PASS`, `_PASSWD` or `_DSN`, the last
+  because a DSN always carries its key as the user part of its value, `NPM_CONFIG__AUTH`,
+  `GOOGLE_APPLICATION_CREDENTIALS`, and the value of a name ending `_URL`, `_URI` or `PROXY`: user info with a
+  password, after a `://` scheme or at the front of any other value (so `svc:/pw@host` drops), a `:` with an `@` after it,
+  or a user part without a password that starts with a known token prefix (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`,
+  `github_pat_`, `glpat-`, `glft-`, `xoxb-`, `xoxp-`, `sk-`, `npm_`, `AKIA`). A user part without a password and
+  without such a prefix is a name, not a credential, so `https://zeynep@host/x.git` and the scp-style
+  `git@host:x.git` reach the child; case-blind) and minus the shell's identity variables. The adapter adds back only
+  its own source's key. The harness starts with
   user-level rules, memory, hooks and plugins off through its documented flag or config-dir variable, which keeps its
   login. aiwe never copies or links a login file. `GIT_CONFIG_NOSYSTEM=1`, an empty env-set `credential.helper`,
   `GIT_TERMINAL_PROMPT=0` and `GIT_CONFIG_GLOBAL` at the null device cut git from user settings and helpers (§17).

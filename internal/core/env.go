@@ -10,12 +10,19 @@ func secretMarkers() []string {
 	return []string{"TOKEN", "SECRET", "KEY", "PASSWORD"}
 }
 
+// secretSuffixes are the name endings that make a variable secret-shaped (DR-10, SPEC §6.5):
+// a token, a password, or a DSN, whose key always rides in the user part of its value.
+func secretSuffixes() []string {
+	return []string{"_PAT", "_PASS", "_PASSWD", "_DSN"}
+}
+
 // CleanEnv returns a copy of parent for a child process without secret-shaped variables, the
-// listed credentials, a git credential helper, or a variable that reaches a credential or a
-// program outside the run (DR-10). An entry with an empty name is dropped too. Names compare
-// without case, as Windows does. git is told to skip the system config, to read the null device
-// as its global config, so no user-level setting such as core.askPass applies, never to prompt,
-// and to use an empty credential.helper, which clears every helper set in a config file.
+// listed credentials, a value that carries a credential URL, connection URI or proxy, a git
+// credential helper, or a variable that reaches a credential or a program outside the run
+// (DR-10). An entry with an empty name is dropped too. Names compare without case, as Windows
+// does. git is told to skip the system config, to read the null device as its global config, so
+// no user-level setting such as core.askPass applies, never to prompt, and to use an empty
+// credential.helper, which clears every helper set in a config file.
 func CleanEnv(parent, credentials []string) []string {
 	child := make([]string, 0, len(parent)+6)
 	for _, kv := range parent {
@@ -65,7 +72,7 @@ func secretName(upper string) bool {
 			return true
 		}
 	}
-	for _, s := range []string{"_PAT", "_PASS"} {
+	for _, s := range secretSuffixes() {
 		if strings.HasSuffix(upper, s) {
 			return true
 		}
@@ -73,19 +80,61 @@ func secretName(upper string) bool {
 	return upper == "NPM_CONFIG__AUTH" || upper == "GOOGLE_APPLICATION_CREDENTIALS"
 }
 
-// urlWithPassword reports whether the upper-case name ends in _URL and its value may carry a
-// password: after a "://" comes a ":" and, later, an "@" (DR-10, SPEC §6.5). The check is
-// fail-closed, so a passwordless URL with a ":" and a later "@" is dropped too.
+// urlWithPassword reports whether an upper-case variable name may carry a credential in its
+// value: a URL, a connection URI or a proxy, whose value holds user info with a password or a
+// token as its only user part (DR-10, SPEC §6.5). CleanEnv and config redaction share the check.
+// The password check is fail-closed, so a passwordless URL with a ":" and a later "@" drops too.
 func urlWithPassword(upper, value string) bool {
-	if !strings.HasSuffix(upper, "_URL") {
+	if !credentialValueName(upper) {
 		return false
 	}
-	_, rest, ok := strings.Cut(value, "://")
-	if !ok {
-		return false
+	rest := afterScheme(value)
+	if _, afterColon, ok := strings.Cut(rest, ":"); ok && strings.Contains(afterColon, "@") {
+		return true
 	}
-	_, afterColon, ok := strings.Cut(rest, ":")
-	return ok && strings.Contains(afterColon, "@")
+	user, _, ok := strings.Cut(rest, "@")
+	return ok && tokenUser(user)
+}
+
+// credentialValueName reports whether an upper-case variable name may carry a credential in its
+// value: a URL, a connection URI, or a proxy, every name ending in PROXY, which covers
+// HTTPS_PROXY and GOPROXY (DR-10, SPEC §6.5).
+func credentialValueName(upper string) bool {
+	return strings.HasSuffix(upper, "_URL") || strings.HasSuffix(upper, "_URI") ||
+		strings.HasSuffix(upper, "PROXY")
+}
+
+// afterScheme drops the scheme of a value: the text up to and including the first ":" that "//"
+// follows, and every "/" or "\" after it. So "https://u@h" and "mongodb+srv://u@h" come back as
+// "u@h". Any other value comes back unchanged, so its first ":" still counts as user info: a
+// schemeless "svc:pw@host", "svc:/pw@host" or "svc:\pw@host" drops, and so does an
+// "https:/svc:pw@h" or "https:\svc:pw@h", which both readings drop (SPEC §6.5).
+func afterScheme(value string) string {
+	colon := strings.Index(value, ":")
+	if colon < 0 || !strings.HasPrefix(value[colon+1:], "//") {
+		return value
+	}
+	return strings.TrimLeft(value[colon+1:], "/\\")
+}
+
+// tokenUser reports whether a URL user part is a token, not a user name: it starts with a known
+// token prefix (DR-10, SPEC §6.5). A user part with a password never reaches this check.
+func tokenUser(user string) bool {
+	for _, p := range tokenPrefixes() {
+		if strings.HasPrefix(user, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// tokenPrefixes are the prefixes that mark the user part of a URL as a credential rather than a
+// user name (DR-10, SPEC §6.5).
+func tokenPrefixes() []string {
+	return []string{
+		"ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_",
+		"glpat-", "glft-", "xoxb-", "xoxp-", "sk-", "npm_", "AKIA",
+	}
 }
 
 // reachNames are the upper-case variable names that let a child reach a credential or run a

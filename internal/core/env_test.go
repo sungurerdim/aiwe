@@ -371,9 +371,8 @@ func envGitFill(t *testing.T, gitPath, dir string, env []string) string {
 	return string(out)
 }
 
-// TestCleanEnvSecretsDropped pins the credential forms the #4 security review found kept: a name
-// ending in _PAT or _PASS, NPM_CONFIG__AUTH, GOOGLE_APPLICATION_CREDENTIALS, and a _URL value that
-// carries user:password@ (DR-10).
+// TestCleanEnvSecretsDropped pins the credential forms the #4 and #91 security reviews found kept:
+// a secret marker name, a credential URL value, a proxy or DSN, and a token-only URL user (DR-10).
 func TestCleanEnvSecretsDropped(t *testing.T) {
 	tests := []struct {
 		name string
@@ -426,10 +425,22 @@ func TestCleanEnvSecretsDropped(t *testing.T) {
 			"PIP_EXTRA_INDEX_URL=https://pypi.org;https://ci:tok3n@pypi.example.com/simple"},
 		{"zero-width-space-joined _URL list with a password in its second URL kept",
 			"PIP_EXTRA_INDEX_URL=https://pypi.org/simple\u200bhttps://ci:tok3n@pypi.example.com/simple"},
-		{"_URL with a port and @ later in its path kept, as : then @ after :// drops it",
-			"P1_URL=https://git.example.com:8443/users/@zeynep"},
-		{"_URL with user:host@ in its query kept, as : then @ after :// drops it",
-			"P2_URL=https://host.example.com/login?next=mailto:zeynep@example.com"},
+		{"_URL with a port and @ later in its path kept, as : then @ after :// drops it", "P1_URL=https://git.example.com:8443/users/@zeynep"},
+		{"_URL with user:host@ in its query kept, as : then @ after :// drops it", "P2_URL=https://host.example.com/login?next=mailto:zeynep@example.com"},
+		{"MongoDB connection string MONGODB_URI with user:password@ kept", "MONGODB_URI=mongodb+srv://user:pw@cluster.example.net/app"},
+		{"database password DB_PASSWD kept", "DB_PASSWD=EXAMPLE-db-Passwd-2026"},
+		{"HTTPS_PROXY with user:password@ kept", "HTTPS_PROXY=http://user:pw@proxy.example.com:3128"},
+		{"lower-case http_proxy with user:password@ kept", "http_proxy=http://user:pw@proxy.example.com:3128"},
+		{"ALL_PROXY with user:password@ kept", "ALL_PROXY=socks5://user:pw@proxy.example.com:1080"},
+		{"GOPROXY comma list with a password in its second proxy kept", "GOPROXY=https://proxy.golang.example.com,https://ci:tok3n@proxy.example.com"},
+		{"SENTRY_DSN with a key as its only user kept", "SENTRY_DSN=https://EXAMPLEsentryKey@o0.ingest.example.com/1"},
+		{"git remote URL with a token as its only user part kept", "UPSTREAM_URL=https://ghp_EXAMPLE@github.com/x/y.git"},
+		{"FTP_PROXY with a schemeless svc:pw@host:3128 kept", "FTP_PROXY=svc:pw@proxy.example.com:3128"},
+		{"ARTIFACT_URL with a backslash credential URL kept", "ARTIFACT_URL=https:\\svc:pw@artifacts.example.com/repo"},
+		{"MIRROR_URL with a single-slash credential URL kept", "MIRROR_URL=https:/svc:pw@mirror.example.com/repo.git"},
+		{"FTP_PROXY with a schemeless svc:/pw@ kept", "FTP_PROXY=svc:/pw@proxy.example.com:3128"},
+		{"FTP_PROXY with a schemeless svc:\\pw@ kept", "FTP_PROXY=svc:\\pw@proxy.example.com:3128"},
+		{"FTP_PROXY with a schemeless svc:\\\\pw@ kept", "FTP_PROXY=svc:\\\\pw@proxy.example.com:3128"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
