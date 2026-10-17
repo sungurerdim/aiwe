@@ -28,7 +28,7 @@ Pillars, in value order:
 | S2 | Cost, time, errors and waste are minimised by hand. | Model choice and routing (§8.1), measured capacity (DR-3), quota reaction (§7.6), metrics (§1.5). |
 | S3 | No standard role or task template. | Role cards and the issue standard ship with the engine (§8.4, §9). |
 | S4 | The writer approves its own work, checks are skipped, scope is vague. | DR-5, DR-6, DR-7, DR-9. |
-| S5 | Context bloat on long work causes wrong or missing work. | Small units (DR-7), a clean context per run, state only in tracker and ledger (DR-20). |
+| S5 | Context bloat on long work causes wrong or missing work. | Small units (DR-7), a clean context per run, a per-request context ceiling (§7.4, §10.2), state only in tracker and ledger (DR-20). |
 | S6 | Agents run broad checks outside their scope; a 5 s check becomes 5 min. | DR-8, §7.8. |
 | S7 | Agents do not work the same way. | One prompt contract, card format and return format (§9). |
 ### 1.4 Value order
@@ -46,6 +46,7 @@ the working branch (L10).
 | M3 | Escaped defects | 0 | Merged units U for which a later commit C on the working branch, within W after U's merge commit M, is a `git revert` of M, or is typed `fix` and changes lines that `git blame C^` attributes to M. W = 30 days (default). |
 | M4 | Cost per green unit | measured | Sum of `costUsd` over all runs of units merged in the window ÷ number of those units. One unknown cost → `unknown` plus the measured lower bound. |
 | M5 | Unit lead time | measured | Median of `ciGreenAt − claimedAt` over units merged in the window. |
+| M6 | Tokens per green unit | measured | Σ(`tokensIn + tokensOut`) over the runs of units merged in the window ÷ number of those units, with fresh tokens printed beside it. One unknown token count → `unknown` plus the measured lower bound. Regression: median of the last 20 > 1.25 × median of the 20 before → red in the report and `aiwe metrics`, plus an `owner-action` issue. |
 ### 1.6 Glossary
 **Goal**: an issue with native sub-issues, its units. **Unit**: an issue in the standard (§8.4) with a file set and a
 verify; identity = the issue number. **Run**: one role (§9.1) on one unit by one source (§8.1); id = ULID.
@@ -286,6 +287,11 @@ Serves DR-10 and DR-11.
   `models.json` there holds optional pins and exclusions for this project, in the shape of `overrides` (§8.1). An MCP
   session binds to the project of its working directory and may target another by parameter.
 - **Machine-wide**: sources and their quotas, the catalogue and the model assignment, CPU capacity.
+- **Admission**: there is no fixed session run cap. Concurrent runs = Σ of the source ceilings, each ≤ its
+  `maxConcurrent` (an owner value per source, default 10), over the ready units with disjoint file sets; a new run starts
+  only on the measured load verdict `start` (§6.6 load sample). Checks, builds and runtime processes take tokens from
+  the check executor's pool (K18 in #314: pool = measured free cores, and the granted tokens set the worker count); an
+  API loop run takes no token; a full gate takes the whole pool.
 - **Coordination**: the project lock `work.lock` allows one work session per project; a second MCP session attaches to it;
   units are claimed atomically on the remote, which prevents double work across machines; per-source run slots and CPU
   admission slots are lease files in the state root, released on exit and reclaimed from dead owners; ledger appends
@@ -326,8 +332,8 @@ intake parses it again.
 | 7 collect | M | Run branch to a run ref; residue recorded; clone removed. |
 | 8 scope check | M | `<base>...<tip>` against the file set (DR-9). |
 | 9 audit | J | An auditor in a separate run with a clean context (DR-5) compares the done criteria with the diff using engine evidence only. Every `path:line` and identifier a RED verdict cites must resolve on the tip, else `unverified_finding` and a new auditor run. |
-| 10 fix loop | J | Returned or red → an engineer fix round, at most 2 (§7.4), then `quarantined`. A second red moves the next run up the assignment (§8.1 point 9). |
-| 11 integrate | M | Push the run branch; queued unit commits ship as one batch pull request; wait for its CI (red → the batch is split in halves, a fix round, step 10); fast-forward `main` to the tested tip only while every unit commit still equals its own `AuditedTip` (DR-14), each unit commit keeping its own `Closes` trailer; a unit removed by the split stays open and returns as a fix round; a second refusal because `main` moved → `push_rejected`. Title: `<type>(<scope>): ` of the first non-test commit, then the issue title with a lower-case first letter; the whole title is cut to 50 characters. Message per §12.3: `Effect: <before> → <after>`, `Closes <owner>/<repo>#N`, the same for the goal when this is its last open sub-issue, and `Run-Id` (L7). A breaking marker waits for the owner (§12.3). |
+| 10 fix loop | J | Returned or red → an engineer fix round, at most 2 (§7.4), then `quarantined`. **Fix delta**: the round continues the writer's conversation while its prompt cache is valid (K9 in #314); else a fresh run whose task is the `FIX` section only: every failing item of the red record (K13), the diff stat of `<base>...<tip>`, the RED findings with `path:line` and the previous return (≤ 12 lines); the card and the pack stay identical, so the prefix cache hits. A second red moves the next run up the assignment (§8.1 point 9). |
+| 11 integrate | M | One batch in flight per project: a batch pull request starts when the queue is empty, a goal is done, the oldest queued commit is older than 6 h, or at once for a critical fix (K10 in #314). Push the run branch; queued unit commits ship as one batch pull request; wait for its CI (red → the batch is split in halves, a fix round, step 10); fast-forward `main` to the tested tip only while every unit commit still equals its own `AuditedTip` (DR-14), each unit commit keeping its own `Closes` trailer; a unit removed by the split stays open and returns as a fix round; a second refusal because `main` moved → `push_rejected`. Title: `<type>(<scope>): ` of the first non-test commit, then the issue title with a lower-case first letter; the whole title is cut to 50 characters. Message per §12.3: `Effect: <before> → <after>`, `Closes <owner>/<repo>#N`, the same for the goal when this is its last open sub-issue, and `Run-Id` (L7). A breaking marker waits for the owner (§12.3). |
 | 12 main | M | No `main` push starts a run (§12.2); the green batch pull request is the merge evidence and `main` carries the tested tip. A red found on `main` after a batch merge → a revert pull request, merged once its CI is green; the unit issue reopens and requeues. Red revert CI → `revert_red`; no run in time → `ci_not_observed`. A milestone whose issues are all closed is closed. |
 | 13 closeout | M | Append run and check records (§8.5); delete the claim ref and the remote run branch. |
 
@@ -342,7 +348,7 @@ Red signature = step id + sorted failing test ids + exit code + first error line
 |---|---|---|
 | Two or more stacks; no known stack; detection fails | `multi_stack`, `unknown_stack`, `detect_error` | Stop (§15); ladder (§7.7); red. |
 | No adapter can run ladder rung 2 | `artefact_requested` | The owner answers with `aiwe artefact submit`. |
-| Unit text invalid; no role resolves; prompt over its cap | `unit_invalid`, `role_unresolved`, `prompt_too_large` | Label `invalid`; findings in the ledger and `aiwe unit check`. |
+| Unit text invalid; no role resolves; a tool result over its cap | `unit_invalid`, `role_unresolved`, `prompt_too_large` | Label `invalid`; findings in the ledger and `aiwe unit check`. |
 | Product decision; plan fails parse or audit twice; first 5 units of a goal (default) have M1 < 70 %; revert pull request CI red | `owner_decision`, `plan_invalid`, `goal_paused`, `revert_red` | Stop the unit, goal or queue; an `owner-action` issue that blocks it; ledger `owner_action`. |
 | Gate or verify red, agent fault; zero tests collected | `red`, `no_tests_collected` | Fix round. |
 | Same red signature in two consecutive rounds | `repeated_red` | A debugger run; repeated again → stop, label `help wanted`, `owner-action` issue. |
@@ -357,12 +363,19 @@ Red signature = step id + sorted failing test ids + exit code + first error line
 | Run process lost | `lost` | Requeued; the record closes with the time since `StartedAt` as an upper bound, never 0 ms. |
 | Ledger not writable; footprint over after cleanup | `ledger_unavailable`, `footprint_exceeded` | No dispatch. |
 | Unanswered harness permission request; owner stops a run | `permission_blocked`, `stopped_by_owner` | Stopped, requeued, not charged; an `owner-action` issue for the first. |
-| API reply cut, or over its token limit | `answer_truncated`, `token_limit` | An attempt, never a finished run. |
+| API reply cut; the context estimate over its ceiling (E > 184,000) | `answer_truncated`, `token_limit` | An attempt, never a finished run; the next run of a `token_limit` starts from the run ref with the previous return. |
 | A unit commit differs from its `AuditedTip`; `VERDICT:` in a commit; RED cites what does not resolve | `unaudited_commits`, `verdict_in_branch`, `unverified_finding` | Refused; new auditor run for the last. |
 | A check red, then green on rerun | `flaky` | An `owner-action` issue blocks the unit; closing it clears the flag (L15). |
 | Breaking commit | `breaking_change` | Not merged; `owner-action` issue; `aiwe unit approve-breaking` (§12.3). |
 | Unsafe root; failed removal check; locked file | `root_unsafe`, `not_owned`, `residue_locked` | Nothing removed (§5.15); next sweep retries a lock. |
 | Invalid UTF-8; terminal-only command without a terminal; git missing or too old | `invalid_utf8`, `not_a_terminal`, `git_missing`, `git_too_old` | Refused or exit 1 with the next action; `invalid_utf8` names the first invalid byte. |
+
+**Context ceiling** (S5, §10.2): 200,000 tokens per API request, all-inclusive; a request is sent only while the
+estimate E ≤ 184,000, else the run ends `token_limit` with its report and usage. E = the last reply's `prompt_tokens` +
+the appended bytes ÷ b, where b is the run's lowest bytes per token (2.0 before the first reply); no tokenizer runs
+(DR-21). At E ≥ 150,000 the oldest tool results become one-line stubs down to 100,000 in one batch; the system, task,
+assistant and reasoning fields are never edited. Wind-down begins at 90 % of the run limit, or as soon as clearing
+cannot get under 150,000. Read-only roles get only read tools.
 
 **Limits from the ledger** (DR-1), each printed with its basis; defaults hold until the sample exists:
 - Run limit per role, source and model: max(30 min, 1.5 × p90 of its green durations) once 20 greens exist; before
@@ -371,7 +384,11 @@ Red signature = step id + sorted failing test ids + exit code + first error line
   Time inside `aiwe verify` counts as output.
 - Fix rounds per role: 2 until 50 merged units; then the smallest r for which round r + 1 added under 10 % of the
   role's greens over its last 50 units, minimum 1.
-- Token limit per API run: 2 × the largest input token count among its greens once 20 exist; none before.
+- Turn limit per role: ceil(1.5 × p95 turns of its greens) once 20 exist; else 100.
+- Output reserve per role and model: `max_tokens` R = 16,000 until 20 greens exist, then 2 × p99 per-turn
+  completion over those greens (the context ceiling above).
+- CI wait for a batch: max(30 min, 3 × p90 of its batch CI durations) once 20 exist; else 30 min; the adapter polls
+  every 30 s; expiry → `ci_not_observed`.
 ### 7.5 Resume
 State lives in refs, the tracker and the ledger. After a crash `work` marks open runs `lost`, releases claims with no
 live run, and collects then removes temp directories of dead owners. A run ref goes once its unit's issue is closed.
@@ -555,7 +572,7 @@ serialises as a number or `"unknown"` (DR-6). Every record: `formatVersion, kind
 (`"none"` when absent).
 - `run`: `role, source, adapter (harness or API wire format), model, modelReported, effort, tier, assignmentVersion, attempt, fixRounds, startedAt, finishedAt,
   outcome, gate (green|red|incomplete|not_measured), audit (approved|returned|none), tokensIn, tokensOut,
-  tokensCachedIn, longestGapMs, costUsd, unknownReason (no_price|no_usage_data|subscription), residue,
+  tokensCachedIn, maxPromptTokens, turns, longestGapMs, costUsd, unknownReason (no_price|no_usage_data|subscription), residue,
   auditIndependence (provider|model|instance|none), sandbox, tip, auditedTip, exit, stderrTail (40 lines, masked),
   claimedAt, mergedAt, ciGreenAt, mergeCommit, pullRequest`.
 - `check`: `key, stepId, commit (or "uncommitted"), exitCode, killed, durationMs, tail (masked), signature,
@@ -566,7 +583,7 @@ serialises as a number or `"unknown"` (DR-6). Every record: `formatVersion, kind
 ### 8.6 Run result envelope
 A run's `Result` data (§5.3) is `RunReport{RunID, Unit, Role, Source, Adapter, Model, ModelReported, Outcome, Branch, Verdict
 (GREEN|RED|none, parsed from the last message), Tip, Verify{Command, ExitCode (nil = not_run), Tail}, TokensIn,
-TokensOut, CostUSD, DurationMS}`. The child writes it to its run directory; no file and no live process = `lost`. A
+TokensOut, MaxPromptTokens, Turns, CostUSD, DurationMS}`. The child writes it to its run directory; no file and no live process = `lost`. A
 harness that reports only session totals converts them per run or reports `unknown`.
 ## 9. Roles and the standard agent contract
 ### 9.1 Role cards
@@ -613,11 +630,13 @@ through `aiwe verify` that changes one variable; a root cause flips that variabl
 **Card format**: `id, purpose, trigger, needs, output, tier (the starting tier, §8.1 point 7), may, may_not[{text,
 gate}]` and a body without shell commands; no harness, model, tool or path names; embedded and served as `roles/<id>`.
 ### 9.2 Prompt contract
-Same sections for every harness, fixed English headings: `ROLE` (the card) · `UNIT` (the filtered body) · `SCOPE`
-(repository, run branch, file set, line cap) · `RULES` (the project's commit convention, default Conventional Commits;
-DR-12; contract limits override project rules, which override card defaults; user-level harness rules are off) ·
-`VERIFY` (the exact verify and how to request it) · `EVIDENCE` (judging roles and debugger: recorded results, full
-diff, diff stat, D-check and mutation findings) · `RETURN` (§9.3). ≤ 32 KB (default), else `prompt_too_large`.
+Same sections for every harness, fixed English headings: `ROLE` (the card) · `SCOPE` (repository, run branch, file set,
+line cap) · `RULES` (the project's commit convention, default Conventional Commits; DR-12; contract limits override
+project rules, which override card defaults; user-level harness rules are off) · `VERIFY` (the exact verify and how to
+request it) · `EVIDENCE` (judging roles and debugger: recorded results, full diff, diff stat, D-check and mutation
+findings) · `PACK` (≤ 64 KiB) · `UNIT` (the filtered body) or `FIX` (the fix delta of §7.3 step 10) ·
+`RETURN` (§9.3). The prompt order is tools → system (the card, `RULES`, the stable `SCOPE`, the repo facts) → `PACK` →
+`UNIT` or `FIX`, so the prefix cache hits. One tool result is ≤ 32 KiB (default), else `prompt_too_large`.
 ### 9.3 Return format
 Last message, ≤ 12 lines: **Done** (verify command, exit code, last lines) · **Not done + why** (may carry `decision:`
 lines) · **Scope deviation**. No file listing. Done opens with `PLAN:`, `TESTS:`, `IMPLEMENTED:`, `UPDATED:`,
@@ -643,6 +662,8 @@ type Tracker interface {
   comes from `GH_TOKEN`, then `GITHUB_TOKEN`, then `gh auth token` when gh is installed; gh is never required. No token →
   `tracker_unauthenticated` (§7.4). The token is held in memory for the call only (DR-19). Least permissions (default): Contents, Issues and Pull requests
   read and write; Actions and Metadata read. `git push` uses git's own credential helper.
+- One tracker read per dispatch cycle; a re-read follows a run end, a merge or the close of an `owner-action` issue, at
+  most once per 60 s.
 - Every write passes masking and the payload scan (§11).
 - `pr-create` = `POST /repos/{owner}/{repo}/pulls`; `pr-merge` = `PUT .../pulls/{pull_number}/merge` with
   `merge_method: rebase` (a fast-forward, so each unit commit keeps its own `Closes` trailer), the §7.3 step 11 title and message, and `sha` = the tested batch tip (§17).
@@ -660,18 +681,22 @@ type Provider interface {
 - Two kinds behind one interface (O14). **Model API**: aiwe's own lean agent loop calls the provider's HTTP API; the tools read, write, edit, list and shell run
   locally, confined to the clone (O2). **Agent runtime**: the vendor's own agent runs as a process in the run clone, only as a fallback for an account whose quota offers no API access (for example Cursor; Claude, ChatGPT/Codex, Gemini consumer subscriptions). API access is always the first choice for every account, subscriptions included (OpenCode Go). Each uses only the provider's official interface (DR-19).
 - One vocabulary across providers and the whole system: `RunRequest` = role, task, tool permissions, model; `RunReport` = served model, usage (prompt, cached,
-  completion, reasoning tokens), cost, quota, outcome; unmeasured is `unknown`, never `0` (DR-13). The stable prefix (role prompt, tool definitions) comes first and never changes within a run, so the prompt cache hits.
+  completion, reasoning tokens), cost, quota, outcome; unmeasured is `unknown`, never `0` (DR-13). The stable prefix (role prompt, tool definitions) comes first and never changes within a run, so the prompt cache hits. Prefix order: tools → system → `PACK` → `UNIT` or `FIX` (§9.2). Cache-hit floor: 80 %, where a cache hit = `tokensCachedIn ÷ tokensIn` of one run.
 - `Detect` checks PATH, then the documented per-user install location: `harness_missing`, `harness_incompatible`, `harness_unreadable`. A runtime runs
-  non-interactively under a written permission policy (`permission_blocked`, never a wait). A session resumes only in its own directory (`session_directory_mismatch`).
-- Model API: streams `data:` lines when allowed (each chunk resets the silence limit); sends and carries the provider's documented reasoning fields; a cut reply →
-  `answer_truncated`. Edit is single exact-match, then the profile's syntax check. `Capabilities().Models` is the source's discovered model list (§8.1).
+  non-interactively under a written permission policy (`permission_blocked`, never a wait). A session resumes only in its own directory (`session_directory_mismatch`). A **runtime token proof**: every runtime aiwe starts (Cursor, Claude Code, others) reports per-request tokens, or uses the run-total proof — a run whose input, cache-read and cache-write tokens together are ≤ 184,000 is proven under the ceiling (§7.4), else it is `ceiling_unproven` and is counted in the session report.
+- Model API: sends `max_tokens` R (§7.4) and only a request that fits under the context ceiling; the language model's read tool takes a line range; one
+  tool result is ≤ 32 KiB; clearing is batched (§7.4). It streams `data:` lines when allowed (each chunk resets the silence limit); sends and carries the
+  provider's documented reasoning fields; a cut reply → `answer_truncated`. Edit is single exact-match, then the profile's syntax check. Retry rule (RFC 9110):
+  `408`, `429`, `500`, `502`, `503`, `504`, a network fault and a timeout are retried 3 times, backoff 2 s base, 60 s cap, full jitter, `Retry-After` first;
+  a wait past the run limit, or a `429` after the retries, is `rate_window`; another `4xx` is never retried; the request deadline is the silence limit; every
+  exit returns the usage of the completed turns. `Capabilities().Models` is the source's discovered model list (§8.1).
 - **Provider data** `adapters/providers/<provider>.json` (embedded, fail-closed): `id`, `adapter`, `baseUrl` (https), `models` (fallback list when discovery has none),
   `reasoning {request, carry}`, `errors [{status, code, class}]`, `balance {path, field, currency}`, `keyEnv` (the API key's usual variable name), and for a runtime
   `cli {binary, flags, loginEnv, limitText}`. A new compatible API or known runtime is one file and one row (DR-3); each value cites a §17 fact or the issue that measured it.
 - **Lean run** (O13, O14): a runtime gets a run-owned `HOME`/`USERPROFILE` and config directory (Cursor: `CURSOR_CONFIG_DIR`), so no rules, `AGENTS.md`, `CLAUDE.md` or skills load; injected context is cut to what the role needs.
 - **OpenCode Go** (skeleton, O14): `POST https://opencode.ai/zen/go/v1/chat/completions` (OpenAI format: deepseek, kimi, glm; `/messages`, `/responses` later);
   `Authorization: Bearer` from `OPENCODE_API_KEY`, read by name at run time; `x-opencode-session: <run id>` and `User-Agent` required. Only `/zen/go/v1` (Go quota), never `/zen/v1` (credit).
-  Quota: `GET /zen/go/v1/usage` (rolling, weekly, monthly percent and reset; undocumented, unreadable → `unknown`). The reply names the served model and tokens, no cost: cost comes from a pinned price table. Default model `deepseek-v4.1-flash`.
+  Quota: `GET /zen/go/v1/usage` (rolling, weekly, monthly percent and reset; undocumented, unreadable → `unknown`). The reply names the served model and tokens, no cost: cost comes from a pinned price table (off-peak and peak rows, §17). Default model `deepseek-v4.1-flash`.
 - Then model APIs DeepSeek, Fireworks, Gemini; agent runtime `cursor` via its CLI (M-Usable, §13), then `claude-code`, `codex`, `gemini` (O12). Rejected (O14): Cursor SDK Bridge, Cloud Agents API, the opencode CLI.
 ## 11. Quality system applied to managed projects
 Mechanical: stack detection, gate derivation and base proof (§7.1); intake and issue parse (§8.4); tests red on base
@@ -789,7 +814,7 @@ Each milestone has one goal issue; the tracker holds the units as its sub-issues
 | Test-tampering calibration; per-model variance reruns; mutation tools beyond Node and Python | An escaped defect traces to a passing but wrong test, or lands on a stack without a mutation tool. |
 | Dependency role; i18n checks | A unit class fails audit 3 times for the same missing expertise. |
 | Built-in scheduler; harness-shaped card export | The owner asks (an OS scheduler may call `work` until then); a harness needs its own card file. |
-| Latency budget; API token budget per turn; self-hosted CI runner | A measured slow call; M4 doubles over 50 units; this month's minutes would exceed the plan's included minutes. |
+| Latency budget; self-hosted CI runner | A measured slow call; this month's minutes would exceed the plan's included minutes. |
 | npm channel (GoReleaser OSS cannot publish to npm); SBOM file (the binary carries its module list) (§17) | The owner turns it on; a channel or user requires one. |
 | Code signing (macOS notarization, Windows certificate); architecture-specific source files | Before `1.0.0` (Q7); a measured gain needs one. |
 ## 16. Decision log
@@ -875,6 +900,10 @@ Checked 2026-10-10 unless dated.
   tokens"; a user's own login to the official CLI is allowed (code.claude.com, Legal and compliance). A router that
   altered subscription OAuth traffic saw bans about one minute after connecting, and its ban detector never
   auto-recovers (OmniRoute issues, `BAN_DETECTION.md`).
+- Go price rows (OpenCode Go, §10.2): an off-peak row for 01–04 UTC and a peak row for 06–10 UTC, Monday to
+  Friday; every row carries its own `url` and `checkedOn`.
+- Price rows carry a long-context tier as `aboveTokens`, with its own input and output price (K15 in #314); xAI
+  doubles its input and output price above 200,000 tokens. Anthropic's compaction default is 150,000 tokens.
 - Market: no surveyed tool combines engine-run gates, an independent auditor, credential-free multi-source routing and
   per-unit metrics; rotating consumer accounts of one provider is the high-risk pattern (lead survey, 2026-10-12).
 - Runtime survey (one Windows 11 x64 machine): binary Go 7.3–7.9 MB, Node single executable 100.7–151.1 MB, Bun
