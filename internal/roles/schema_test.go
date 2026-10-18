@@ -1,9 +1,13 @@
 package roles
 
 import (
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/sungurerdim/aiwe/internal/adapters"
+	"github.com/sungurerdim/aiwe/internal/core"
 )
 
 // validCard is a complete card of the SPEC §9.1 format. Red cases start here and
@@ -223,4 +227,132 @@ func hasGate(c Card, gate string) bool {
 		}
 	}
 	return false
+}
+
+// cardBodyCase is one card body that breaks the SPEC §9.1 body rule.
+type cardBodyCase struct {
+	name string
+	body string
+}
+
+// forbiddenBodyCases returns one row per name a card body may not hold (SPEC §9.1): a shell command,
+// the harness the pinned adapter serves, its model, each tool a run may call and a repository path.
+// Every body is the accepted fixture plus one fault, so a refusal is that fault and not a bad
+// fixture. The harness and model names come from their one owner in adapters, never from a copy.
+func forbiddenBodyCases() []cardBodyCase {
+	base := validCard().Body
+	harness := adapters.NewOpenCodeGo(adapters.OpenCodeGoConfig{}).ID()
+	cases := []cardBodyCase{
+		{name: "a shell command", body: "Run go test ./... and paste the last lines."},
+		{name: "a quoted shell command", body: "Run `go test ./...` before you answer."},
+		{name: "a harness name", body: "The " + harness + " harness runs this role."},
+		{name: "a model name", body: "This role runs on " + adapters.DefaultModel + " at high effort."},
+		{name: "a path name", body: "Open internal/roles/schema.go before you answer."},
+	}
+	for _, tool := range []string{adapters.ToolRead, adapters.ToolWrite, adapters.ToolEdit,
+		adapters.ToolList, adapters.ToolShell} {
+		cases = append(cases, cardBodyCase{name: "a tool name " + tool,
+			body: "Call the " + tool + " tool when the answer needs a file."})
+	}
+	for i := range cases {
+		cases[i].body = base + " " + cases[i].body
+	}
+	return cases
+}
+
+// acceptedBodyCases returns card bodies in method prose that the SPEC §9.1 body rule accepts: the
+// shipped method, method prose with Unicode, and prose that runs no program. Each row is a whole
+// body, so a body the rule refuses although it names nothing is measured rather than assumed.
+func acceptedBodyCases() []cardBodyCase {
+	return []cardBodyCase{
+		{name: "the shipped method", body: validCard().Body},
+		{name: "unicode method prose",
+			body: "Name the é and the §9.1 clause in prose, then wait — the verdict stays one line."},
+		{name: "prose after a command verb",
+			body: "Run the check the unit names and execute the plan in prose."},
+		{name: "prose with a hyphen and an abbreviation",
+			body: "A long-lived claim stops at three reds, e.g. the same one twice."},
+	}
+}
+
+// TestCardSchemaAcceptsMethodProse proves the body rule refuses the names §9.1 lists and no more: a
+// body in plain or Unicode method prose, and one that runs no program after a command verb, stays
+// valid. An empty body is refused by the required-field rule, not by the body rule (§9.1).
+func TestCardSchemaAcceptsMethodProse(t *testing.T) {
+	t.Parallel()
+	for _, tc := range acceptedBodyCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			c := validCard()
+			c.Body = tc.body
+			if err := c.Validate(); err != nil {
+				t.Fatalf("method prose (%s) is refused: %v", tc.name, err)
+			}
+		})
+	}
+}
+
+// TestEmptyBodyIsRefusedAsABlankField proves the two refusals of a missing body stay apart: the body
+// rule reads no fault in an empty body, and the required-field rule refuses it as a blank §9.1
+// field.
+func TestEmptyBodyIsRefusedAsABlankField(t *testing.T) {
+	t.Parallel()
+	if fault := bodyFault(""); fault != "" {
+		t.Fatalf("the body rule reads the empty body as %q, want no body fault", fault)
+	}
+	c := validCard()
+	c.Body = " \n\t"
+	if err := c.Validate(); err == nil {
+		t.Fatal("accepted a card with a blank body")
+	}
+}
+
+// TestBodyRuleReadsATokenWithASeparatorAsAPath proves the §9.1 path rule fails closed: a token that
+// holds a separator is read as a file or a directory name, even when it spells prose, so the same
+// card serves every repository and no path slips through (SPEC §9.1, DR-3). The cost of that choice
+// is measured here.
+func TestBodyRuleReadsATokenWithASeparatorAsAPath(t *testing.T) {
+	t.Parallel()
+	tests := []struct{ name, body string }{
+		{name: "a repository path", body: "Open internal/roles/schema.go before you answer."},
+		{name: "a windows path", body: `Open internal\roles\schema.go before you answer.`},
+		{name: "a prose conjunction holding a separator", body: "Answer yes and/or no in one line."},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if fault := bodyFault(tc.body); fault == "" {
+				t.Fatalf("the §9.1 path rule accepted %s: %s", tc.name, tc.body)
+			}
+		})
+	}
+}
+
+// TestCardSchemaRefusesForbiddenBodyNames proves the SPEC §9.1 body rule: a card body that names a
+// shell command or a harness, model, tool or path name is refused, while the method prose every
+// shipped card writes stays valid. Each refusal is a *core.Error, so a caller reads one outcome and
+// its next action (§5.3).
+func TestCardSchemaRefusesForbiddenBodyNames(t *testing.T) {
+	t.Parallel()
+	t.Run("plain method prose", func(t *testing.T) {
+		t.Parallel()
+		if err := validCard().Validate(); err != nil {
+			t.Fatalf("a card body in plain method prose: %v", err)
+		}
+	})
+	for _, tc := range forbiddenBodyCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			c := validCard()
+			c.Body = tc.body
+			err := c.Validate()
+			if err == nil {
+				t.Fatalf("accepted a card body with %s: %s", tc.name, tc.body)
+			}
+			var e *core.Error
+			if !errors.As(err, &e) {
+				t.Fatalf("refusal of a body with %s is %T (%v), want *core.Error", tc.name, err, err)
+			}
+		})
+	}
 }

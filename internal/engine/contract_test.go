@@ -168,6 +168,48 @@ func TestAuditorContractBindsVerdictToRunID(t *testing.T) {
 	t.Fatalf("auditor contract has no VERDICT: line bound to RunID %s:\n%s", runID, c.Text)
 }
 
+// TestAuditorContractWithoutRunIDIsRefused proves an auditor contract that binds no run is refused
+// with run_id_missing: without it the RETURN text ends "bound to RunID " and a VERDICT can name no
+// run at all (SPEC §9.1, §9.3, DR-5). The refusal is a *core.Error, so the caller reads one outcome
+// and its next action (§5.3).
+func TestAuditorContractWithoutRunIDIsRefused(t *testing.T) {
+	t.Parallel()
+	in := withRunScope(ContractInput{Role: "auditor", Card: auditorCard, Unit: unitText()})
+	if in.RunID != "" {
+		t.Fatalf("fixture binds RunID %q, want an unbound run", in.RunID)
+	}
+	_, err := BuildContract(in)
+	if err == nil {
+		t.Fatal("accepted an auditor contract that binds no run")
+	}
+	var e *core.Error
+	if !errors.As(err, &e) {
+		t.Fatalf("refusal is %T (%v), want *core.Error", err, err)
+	}
+	if e.Outcome != "run_id_missing" {
+		t.Fatalf("outcome = %q, want run_id_missing", e.Outcome)
+	}
+}
+
+// TestNextOfFailsClosedOnAMissingRow proves a refusal whose outcome has no row takes the next action
+// of the error row, never an empty string: internal/core holds the one copy of every next action,
+// and a missing row is read as the error row, exactly as core reads it itself (SPEC §5.3, DR-17).
+func TestNextOfFailsClosedOnAMissingRow(t *testing.T) {
+	t.Parallel()
+	want := ""
+	for _, row := range core.Outcomes() {
+		if row.Outcome == core.OutcomeError {
+			want = row.Next
+		}
+	}
+	if want == "" {
+		t.Fatal("the outcome table has no error row")
+	}
+	if got := nextOf(core.Outcome("no_such_outcome")); got != want {
+		t.Fatalf("nextOf of a row-less outcome = %q, want the error row's next action %q", got, want)
+	}
+}
+
 // measureContract builds in under a cap above the default, so the measured size is
 // known even when the default cap would refuse it.
 func measureContract(t *testing.T, in ContractInput) Contract {

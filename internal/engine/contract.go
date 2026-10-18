@@ -12,6 +12,14 @@ import (
 // counts 64 KiB as 64 << 10, so this cap is 32 << 10. A zero CapBytes selects it.
 const defaultPromptCap = 32 << 10
 
+// The outcome rows the refusals of this file take, and the one role whose RETURN section binds the
+// run (SPEC §5.3, §9.1, §9.3).
+const (
+	roleAuditor           = "auditor"
+	outcomePromptTooLarge = core.Outcome("prompt_too_large")
+	outcomeRunIDMissing   = core.Outcome("run_id_missing")
+)
+
 // ContractInput is the card text, the unit text and the run they are built for. Repository,
 // Branch and FileSet are written into SCOPE. CapBytes limits the result only; it is not part of
 // the text. An empty repository, branch or file set is written as given.
@@ -33,9 +41,13 @@ type Contract struct {
 }
 
 // BuildContract assembles the SPEC §9.2 sections from the card, the unit and the run's
-// repository, branch and file set. A result over the cap is prompt_too_large and names the size
-// it measured.
+// repository, branch and file set. An auditor contract with no run id is refused before the text is
+// built: its RETURN section writes the VERDICT line to that id (SPEC §9.1, §9.3, DR-5). A result
+// over the cap is prompt_too_large and names the size it measured.
 func BuildContract(in ContractInput) (Contract, error) {
+	if err := checkBound(in); err != nil {
+		return Contract{}, err
+	}
 	text := contractText(in)
 	n := len(text)
 	limit := in.CapBytes
@@ -46,6 +58,21 @@ func BuildContract(in ContractInput) (Contract, error) {
 		return Contract{}, tooLarge(n, limit)
 	}
 	return Contract{Text: text, Bytes: n}, nil
+}
+
+// checkBound refuses the input a contract cannot bind: an auditor contract whose RETURN text would
+// end "bound to RunID " with no run to name, so its VERDICT could name no run at all (SPEC §9.1,
+// §9.3, DR-5).
+func checkBound(in ContractInput) error {
+	if in.Role != roleAuditor || in.RunID != "" {
+		return nil
+	}
+	return &core.Error{
+		Outcome:  outcomeRunIDMissing,
+		Expected: "an auditor contract bound to a run id",
+		Found:    "an auditor contract with no run id",
+		Next:     nextOf(outcomeRunIDMissing),
+	}
 }
 
 func contractText(in ContractInput) string {
@@ -106,17 +133,35 @@ func evidenceText() string {
 func returnText(in ContractInput) string {
 	text := "Done names the verify command, the exit code and the last lines. Not done names why. " +
 		"Scope deviation names a deliberate behaviour change. At most 12 lines."
-	if in.Role != "auditor" {
+	if in.Role != roleAuditor {
 		return text
 	}
 	return text + "\nVERDICT: GREEN|RED bound to RunID " + in.RunID
 }
 
+// nextOf returns the next action of the outcome row o: the table in internal/core holds the one copy
+// of that text, so a refusal reads it there instead of writing a second copy (SPEC §5.3, DR-17). It
+// fails closed, as core itself reads the table: a name with no row takes the error row's next
+// action, never an empty one.
+func nextOf(o core.Outcome) string {
+	var fallback core.OutcomeRow
+	for _, row := range core.Outcomes() {
+		if row.Outcome == o {
+			return row.Next
+		}
+		if row.Outcome == core.OutcomeError {
+			fallback = row
+		}
+	}
+	core.Assert(fallback.Outcome == core.OutcomeError, "the outcome table has no %q row", core.OutcomeError)
+	return fallback.Next
+}
+
 func tooLarge(size, limit int) error {
 	return &core.Error{
-		Outcome:  "prompt_too_large",
+		Outcome:  outcomePromptTooLarge,
 		Expected: fmt.Sprintf("at most %d bytes", limit),
 		Found:    fmt.Sprintf("%d bytes", size),
-		Next:     "shorten the card or the unit so the measured size fits the cap",
+		Next:     nextOf(outcomePromptTooLarge),
 	}
 }
