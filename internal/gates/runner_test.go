@@ -57,8 +57,7 @@ func runnerTestSteps(t *testing.T) (green1, green2, red, missing GateStep) {
 	return green1, green2, red, missing
 }
 
-// runnerTestRunner returns a Runner with a chosen worker count, so a gate with a test step runs
-// that step (DR-3).
+// runnerTestRunner returns a Runner with a chosen worker count, so a gate's test step runs (DR-3).
 func runnerTestRunner(t *testing.T) *Runner {
 	t.Helper()
 	return &Runner{Capacity: core.CapacityFor(core.Measured[int64]{Value: 4, Known: true}, 1),
@@ -100,6 +99,7 @@ func TestRunner(t *testing.T) {
 		stepResult map[string]string
 		// notGreen lists step ids whose report must exist and must not read green.
 		notGreen []string
+		need     *Need // when set, the first step declares it and the probe reports it missing
 	}{
 		{name: "every step green", catches: "a gate of green steps not reported green, or a step dropped from the report",
 			steps: []GateStep{green1, green2}, gate: "green",
@@ -110,6 +110,8 @@ func TestRunner(t *testing.T) {
 		{name: "missing tool", catches: "a step that could not start reported green, or dropped so the gate reads green (DR-6)",
 			steps: []GateStep{green1, missing, green2}, gate: "incomplete",
 			stepResult: map[string]string{"format": "green", "lint": "not_measured", "test": "green"}},
+		{name: "missing need", catches: "a step whose declared need is missing started and charged red, instead of not_measured naming the need (K26, #327)",
+			steps: []GateStep{green1}, need: &Need{Kind: "env", Name: "GATES_327_MISSING"}, gate: "incomplete", stepResult: map[string]string{"format": "not_measured"}},
 		{name: "red step", catches: "a step that exits non-zero reported green, or the gate not red",
 			steps: []GateStep{green1, red}, gate: "red",
 			stepResult: map[string]string{"format": "green", "vuln": "red"}},
@@ -129,7 +131,11 @@ func TestRunner(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			def := Definition{FormatVersion: 1, Steps: tc.steps}
-			report, err := runnerTestRunner(t).Run(context.Background(), def, t.TempDir(), tc.only)
+			r := runnerTestRunner(t)
+			if tc.need != nil {
+				r.Needs, r.Probe = map[string][]Need{tc.steps[0].ID: {*tc.need}}, func(Need) error { return os.ErrNotExist }
+			}
+			report, err := r.Run(context.Background(), def, t.TempDir(), tc.only)
 			if err != nil {
 				t.Fatalf("catches %s: Run returned an error, but a decided gate is a result (SPEC §5.3): %v", tc.catches, err)
 			}
@@ -152,6 +158,9 @@ func TestRunner(t *testing.T) {
 				}
 				if slices.Contains(tc.notGreen, s.ID) && (s.Result == "" || string(s.Result) == "green") {
 					t.Errorf("catches %s: unrun step %q reported %q, want a named result that is not green", tc.catches, s.ID, s.Result)
+				}
+				if tc.need != nil && (strings.Count(s.Detail, "env_missing") != 1 || !strings.Contains(s.Detail, tc.need.Name)) {
+					t.Errorf("catches %s: step %q detail = %q, want one env_missing line naming %q", tc.catches, s.ID, s.Detail, tc.need.Name)
 				}
 			}
 		})

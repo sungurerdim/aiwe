@@ -35,6 +35,10 @@ const (
 	testStepID = "test"
 )
 
+// errNoProbe is the state of a declared need the Runner has no way to answer for: the step cannot
+// confirm the need, so it does not start (DR-6).
+var errNoProbe = errors.New("no probe answers whether it is met")
+
 // StepReport is the result of one declared step. ExitCode is exitUnknown when the step never
 // exited.
 type StepReport struct {
@@ -54,6 +58,14 @@ type GateReport struct {
 	Steps   []StepReport `json:"steps"`
 }
 
+// Need is one thing a step needs before it can start: an environment variable, a tool or a
+// service. Kind names which of the three, and Name is the variable, program or service the step
+// must find (K26, #327).
+type Need struct {
+	Kind string
+	Name string
+}
+
 // Runner runs the steps of a gate, one after another, each as a process tree (SPEC §5.20).
 // Capacity sets the test step's worker count (DR-3); without one the test step is not_measured.
 // A green or red test step prints the count with its inputs as its detail. History holds each
@@ -62,12 +74,20 @@ type GateReport struct {
 // while it runs (§7.8); a nil Output streams nowhere. Each step runs in fresh state, cache and
 // temp roots and a secret-free environment (DR-10, SPEC §7.8): an owned directory of Owner under
 // the temp root. A Runner with no Owner runs no step; each step is not_measured (SPEC §6.4).
+// Needs holds the needs each step declares, by step id, and Probe answers whether one is met;
+// every declared need of a step must be probed before that step starts (K26, #327).
 type Runner struct {
 	Capacity core.Capacity
 	History  map[string][]StepRun
 	Recorded []PackageDuration
 	Output   io.Writer
 	Owner    *core.Owner
+	// Needs holds the needs the step with this id declares; a step with no entry declares none.
+	Needs map[string][]Need
+	// Probe answers whether need is met: nil when it is, an error naming what is missing when it is
+	// not. A declared need that Probe reports missing must keep its step from starting, so the step
+	// is not_measured with one env_missing line naming the need, never red (K26, #327).
+	Probe func(Need) error
 }
 
 // Run runs the steps of def in dir. A non-empty only names the steps to run; every other step is
@@ -125,6 +145,9 @@ func checkOnly(def Definition, only []string) error {
 func (r *Runner) runStep(ctx context.Context, step GateStep, dir string, proof *Proof) StepReport {
 	if err := ctx.Err(); err != nil {
 		return unmeasured(step.ID, "not started: "+err.Error())
+	}
+	if detail := r.missingNeed(step.ID); detail != "" {
+		return unmeasured(step.ID, detail)
 	}
 	step, note, err := r.prepare(step, proof)
 	if err != nil {
@@ -224,6 +247,24 @@ func (r *Runner) prepare(step GateStep, proof *Proof) (prepared GateStep, note s
 		step.TimeoutSeconds = ceilSeconds(StepLimit(baseProofStep(proof, step.ID), r.History[step.ID]))
 	}
 	return PrepareTestStep(step, r.Capacity.Workers, r.Recorded), r.Capacity.String(), nil
+}
+
+// missingNeed returns the one env_missing detail line of a step whose first declared need it does
+// not have, and "" when the step has every need it declares. The line names the need, so a step
+// that never started says why; the step is not_measured, never red, because an absent tool, service
+// or variable is not a defect in the code (DR-6, K26). A declared need no probe answers counts as
+// missing: a step never starts on a need it cannot confirm.
+func (r *Runner) missingNeed(id string) string {
+	for _, need := range r.Needs[id] {
+		err := errNoProbe
+		if r.Probe != nil {
+			err = r.Probe(need)
+		}
+		if err != nil {
+			return fmt.Sprintf("env_missing: %s %q: %v", need.Kind, need.Name, err)
+		}
+	}
+	return ""
 }
 
 // execStep runs step as a process tree under its time limit, with the directory, environment and
