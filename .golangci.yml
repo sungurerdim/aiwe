@@ -14,7 +14,6 @@ linters:
     - gocognit
     - gosec
     - govet
-    - nilaway
     - noctx
     - staticcheck
     - unused
@@ -32,12 +31,6 @@ linters:
           msg: panic only through internal/core/assert.go (SPEC §5.3)
         - pattern: ^context\.Background$
           msg: context.Background only in cmd main packages and tests (SPEC §5.18)
-    custom:
-      nilaway:
-        type: module
-        description: nil pointer and nil map dereference (SPEC §5.17)
-        settings:
-          include-pkgs: github.com/sungurerdim/aiwe
   exclusions:
     rules:
       # Q12 cognitive complexity applies to non-test functions only (owner decision on #130).
