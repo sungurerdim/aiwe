@@ -1,4 +1,4 @@
-# Gate step lint (SPEC §12.2): the linters of SPEC §5.17, run by custom-gcl (.custom-gcl.yml).
+# Gate step lint (SPEC §12.2): the linters of SPEC §5.17, run by the tools-module golangci-lint (#365).
 version: "2"
 
 linters:

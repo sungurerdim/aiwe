@@ -9,7 +9,7 @@ relative to `internal/`, or `judgement:<role>`; `planned:` marks the enforcement
 yet) · **fix** (the one line an agent reads when the row is red) · **milestone** (the roadmap goal of
 §13 whose conformance unit this row parents, #314 K36) · **rev** (the short hash of the row's
 statement and enforcement, the first 8 hex of sha256(statement + LF + enforcement); every row below
-carries it.
+carries it).
 
 | id | statement | enforcement | fix | milestone | rev |
 |---|---|---|---|---|---|
