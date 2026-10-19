@@ -8,6 +8,14 @@ aiwe turns a goal issue into verified, merged code through small units, each run
 binary per OS and architecture. The design and every rule live in [docs/SPEC.md](docs/SPEC.md); it is the only source
 of truth. The tracker holds the work: one goal issue per milestone, units as its sub-issues (SPEC §13).
 
+## First priority
+
+The owner set the issue and process redesign K33–K44 (tracker goal and plan: #314, confirmed 2026-10-18) as the first
+priority. Choose it before any other open work. Order, from #314 K43: K39 report format (through the open bridge unit
+#339, finish its round 3 first) → K34, K35, K37 in the bridge issue tool and queue script (new bridge units) → clear
+obsolete open issues, then migrate the rest → SPEC unit with the K41 registry and K42 rule changes → K40 derived status
+→ K36 sync. Other open work continues only where it does not touch these files and does not wait on them.
+
 ## Checks
 
 An agent never runs the gate, a unit verify, or a test, lint or build command itself (DR-8, SPEC §9.4). It asks for
@@ -55,3 +63,84 @@ Each line names the rule; the rule text is in SPEC §3.
 | Deferred work and its triggers | SPEC §15 |
 | Decisions | SPEC §16 |
 | Facts and sources | SPEC §17 |
+
+## Taking over from another harness
+
+Start here if you are Cursor, OpenCode or any other host picking up work a Claude Code session left. This section is a
+map. It holds no state; the facts live in the places below. Notes marked (tr) are written in Turkish. Reply to the
+owner in Turkish; write everything committed to this repository in English (DR-18).
+
+Read in this order: this file → `docs/SPEC.md` §1, §3, §13 → memory `MEMORY.md` then `durum.md` → open tracker items.
+
+Warning: `durum.md` is stale. It describes the pause of 2026-10-15, not the present, and it is deleted when #314 K40
+lands. Do not take its work order, its issue lists or its clone list as current: the first priority above, #314 and the
+live tracker win. Read `durum.md` only for its "Tuzaklar" section (tool and Windows traps), which is still valid.
+
+### Outside the repository
+
+`~` is the owner's home. None of this is in git.
+
+| Need | Place |
+|---|---|
+| Owner decisions and the latest pause state (tr) | `~/.claude/projects/D--GitHub-aiwe/memory/`: `MEMORY.md` indexes every note; `durum.md` is the current state, the work order and the traps; `tasarim-k33-k44.md` points to the confirmed design revision |
+| Machine and user rules, Windows and Git Bash traps (tr) | `~/.claude/CLAUDE.md` (the `@`-imports there are Claude-only: `RTK.md` is a token proxy, ignore it) |
+| General engineering rules (en) | `~/.claude/rules/dev-rules.md` (binding order at the top); lead-only part `~/.claude/dev-rules-lead.md` |
+| Extra guardrails for hosts weaker than Claude Code | `~/.claude/dev-rules-references/portable-supplement.md`; domain rules `safety.md`, `operations.md` in the same folder |
+| Role cards (analyst, architect, engineer, auditor, test-author, debugger, security-reviewer, ux-reviewer, doc-writer, operator) | `~/.claude/agents/*.md`; the bridge reads its own copy in `aiwe-wt/roles/` |
+| Lead tools: load measurement, narrow test, issue writer | `~/.claude/araclar/` (`yuk.py`, `dar-test.py`, `issue.py`) |
+| Unattended mode (work with the owner away) | skill `otopilot` in `~/.claude/skills/`; state in `~/.claude/otopilot.d/` |
+| Past subagent reports | `~/.claude/raporlar/` |
+| Rule rationale and model measurements (tr) | `~/.claude/olcumler.md` |
+
+Claude hooks in `~/.claude/hooks/` do not run in other hosts. Follow by hand what they enforce: no `--no-verify`, no
+`git filter-branch`, no `git reset --hard` or `git clean -f`, commit messages from a file (`git commit -F <explicit
+path>`), Turkish text never in git or gh argv. Details: `durum.md` "Tuzaklar" and `~/.claude/CLAUDE.md`.
+
+### The bridge: `aiwe-wt/`
+
+aiwe cannot yet work on itself, so a sibling folder `aiwe-wt/` next to this repository is the stand-in (DR-23). It has
+its own local git history and no remote. It is host-independent Python and shell; any host can drive it.
+
+| Need | Place |
+|---|---|
+| Unit pipeline (tests → red proof → audit → implement → verify → audit → queue), usage and stop states | docstring of `aiwe-wt/pipe.py`; per-unit state `aiwe-wt/runs/u<N>.state`, overview `aiwe-wt/runs/summary.txt` |
+| Lead commands (verify, confirm, land) | `aiwe-wt/lead.py`, `land.sh`, `queue.sh`, `ship.sh` (one PR from the batch clone; owner permission first) |
+| Run one role on an external provider (OpenCode Go API, Cursor CLI) | `aiwe-wt/ext.py`, `ext.sh`; model and provider notes in memory `dis-ajan-yurutme.md` |
+| Open a unit clone | `aiwe-wt/start.sh <issue> <slug>`; never a git worktree (memory `worktree-yok.md`, SPEC §6.5) |
+| Bridge issue writer (this repository only) | `aiwe-wt/issue.py`; the global `issue.py` conflicts with SPEC §8.4 |
+| Evidence, audits, calibration, mapping of issues to plans | `aiwe-wt/evidence/` (start with `calibration-pairs.md`, `apply-2026-10-17.md`) |
+| Batch of finished units waiting to ship | clone `aiwe-wt/batch` |
+| Parked and stopped clones | `aiwe-wt-parked/`; clones in `aiwe-wt/u<N>` with state `needs_lead` |
+
+### Tracker
+
+GitHub issues of this repository are the only work list (DR-20). Read counts and status from the API, never from notes.
+Anchors: M-Skeleton goal #262, MCP goal #263, work-session goal #293, design revision and its to-do list #314, bridge
+issue #269 and its children. Open `gh issue list` and read #314 before choosing work. Issue format: SPEC §8.4; write
+issues through the bridge `issue.py`.
+
+Confirmed design revision, not yet in SPEC: on 2026-10-18 the owner confirmed K33–K44 in #314 (one registry, typed JSON
+issue records, intake gates against duplicates and overlaps, engine-written `Closes`, one SARIF-based report format,
+derived status). They replace the issue process, but only once their mechanisms exist. Until each lands, the rules
+above stay in force: `Refs` for intermediate commits, `Closes` on the finishing commit, SPEC §8.4 headings, the bridge
+`issue.py`. When the SPEC unit lands, this file's commit-trailer rule, the "Known traps" source and the `durum.md` read
+step change with it (#314 K37, K40, K42). All records, task texts and reports are English from now on.
+
+### Owner decisions that change what you do
+
+Full text is in the memory notes named here; they are not repeated.
+
+- Quality over time over cost; "right the first time" (`durum.md`, #314 K32).
+- No mention of any other project in any aiwe text (`eski-proje-atif-yasagi.md`).
+- aiwe stores no secret; provider CLI login or an environment variable only (`kimlik-bilgisi-sifir-sorumluluk.md`).
+- Unit work is delegated to external agents; the lead stays small. Mechanism units are audited by Claude until #341
+  closes; the external auditors were measured too lenient (`dis-ajan-yurutme.md`, `aiwe-wt/evidence/calibration-pairs.md`).
+  The Claude quota was nearly used up on 2026-10-18. With no Claude session, the audit runs on the strongest model your host has,
+  never the model that wrote the unit; the evidence names that model. The owner has not confirmed this fallback.
+- The lead merges when CI is green and the audit is GREEN, and files every finding as an issue (`lead-yetkileri.md`,
+  `bulgu-her-zaman-issue.md`).
+- Parallel runs are limited per provider and by measured load, not by a fixed cap (`paralel-sinir.md`).
+- Never start a file without a runnable extension (`masaustu-pencere.md`); aiwe does not manage the owner's own
+  session settings (`aiwe-sorumluluk-siniri.md`).
+- Owner-only actions pending: pushing the batch, opening the repository to the public (`depo-acilinca.md`,
+  `ci-batch.md`).
