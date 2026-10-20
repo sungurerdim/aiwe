@@ -50,7 +50,7 @@ the working branch (L10).
 | M6 | Mechanical ratio (R12) | falling trend | Per workflow step the share of `[M]` and `[J]` runs; `judgement` done entries open; auditor runs per unit; manual lead or owner actions per week (manual close, manual confirm, hand-written trailer, hand-edited record). A judgement entry or a manual action seen a third time gets a mechanism. |
 ### 1.6 Glossary
 **Goal**: an issue with native sub-issues, its units. **Unit**: an issue in the standard (§8.4) with a file set and a
-verify; identity = the issue number. **Run**: one role (§9.1) on one unit by one source (§8.1); id = ULID.
+verify; the issue number names it and its Key is the identity a unit upsert matches on (R4). **Run**: one role (§9.1) on one unit by one source (§8.1); id = ULID.
 **Harness**: a CLI program that runs an agent; an **adapter** drives one harness or API wire format (§10.2).
 **Check**: one mechanical command with a recorded result; a **gate** is an ordered list of checks. **Evidence**:
 engine-recorded command, exit code, last lines and key; agent text is never evidence. **Unattended**: no human waits;
