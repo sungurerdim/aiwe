@@ -609,15 +609,17 @@ dispatched. There are no audit-generation or per-rule epics: a Key upsert makes 
 has one parent, and the per-rule view is a query on the rules (R4).
 
 **Record**: the body is one fenced JSON object (RFC 8259, `encoding/json`; STD-5) and nothing else: `v`, `kind`,
-`key`, `rules`, `problem{symptom, expected, cause{state, text}, impact, affected, class}`,
+`key`, `rules`, `problem{symptom, expected, cause{state: known|unknown, text}, impact, affected, class}`,
 `scope{in, new, out, constraints}`, `steps[{do, at}]`, `done[{id, check, expect} | {id, judgement, text}]`,
 `red{check, base, items}`, `distinct[{n, reason}]` (K35), `legacy` (K34; a migrated heading keeps its prose and is not ready until an agent rewrites it before dispatch), optional `context` (at most 3 lines). The engine derives and the author never writes:
 `key` of generated units, `rules` revisions, severity (affected × class, K8), the priority label, `red`, and
 blockers from file-set overlap. Title: at most 72 characters, plain. The validator refuses a missing field, a
 relative reference ("above", "same as"), a placeholder ("TBD", "etc."), a path that does not exist (`new` excepted),
 a `check` that does not resolve, and a `done` entry with neither a check nor a named judgement role. A schema change
-runs `aiwe issue migrate`, which rewrites every record mechanically; formats never coexist. The agent never reads
-raw JSON: `UNIT` (§9.2) is a deterministic text rendering of the record.
+runs `aiwe issue migrate`, which rewrites every record mechanically; formats never coexist. A heading migrates as a
+**legacy** record (K34): each `F1` line becomes a `done` entry, the Problem text goes verbatim into `problem.symptom`
+with `cause.state` `unknown`, and `legacy` stays true until an agent rewrites the unit before dispatch. The agent never
+reads raw JSON: `UNIT` (§9.2) is a deterministic text rendering of the record.
 
 How aiwe reads it:
 - **Goal or unit**: an issue with native sub-issues is a goal (§17). A unit is a record with a `scope.in` and a
