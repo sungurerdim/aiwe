@@ -823,7 +823,7 @@ leaked or unlicensed harness source is read, quoted or copied.
 | `vuln` | `go tool -modfile=tools/go.mod govulncheck ./...` | known vulnerabilities (§17) |
 | `tidy` | `go mod tidy -diff` | `go.mod`/`go.sum` drift (§17) |
 | `deadcode` | `go tool -modfile=tools/go.mod deadcode ./cmd/... ./internal/cmd/...` (empty output) | unreachable functions (§17) |
-| `repo` | `go run ./internal/cmd/repocheck all --repo .` | `rules`, `size`, `boundaries`, `source-rules`, `deps`, `ci-shape` |
+| `repo` | `go run ./internal/cmd/repocheck all --repo .` | `rules`, `registry`, `size`, `boundaries`, `source-rules`, `deps`, `ci-shape` |
 | `test` | `go test -json -p <workers> ./...` | behaviour (§5.13) |
 
 `deadcode` is `"required": false` until M-Skeleton closes (#186). `repo/rules` checks only that the §12.1 files exist

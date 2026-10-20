@@ -59,6 +59,7 @@ func findingsOnly(
 func checks() []check {
 	return []check{
 		{"rules", findingsOnly(runRules)},
+		{"registry", findingsOnly(runRegistry)},
 		{"size", findingsOnly(runSize)},
 		{"boundaries", findingsOnly(runBoundaries)},
 		{"source-rules", findingsOnly(runSourceRules)},
@@ -224,6 +225,11 @@ func describe(r checkResult) string {
 // runRules checks that repo holds the repository files of SPEC §12.1 (L2).
 func runRules(_ context.Context, repo string) ([]repocheck.Finding, error) {
 	return repocheck.Rules(repo)
+}
+
+// runRegistry checks the §3 and §3.1 tables of docs/SPEC.md against docs/standards.md (K41).
+func runRegistry(_ context.Context, repo string) ([]repocheck.Finding, error) {
+	return repocheck.Registry(repo)
 }
 
 // runSize checks the size of every Go file of repo (SPEC §5.13).
