@@ -16,7 +16,10 @@ const (
 	ruleBreakingFooterCase = "breaking_footer_case"
 	ruleHeaderLength       = "header_length"
 	ruleBodyLineLength     = "body_line_length"
-	ruleMissingIssueRef    = "missing_issue_ref"
+	ruleRefsOnCommit       = "refs_on_commit"
+	ruleMissingCloses      = "missing_closes"
+	ruleMultipleCloses     = "multiple_closes"
+	ruleIssueTrailerForm   = "issue_trailer_form"
 	ruleMissingEffect      = "missing_effect"
 	ruleClosesOtherRepo    = "closes_other_repo"
 	ruleClosesRepoUnknown  = "closes_repo_unknown"
@@ -42,9 +45,21 @@ var headerPattern = regexp.MustCompile(`^([a-z]+)(?:\([^()\s]+\))?!?: \S`)
 // breakingFooterPattern matches a BREAKING CHANGE footer token in any case.
 var breakingFooterPattern = regexp.MustCompile(`(?i)^breaking[ -]change:`)
 
-// issueRefPattern matches the issue line every commit carries: Refs or Closes <owner>/<repo>#N; it
-// captures the keyword and the <owner>/<repo>.
-var issueRefPattern = regexp.MustCompile(`^(Refs|Closes) ([A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9._-]+)#[1-9][0-9]*$`)
+// issueRefPattern matches the issue line a unit commit carries: Closes <owner>/<repo>#N; it captures
+// the keyword and the <owner>/<repo>.
+var issueRefPattern = regexp.MustCompile(`^(Closes) ([A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9._-]+)#[1-9][0-9]*$`)
+
+// refsLinePattern matches a Refs line, which no commit carries: a unit commit has one Closes and no
+// Refs, and a non-unit commit has no issue trailer (R5).
+var refsLinePattern = regexp.MustCompile(`^Refs\b`)
+
+// closesLinePrefix starts the one issue trailer a unit commit carries (R5); any other line that
+// starts with it is a trailer in the wrong form.
+const closesLinePrefix = "Closes "
+
+// runIDPattern matches the Run-Id trailer the engine writes on every unit commit (DR-14); a message
+// that carries one is a unit commit, so it must also carry its Closes line.
+var runIDPattern = regexp.MustCompile(`^Run-Id: \S`)
 
 // closingKeywordPattern matches any GitHub closing keyword, with or without a colon and any Unicode
 // space around it, followed by an issue reference (#N, <owner>/<repo>#N, GH-N, or a GitHub issue or
@@ -93,9 +108,12 @@ type messageLine struct {
 // CommitMessage checks one commit message against Conventional Commits and SPEC §12.3: a header of
 // a known type and at most 50 runes, one blank line before the body, body lines of at most 72 runes
 // (URLs, trailers and quoted command or output lines exempt), a BREAKING CHANGE footer in upper
-// case, a Refs or Closes <owner>/<repo>#N line, and for a Closes line an Effect line and the slug of
-// the repository the commit lands in. An empty slug is unknown: a Closes line is then a finding.
-// Comment lines and everything below the scissors line are dropped first, as git drops them.
+// case, no Refs line, at most one Closes <owner>/<repo>#N, an Effect line and the slug of the
+// repository the commit lands in with a Closes line, and one Closes line on a unit commit. A unit
+// commit is one that carries a Closes line or the Run-Id trailer the engine writes (DR-14); a
+// non-unit commit carries no issue trailer (R5). An empty slug is unknown: a Closes line is then a
+// finding. Comment lines and everything below the scissors line are dropped first, as git drops
+// them.
 func CommitMessage(msg, slug string) []Finding {
 	lines := messageLines(msg)
 	start := slices.IndexFunc(lines, func(l messageLine) bool { return strings.TrimSpace(l.text) != "" })
@@ -115,41 +133,45 @@ func CommitMessage(msg, slug string) []Finding {
 	}
 	found = append(found, checkBodyLines(rest)...)
 	fenced := fencedLines(rest)
-	found = append(found, checkIssueLines(rest, slug, fenced)...)
+	found = append(found, checkTrailers(rest, slug, fenced)...)
 	return append(found, checkClosingKeywords(lines[start:])...)
 }
 
-// checkIssueLines checks the issue lines of body: one Refs or Closes line at least; a Closes line
-// names the repository slug and comes with an Effect line. An Effect line inside a fence does not
-// count.
-func checkIssueLines(body []messageLine, slug string, fenced []bool) []Finding {
-	refs, closes, found := checkIssueRefs(body, slug)
-	if !refs {
-		found = append(found, Finding{Rule: ruleMissingIssueRef, Path: commitMessagePath})
+// checkTrailers checks the issue trailers of body: no Refs line, at most one Closes line, and on a
+// unit commit one, with an Effect line. A Closes line names the repository slug; an Effect line
+// inside a fence does not count.
+func checkTrailers(body []messageLine, slug string, fenced []bool) []Finding {
+	var found []Finding
+	var closes []messageLine
+	for _, l := range body {
+		switch {
+		case refsLinePattern.MatchString(l.text):
+			found = append(found, Finding{Rule: ruleRefsOnCommit, Path: commitMessagePath, Line: l.n})
+		case strings.HasPrefix(l.text, closesLinePrefix):
+			m := issueRefPattern.FindStringSubmatch(l.text)
+			if m == nil {
+				found = append(found, Finding{Rule: ruleIssueTrailerForm, Path: commitMessagePath, Line: l.n})
+				continue
+			}
+			closes = append(closes, l)
+			found = append(found, checkClosesRepo(l, m[2], slug)...)
+		}
 	}
-	if closes && !hasEffectLine(body, fenced) {
+	switch {
+	case len(closes) == 0 && hasRunID(body):
+		found = append(found, Finding{Rule: ruleMissingCloses, Path: commitMessagePath})
+	case len(closes) > 1:
+		found = append(found, Finding{Rule: ruleMultipleCloses, Path: commitMessagePath, Line: closes[1].n})
+	}
+	if len(closes) > 0 && !hasEffectLine(body, fenced) {
 		found = append(found, Finding{Rule: ruleMissingEffect, Path: commitMessagePath})
 	}
 	return found
 }
 
-// checkIssueRefs walks the issue lines of body: it reports whether body holds a Refs or Closes line
-// and whether it holds a Closes line, with a finding for each Closes line that names another
-// repository or, when slug is empty, no known one.
-func checkIssueRefs(body []messageLine, slug string) (refs, closes bool, found []Finding) {
-	for _, l := range body {
-		m := issueRefPattern.FindStringSubmatch(l.text)
-		if m == nil {
-			continue
-		}
-		refs = true
-		if m[1] != "Closes" {
-			continue
-		}
-		closes = true
-		found = append(found, checkClosesRepo(l, m[2], slug)...)
-	}
-	return refs, closes, found
+// hasRunID reports whether body holds the Run-Id trailer the engine writes on a unit commit.
+func hasRunID(body []messageLine) bool {
+	return slices.ContainsFunc(body, func(l messageLine) bool { return runIDPattern.MatchString(l.text) })
 }
 
 // checkClosesRepo returns a finding for the Closes line l when slug is empty or the repository other
@@ -180,7 +202,7 @@ func hasEffectLine(body []messageLine, fenced []bool) bool {
 func checkClosingKeywords(lines []messageLine) []Finding {
 	var found []Finding
 	for _, l := range lines {
-		if issueRefPattern.MatchString(l.text) {
+		if issueRefPattern.MatchString(l.text) || strings.HasPrefix(l.text, closesLinePrefix) {
 			continue
 		}
 		if closingKeywordPattern.MatchString(l.text) {
