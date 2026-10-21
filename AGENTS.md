@@ -108,7 +108,7 @@ its own local git history and no remote. It is host-independent Python and shell
 | Need | Place |
 |---|---|
 | Unit pipeline (tests → red proof → audit → implement → verify → audit → queue), usage and stop states | docstring of `aiwe-wt/pipe.py`; per-unit state `aiwe-wt/runs/u<N>.state`, overview `aiwe-wt/runs/summary.txt` |
-| Lead commands (verify, confirm, land) | `aiwe-wt/lead.py`, `land.sh`, `queue.sh`, `ship.sh` (one PR from the batch clone; owner permission first) |
+| Lead commands (verify, confirm, land) | `aiwe-wt/lead.py`, `land.sh`, `queue.sh`, `ship.sh` (one PR from the batch clone; the lead ships) |
 | Run one role on an external provider (OpenCode Go API, Cursor CLI) | `aiwe-wt/ext.py`, `ext.sh`; model and provider notes in memory `dis-ajan-yurutme.md` |
 | Open a unit clone | `aiwe-wt/start.sh <issue> <slug>`; never a git worktree (memory `worktree-yok.md`, SPEC §6.5) |
 | Bridge issue writer (this repository only) | `aiwe-wt/issue.py`; the global `issue.py` conflicts with SPEC §8.4 |
@@ -142,11 +142,13 @@ Full text is in the memory notes named here; they are not repeated.
   never the model that wrote the unit; the evidence names that model. The owner has not confirmed this fallback.
 - The lead merges when CI is green and the audit is GREEN, and files every finding as an issue (`lead-yetkileri.md`,
   `bulgu-her-zaman-issue.md`).
+- The lead ships without asking. A ship is a boundary, never a per-unit step: related units are batched, the batch is
+  merged onto `main`, the gate runs, and green CI fast-forwards `main`. Ship when the batched group is done, and about
+  every two hours while work keeps arriving.
 - Parallel runs are limited per provider and by measured load, not by a fixed cap (`paralel-sinir.md`).
 - Never start a file without a runnable extension (`masaustu-pencere.md`); aiwe does not manage the owner's own
   session settings (`aiwe-sorumluluk-siniri.md`).
-- Owner-only actions pending: pushing the batch, opening the repository to the public (`depo-acilinca.md`,
-  `ci-batch.md`).
+- Owner-only actions pending: opening the repository to the public (`depo-acilinca.md`, `ci-batch.md`).
 
 ## Known traps
 
