@@ -297,8 +297,8 @@ func TestRepocheckAllWorkflowLink(t *testing.T) {
 }
 
 // TestRepocheckCommitMsg catches a commit-msg run that passes a Closes line without its Effect
-// line, a Closes line to another repository than origin, or a Closes line when origin cannot be
-// read (SPEC §12.3).
+// line, a Closes line to another repository than origin, a Closes line when origin cannot be read,
+// a Refs line, or a unit commit without its Closes line (SPEC §12.3, R5).
 func TestRepocheckCommitMsg(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Fatalf("git is not on PATH: %v", err)
@@ -329,7 +329,10 @@ func TestRepocheckCommitMsg(t *testing.T) {
 			[]string{"--repo", repo}, false, "closes_other_repo"},
 		{"Closes with no origin remote", closes, []string{"--repo", noOrigin}, false, "closes_repo_unknown"},
 		{"Closes with no --repo", closes, nil, false, "closes_repo_unknown"},
-		{"Refs with no --repo", "fix: the gate step\n\nRefs octo-org/widget#7\n", nil, true, ""},
+		{"a non-unit commit with no issue trailer", "fix: the gate step\n\nThe body explains it.\n", nil, true, ""},
+		{"a Refs line", "fix: the gate step\n\nRefs octo-org/widget#7\n", nil, false, "refs_on_commit"},
+		{"a unit commit with no Closes line",
+			"fix: the gate step\n\nRun-Id: 01JBCDEFGHJKMNPQRSTVWXYZ01\n", nil, false, "missing_closes"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
