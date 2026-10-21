@@ -1,4 +1,6 @@
-# Minimal build and test workflow; sk-04 grows it to the full gate.
+# The gate of SPEC §12.2 on Linux for every pull request and for a manual dispatch; the build
+# matrix keeps the tree compiling and its tests green on a second OS. A main push starts no run:
+# a green pull request fast-forwards main to the tip this workflow tested (§7.3).
 name: ci
 
 on:
@@ -13,12 +15,33 @@ permissions:
   contents: read
 
 jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      # why: every gate step reads the tree of the commit under test.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # why: the gate runs go tools, and the go line of go.mod pins the toolchain they need.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      # why: the lint step of gate.json calls custom-gcl by that bare name, so this builds the
+      # binary .custom-gcl.yml names into the repository root and puts that directory on PATH.
+      - name: custom-gcl
+        run: |
+          go tool -modfile=tools/go.mod golangci-lint custom
+          echo "$GITHUB_WORKSPACE" >> "$GITHUB_PATH"
+      # why: this gate is the merge signal of the repository, and a red step must fail the run.
+      - name: gate
+        run: go run ./cmd/aiwe gates gate --repo .
   build:
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    # why: a hung build must not hold a runner for the default six hours.
+    timeout-minutes: 20
     steps:
       # why: the build, vet and test steps need the source tree.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
