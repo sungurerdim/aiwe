@@ -1,6 +1,8 @@
 package core_test
 
 import (
+	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -316,6 +318,149 @@ func TestGitRefusesLeadingOption(t *testing.T) {
 		}
 		if got := strings.TrimSpace(gitTestRaw(t, r.dir, "rev-list", "--count", "HEAD")); got != "2" {
 			t.Errorf("commits after a refused core.Git commit = %s, want 2: the refused commit landed", got)
+		}
+	})
+}
+
+// gitInputEnv returns one shim setting, derived from the product constant (DR-17). SHIM marks
+// this test binary as the git shim, REAL names the git it runs, and LOG is the file it appends
+// one line to per process start. None of the suffixes is secret-shaped, so CleanEnv keeps them.
+func gitInputEnv(setting string) string {
+	return strings.ToUpper(core.Product) + "_CORE_TEST_GIT_" + setting
+}
+
+// init answers the git shim: a copy of this test binary, named git, records one line per start
+// and then runs the real git. A test that counts the lines sees how many processes GitInput
+// started. The other helper roles of this package use their own variables and return first.
+func init() {
+	if os.Getenv(gitInputEnv("SHIM")) != "1" {
+		return
+	}
+	record, err := os.OpenFile(os.Getenv(gitInputEnv("LOG")), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		os.Exit(121)
+	}
+	if _, err := record.WriteString(strings.Join(os.Args[1:], " ") + "\n"); err != nil {
+		os.Exit(122)
+	}
+	if err := record.Close(); err != nil {
+		os.Exit(123)
+	}
+	cmd := exec.CommandContext(context.Background(), os.Getenv(gitInputEnv("REAL")), os.Args[1:]...)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	err = cmd.Run()
+	if err == nil {
+		os.Exit(0)
+	}
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		os.Exit(exit.ExitCode())
+	}
+	os.Exit(124)
+}
+
+// gitInputShim installs the shim and returns the file that records one line per git process start.
+func gitInputShim(t *testing.T) string {
+	t.Helper()
+	real := os.Getenv(gitInputEnv("REAL"))
+	if real == "" {
+		found, err := exec.LookPath("git")
+		if err != nil {
+			t.Fatalf("git is the only prerequisite (SPEC §6.2) and is not on PATH: %v", err)
+		}
+		real, err = filepath.Abs(found)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatalf("this test binary: %v", err)
+	}
+	body, err := os.ReadFile(self)
+	if err != nil {
+		t.Fatalf("read this test binary %s: %v", self, err)
+	}
+	dir := t.TempDir()
+	name := "git"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	if err := os.WriteFile(filepath.Join(dir, name), body, 0o700); err != nil {
+		t.Fatalf("write the git shim: %v", err)
+	}
+	logPath := filepath.Join(dir, "git.log")
+	t.Setenv(gitInputEnv("SHIM"), "1")
+	t.Setenv(gitInputEnv("REAL"), real)
+	t.Setenv(gitInputEnv("LOG"), logPath)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return logPath
+}
+
+// gitInputCalls returns one line per git process the shim recorded.
+func gitInputCalls(t *testing.T, logPath string) []string {
+	t.Helper()
+	b, err := os.ReadFile(logPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := strings.TrimSuffix(string(b), "\n")
+	if text == "" {
+		return nil
+	}
+	return strings.Split(text, "\n")
+}
+
+// TestGitInput guards SPEC §5.21 and the K31 batched reads: one `cat-file --batch` over many
+// objects is one process, fed on stdin, and carries the same fixed options as core.Git.
+// The process count catches a batched read built from one process per object.
+func TestGitInput(t *testing.T) {
+	gitTestHome(t)
+	r := gitTestNewRepo(t)
+
+	t.Run("stdin feeds one cat-file process", func(t *testing.T) {
+		// Catches a batched read that starts one git process per object: two objects are written
+		// to one process, and the shim must record that one start.
+		const note = "Batch note for a second object.\n"
+		gitTestWrite(t, filepath.Join(r.dir, "NOTES.md"), note)
+		gitTestRaw(t, r.dir, "add", "NOTES.md")
+		gitTestRaw(t, r.dir, "commit", "-q", "-m", "docs: notes for one batch")
+		logPath := gitInputShim(t)
+		res, err := core.GitInput(t.Context(), r.dir, "HEAD:README.md\nHEAD:NOTES.md\n", "cat-file", "--batch")
+		if err != nil {
+			t.Fatalf("core.GitInput cat-file --batch: %v", err)
+		}
+		if res.ExitCode != 0 {
+			t.Errorf("exit code = %d, want 0 (stderr %q)", res.ExitCode, res.Stderr)
+		}
+		if !strings.Contains(res.Stdout, "# "+core.Product) || !strings.Contains(res.Stdout, note) {
+			t.Errorf("core.GitInput returned %q, want README.md and NOTES.md", res.Stdout)
+		}
+		calls := gitInputCalls(t, logPath)
+		if len(calls) != 1 {
+			t.Fatalf("one batch of two objects started %d git process(es) %v, want 1", len(calls), calls)
+		}
+		if !strings.Contains(calls[0], "cat-file") || !strings.Contains(calls[0], "--batch") {
+			t.Errorf("process = %q, want one cat-file --batch", calls[0])
+		}
+	})
+
+	t.Run("the fixed options apply to a call fed through stdin", func(t *testing.T) {
+		// Catches a batched call that bypasses core.Git's fixed options: the clone's own
+		// core.fsmonitor value would show.
+		gitTestRaw(t, r.dir, "config", "core.fsmonitor", "echo fsmonitor >> '"+r.marker+"'")
+		res, err := core.GitInput(t.Context(), r.dir, "", "config", "--get", "core.fsmonitor")
+		if err != nil {
+			t.Fatalf("core.GitInput config --get: %v", err)
+		}
+		if got := strings.TrimSpace(res.Stdout); got != "false" {
+			t.Errorf("config core.fsmonitor in a batched call = %q, want the fixed %q", got, "false")
+		}
+		if ran := gitTestRan(t, r.marker); ran != "" {
+			t.Errorf("core.GitInput ran the clone's core.fsmonitor: %q", ran)
 		}
 	})
 }

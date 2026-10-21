@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,10 +25,29 @@ type GitResult struct {
 
 // Git runs git with args in dir through Start, in a clean environment, with the repository's
 // programs off (DR-10, SPEC §5.21): fixed -c options before the subcommand, and
-// --no-ext-diff --no-textconv after diff, log and show. A non-zero exit is an error; the result
-// still carries the output and the exit code. args[0] must be the subcommand: a leading option
-// would drop the diff flags or override a fixed option, so git is not started.
+// --no-ext-diff --no-textconv after diff, log and show. status has neither flag, so a status call
+// passes -c diff.external= with an empty value, which overrides an external diff the clone
+// configured. A non-zero exit is an error; the result still carries the output and the exit code.
+// args[0] must be the subcommand: a leading option would drop the diff flags or override a fixed
+// option, so git is not started. The call feeds git no input; a call that does, such as one
+// `cat-file --batch` over many objects, goes through GitInput (K31).
 func Git(ctx context.Context, dir string, args ...string) (GitResult, error) {
+	return gitRun(ctx, dir, "", args...)
+}
+
+// GitInput runs git with args in dir through Start, under the same fixed options as Git, and writes
+// stdin to the child, so one git process answers a whole batch (SPEC §5.20, §5.21): a reader of
+// many objects of a repository writes every request to the stdin of one `cat-file --batch` process
+// instead of starting one process per object, which costs most on Windows (K31). args[0] must be
+// the subcommand, exactly as in Git.
+func GitInput(ctx context.Context, dir, stdin string, args ...string) (GitResult, error) {
+	return gitRun(ctx, dir, stdin, args...)
+}
+
+// gitRun is the one runner of Git and GitInput: it refuses a call that starts with no subcommand,
+// starts git in a clean environment with the fixed options, writes stdin to it, and returns its
+// output and exit code.
+func gitRun(ctx context.Context, dir, stdin string, args ...string) (GitResult, error) {
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
 		found := "no arguments"
 		if len(args) > 0 {
@@ -42,10 +62,15 @@ func Git(ctx context.Context, dir string, args ...string) (GitResult, error) {
 		return GitResult{ExitCode: -1}, fmt.Errorf("git: %w", err)
 	}
 	var stdout, stderr bytes.Buffer
+	var in io.Reader
+	if stdin != "" {
+		in = strings.NewReader(stdin)
+	}
 	c, err := Start(ctx, ChildSpec{
 		Argv:   gitArgv(hooks, args),
 		Dir:    dir,
 		Env:    CleanEnv(Environ(), nil),
+		Stdin:  in,
 		Stdout: &stdout,
 		Stderr: &stderr,
 	})
@@ -70,6 +95,9 @@ func Git(ctx context.Context, dir string, args ...string) (GitResult, error) {
 
 // gitArgv returns the git argv: the fixed options, the subcommand and, for diff, log and show,
 // the flags that turn external diff and textconv programs off, then the caller's arguments.
+// status has neither --no-ext-diff nor --no-textconv. Passing --no-textconv makes git reject the
+// call, so status gets -c diff.external= before the subcommand: an empty value overrides a clone's
+// diff.external. Porcelain status does not run a textconv driver (SPEC §5.21).
 func gitArgv(hooks string, args []string) []string {
 	argv := []string{
 		"git",
@@ -77,6 +105,9 @@ func gitArgv(hooks string, args []string) []string {
 		"-c", "core.hooksPath=" + filepath.ToSlash(hooks),
 		"-c", "protocol.ext.allow=never",
 		"-c", "submodule.recurse=false",
+	}
+	if args[0] == "status" {
+		argv = append(argv, "-c", "diff.external=")
 	}
 	argv = append(argv, args[0])
 	switch args[0] {
