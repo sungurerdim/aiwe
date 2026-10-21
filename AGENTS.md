@@ -159,3 +159,9 @@ Tool facts that cost a run, kept here until the bridge retires (R8).
 - A lint step that builds `custom-gcl` from the upstream clone loaded no packages on the measured host; the gate runs
   the tools-module golangci-lint instead (SPEC §5.17, §12.2, #365).
 - `durum.md` "Tuzaklar" still holds the Windows and Git Bash traps; they move here one by one (R8).
+- Read a process's command line before killing it. `pipe.py`, `ext.py` and `pytest` all belong to some unit's run,
+  and a kill by process name takes a neighbour's work with it; name the pid and the unit it serves.
+- One heavy integration at a time. `queue.sh` and `ship.sh` hold `.batch.lock` because two of them collide in the
+  process tree, not out of caution: a second queue is refused with a reason, and that refusal is correct.
+- A session that drives units keeps its working discipline in `aiwe-wt/evidence/mcp-path.md` (parallel width,
+  gate batching, evidence before a close). It is a pointer: the rules stay in the SPEC and the registry.
