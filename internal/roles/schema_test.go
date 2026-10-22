@@ -272,6 +272,8 @@ func acceptedBodyCases() []cardBodyCase {
 			body: "Run the check the unit names and execute the plan in prose."},
 		{name: "prose with a hyphen and an abbreviation",
 			body: "A long-lived claim stops at three reds, e.g. the same one twice."},
+		{name: "tool names as plain verbs and nouns",
+			body: "Read the diff, list each changed line, write one verdict and edit nothing; a shell command is the engine's."},
 	}
 }
 

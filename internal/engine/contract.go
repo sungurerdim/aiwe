@@ -169,6 +169,10 @@ var (
 	returnPathPattern    = regexp.MustCompile(`(?:^|[^\p{L}\p{N}_./-])([\p{L}\p{N}_./-]*[/.][\p{L}\p{N}_./-]*:[0-9]+|[\p{L}_][\p{L}\p{N}_-]*:[0-9]+)`)
 	returnIdentPattern   = regexp.MustCompile(`(?:^|[^A-Za-z0-9_])([A-Z][A-Za-z0-9_]*)`)
 	returnCommandPattern = regexp.MustCompile("`[^`]+`")
+	// returnRefPattern matches a reference a return cites instead of a measurement: a SPEC section,
+	// an issue number, a registry id such as DR-5, STD-32, K33 or L17, and the run id the VERDICT
+	// line is bound to.
+	returnRefPattern = regexp.MustCompile(`§[0-9]+(?:\.[0-9]+)*|#[0-9]+|\b[A-Z]{1,4}-[0-9]+\b|\b[A-Z]{1,2}[0-9]+\b|\bRunID[ \t]+[0-9A-Za-z]+`)
 )
 
 // CheckReturn refuses a return the tip does not support (#324). A path:line, including a dotless
