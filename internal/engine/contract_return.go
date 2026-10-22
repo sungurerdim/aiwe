@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -73,6 +74,9 @@ func identSkipped(line string, end int, name string) bool {
 	if j := skipSpace(line, end); allCaps(name) && j < len(line) && line[j] == ':' {
 		return true
 	}
+	if returnWord(name) || sentenceWord(line, end-len(name), name) {
+		return true
+	}
 	const mark = "VERDICT:"
 	i := strings.Index(line, mark)
 	return allCaps(name) && i >= 0 && end-len(name) == skipSpace(line, i+len(mark))
@@ -88,11 +92,46 @@ func allCaps(name string) bool {
 	}
 	return true
 }
+
+// returnWords returns the words of the SPEC §9.3 return format and the auditor's RETURN section, and
+// the name SPEC: a return writes them, and none is a name the tip declares.
+func returnWords() []string {
+	return []string{"PLAN", "TESTS", "IMPLEMENTED", "UPDATED", "ANSWER", "ROOT", "CAUSE", "VERDICT",
+		"GREEN", "RED", "PASS", "FAIL", "RunID", "SPEC"}
+}
+func returnWord(name string) bool {
+	for _, w := range returnWords() {
+		if name == w {
+			return true
+		}
+	}
+	return false
+}
+
+// sentenceWord reports a plain capitalised word that opens a line or a sentence, such as Done, Not
+// or Scope: prose, not a name. A capitalised name mid-sentence or after a label is still checked.
+func sentenceWord(line string, start int, name string) bool {
+	if len(name) < 2 || name[0] < 'A' || name[0] > 'Z' {
+		return false
+	}
+	for i := 1; i < len(name); i++ {
+		if name[i] < 'a' || name[i] > 'z' {
+			return false
+		}
+	}
+	before := strings.TrimRight(line[:start], " \t")
+	before = strings.TrimRight(strings.TrimLeft(before, " \t-*"), " \t")
+	return before == "" || strings.HasSuffix(before, ".") || strings.HasSuffix(before, "!") ||
+		strings.HasSuffix(before, "?")
+}
+
 func blankSpans(line string) string {
 	b := []byte(line)
-	for _, loc := range returnCommandPattern.FindAllStringIndex(line, -1) {
-		for i := loc[0]; i < loc[1]; i++ {
-			b[i] = ' '
+	for _, pattern := range []*regexp.Regexp{returnCommandPattern, returnRefPattern} {
+		for _, loc := range pattern.FindAllStringIndex(line, -1) {
+			for i := loc[0]; i < loc[1]; i++ {
+				b[i] = ' '
+			}
 		}
 	}
 	for _, loc := range returnPathPattern.FindAllStringSubmatchIndex(line, -1) {

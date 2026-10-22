@@ -147,3 +147,27 @@ func returnCites(msg, want string) bool {
 	}
 	return strings.Contains(msg, want)
 }
+func TestReturnAcceptsFormatWordsAndReferences(t *testing.T) {
+	t.Parallel()
+	const head = "IMPLEMENTED: BuildContract internal/engine/contract.go:4\n"
+	for _, tc := range []struct {
+		name string
+		text string
+		want string
+	}{
+		{"the Done and Not done section words", head + "Done: the change is in place\nNot done: nothing\n", ""},
+		{"a sentence that opens with a plain word", head + "Scope deviation: none. Nothing else changed.\n", ""},
+		{"the verdict line bound to its run", "VERDICT: GREEN bound to RunID 01JC4Q8Z7X9R2M5N6P3T1V0W8Y\n", ""},
+		{"PASS and FAIL lines", head + "PASS the change is in place\nFAIL the second criterion\n", ""},
+		{"a SPEC section and a rule id", head + "per SPEC §9.1 and DR-5, STD-32 and K33\n", ""},
+		{"an issue number", head + "the gap #304 named is closed\n", ""},
+		{"a capitalised name mid-sentence", head + "the fix keeps Load in place\n", "Load"},
+		{"a capitalised name after a label", "IMPLEMENTED: Load\n", "Load"},
+		{"a measured number beside a reference", head + "DR-5 holds and 12 passed\n", "12"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assertReturnCheck(t, tc.text, returnTip(), tc.want)
+		})
+	}
+}
