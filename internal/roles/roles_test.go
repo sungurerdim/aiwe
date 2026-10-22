@@ -239,7 +239,7 @@ func TestAuditorLimitKeepsDeferredTrigger(t *testing.T) {
 	if !ok {
 		t.Fatal("expected Lookup(\"auditor\") to serve the shipped card; it was missing")
 	}
-	const want = "The architect and the auditor do not propose a §15 item unless new evidence meets its trigger."
+	const want = "propose a §15 deferred item unless new evidence meets its trigger"
 	for _, m := range c.MayNot {
 		if m.Text == want {
 			if strings.TrimSpace(m.Gate) == "" {

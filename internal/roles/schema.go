@@ -5,6 +5,7 @@ package roles
 import (
 	"regexp"
 	"strings"
+	"unicode"
 
 	"github.com/sungurerdim/aiwe/internal/adapters"
 	"github.com/sungurerdim/aiwe/internal/core"
@@ -142,7 +143,7 @@ func bodyFault(body string) string {
 		return command
 	}
 	for _, n := range bodyNames() {
-		if holdsName(body, n.name) {
+		if n.kind == "tool" && holdsToolName(body, n.name) || n.kind != "tool" && holdsName(body, n.name) {
 			return "the " + n.kind + " name " + n.name
 		}
 	}
@@ -321,6 +322,23 @@ func holdsName(body, name string) bool {
 			continue
 		}
 		if !nameByte(body, i-1) && !nameByte(body, i+len(name)) {
+			return true
+		}
+	}
+	return false
+}
+
+// holdsToolName reports whether body names the tool name as a tool: the name, then the word tool
+// or tools. Each tool name is also a plain English verb or noun, and method prose such as "read
+// the diff" or "a shell command" names no tool (SPEC §9.1).
+func holdsToolName(body, name string) bool {
+	for i := 0; i+len(name) <= len(body); i++ {
+		if !strings.EqualFold(body[i:i+len(name)], name) || nameByte(body, i-1) || nameByte(body, i+len(name)) {
+			continue
+		}
+		rest := strings.TrimLeft(body[i+len(name):], " \t")
+		word := rest[:strings.IndexFunc(rest+" ", func(r rune) bool { return !unicode.IsLetter(r) })]
+		if strings.EqualFold(word, "tool") || strings.EqualFold(word, "tools") {
 			return true
 		}
 	}

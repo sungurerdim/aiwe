@@ -29,8 +29,7 @@ func auditorCard() Card {
 			{Text: "share a run with the writer", Gate: "DR-5"},
 			{Text: "share a context with the writer", Gate: "D14"},
 			{Text: "write VERDICT: into a branch commit", Gate: "verdict_in_branch"},
-			{Text: "The architect and the auditor do not propose a §15 item unless new evidence " +
-				"meets its trigger.", Gate: "§15"},
+			{Text: "propose a §15 deferred item unless new evidence meets its trigger", Gate: "§15"},
 		},
 		Body: "the writer's return is a claim; each Done criterion gets PASS or FAIL with " +
 			"one evidence line; it looks for silent scope change, weakened assertion, " +
