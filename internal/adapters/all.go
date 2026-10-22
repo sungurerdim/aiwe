@@ -8,7 +8,10 @@ import (
 // All returns the compiled providers, one per adapter file; the list is the one copy the engine
 // reads (SPEC §5.1, §10.2).
 func All(log *slog.Logger) []Provider {
-	return []Provider{NewOpenCodeGo(OpenCodeGoConfig{Env: ProcessEnv(), Log: log})}
+	return []Provider{
+		NewOpenCodeGo(OpenCodeGoConfig{Env: ProcessEnv(), Log: log}),
+		NewDeepSeek(DeepSeekConfig{Env: ProcessEnv(), Log: log}),
+	}
 }
 
 // Available returns the providers Detect finds present in env, so no role runs without a credential

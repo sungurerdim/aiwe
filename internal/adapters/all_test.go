@@ -36,13 +36,17 @@ func TestAllHoldsTheCompiledModelAPI(t *testing.T) {
 
 // TestAvailableFiltersByCredential catches a provider offered without its credential or hidden while
 // it has one: Available filters the compiled list through Detect on the run's environment (SPEC §5.1).
+// The compiled list reads one credential variable per provider, so the test sets and clears every one
+// and an ambient variable never decides what this test sees.
 func TestAvailableFiltersByCredential(t *testing.T) {
 	log, _ := testLog(t)
 	t.Setenv(envKeyVar, envSecret)
+	t.Setenv(deepSeekKeyVar, envSecret)
 	if got := Available(context.Background(), All(log), ProcessEnv()); len(got) == 0 {
 		t.Error("Available with the key set returned no provider, so no role can run (SPEC §5.1)")
 	}
 	t.Setenv(envKeyVar, "")
+	t.Setenv(deepSeekKeyVar, "")
 	if got := Available(context.Background(), All(log), ProcessEnv()); len(got) != 0 {
 		t.Errorf("Available without the key returned %d providers, want none (SPEC §5.1)", len(got))
 	}
