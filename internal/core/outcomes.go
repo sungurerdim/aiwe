@@ -33,8 +33,7 @@ func Outcomes() []OutcomeRow {
 		{Outcome: OutcomeError, Status: StatusError, Next: "fix the condition the detail names, then run the command again"},
 		{Outcome: OutcomeUsage, Status: StatusUsage, Next: "run " + Product + " --help and correct the call"},
 		{Outcome: "red", Status: StatusRed, Next: "fix the failing step, then run the gate again"},
-		{Outcome: "incomplete", Status: StatusError,
-			Next: "run every gate step, and fix each step the report marks not_measured, then run the gate again"},
+		{Outcome: "incomplete", Status: StatusError, Next: "run every gate step, and fix each step the report marks not_measured, then run the gate again"},
 		{Outcome: "param_duplicate", Status: StatusError, Err: ErrParamDuplicate,
 			Next: "remove the second definition of the parameter from the dictionary"},
 		{Outcome: "param_undeclared", Status: StatusError, Err: ErrParamUndeclared,
@@ -54,6 +53,7 @@ func Outcomes() []OutcomeRow {
 			Next: "free space under the footprint the detail names, or raise its ceiling"},
 		{Outcome: "config_invalid", Status: StatusError, Err: ErrConfigInvalid,
 			Next: "correct the state file the detail names to one JSON object of string values"},
+		{Outcome: "unit_invalid", Status: StatusError, Next: "correct the unit text the detail names, then run the command again"},
 		{Outcome: "prompt_too_large", Status: StatusError, Next: "shorten the card or the unit so the measured size fits the cap"},
 		{Outcome: "key_missing", Status: StatusError,
 			Next: "set the provider's API key variable, such as OPENCODE_API_KEY, to a non-empty value, " +

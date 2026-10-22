@@ -1,8 +1,9 @@
-// Package roles holds the skeleton role cards and the pinned model list each role runs on
-// (SPEC §9.1, §8.1).
+// Package roles holds the skeleton role cards, the pinned model list each role runs on,
+// and the finding lines a judging role returns (SPEC §9.1, §8.1, §7.9).
 package roles
 
 import (
+	"regexp"
 	"strings"
 
 	"github.com/sungurerdim/aiwe/internal/adapters"
@@ -341,3 +342,20 @@ func cardInvalid(expected, found string) error {
 	return &core.Error{Outcome: core.OutcomeError, Expected: expected, Found: found,
 		Next: "correct the card to the format of SPEC §9.1"}
 }
+
+// findingSep separates the five fields of one finding line (K8).
+
+// githubToken, pemPrivateKey and drCite match a token, a private key and a DR id (K8, DR-19).
+var (
+	githubToken   = regexp.MustCompile(`(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22,255}`)
+	pemPrivateKey = regexp.MustCompile(`(?s)-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----`)
+	drCite        = regexp.MustCompile(`\bDR-[0-9]+\b`)
+)
+
+// Finding is one parsed finding line: where, which rule, what was seen, who loses what, and the class.
+
+// Judgement is a judging role's return: affected parties, kept findings, and whether a RED opens a fix round (K8).
+
+// ParseJudgement reads a judging return. Findings dedupe by location and rule and take derived severity (K8).
+
+// maskSecrets replaces a GitHub token, a PEM private key and a URL password. Words around them stay (DR-19, DR-10).
