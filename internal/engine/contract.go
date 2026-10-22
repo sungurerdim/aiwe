@@ -3,13 +3,12 @@ package engine
 
 import (
 	"fmt"
-	"strings"
-
 	"github.com/sungurerdim/aiwe/internal/core"
+	"regexp"
+	"strings"
 )
 
-// defaultPromptCap is the SPEC §9.2 prompt cap. The spec writes "32 KB"; the sibling settings cap
-// counts 64 KiB as 64 << 10, so this cap is 32 << 10. A zero CapBytes selects it.
+// defaultPromptCap is 32 KiB (32 << 10), the SPEC §9.2 prompt cap. A zero CapBytes selects it.
 const defaultPromptCap = 32 << 10
 
 // The outcome rows the refusals of this file take, and the one role whose RETURN section binds the
@@ -96,8 +95,7 @@ func writeSection(b *strings.Builder, heading, body string) {
 	}
 }
 
-// scopeText binds this run's repository, branch and file set. The line cap is the SPEC §9.3
-// limit of 12 lines, which is the same for every run.
+// scopeText binds this run's repository, branch and file set. The line cap is the SPEC §9.3 limit of 12 lines.
 func scopeText(in ContractInput) string {
 	var b strings.Builder
 	b.WriteString("Repository: ")
@@ -165,3 +163,16 @@ func tooLarge(size, limit int) error {
 		Next:     nextOf(outcomePromptTooLarge),
 	}
 }
+
+// Compiled patterns for one return line (SPEC §5.3). A path token is a slash or dot path, or a dotless file name, then :line.
+var (
+	returnPathPattern    = regexp.MustCompile(`(?:^|[^\p{L}\p{N}_./-])([\p{L}\p{N}_./-]*[/.][\p{L}\p{N}_./-]*:[0-9]+|[\p{L}_][\p{L}\p{N}_-]*:[0-9]+)`)
+	returnIdentPattern   = regexp.MustCompile(`(?:^|[^A-Za-z0-9_])([A-Z][A-Za-z0-9_]*)`)
+	returnCommandPattern = regexp.MustCompile("`[^`]+`")
+)
+
+// CheckReturn refuses a return the tip does not support (#324). A path:line, including a dotless
+// name, and an exported identifier must resolve on the tip. An all-caps label and only the word
+// after VERDICT: do not. A number needs its command; "N of M" is a ratio and a percent is not.
+
+// noteFields records the names of a struct's fields or an interface's methods.

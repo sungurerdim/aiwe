@@ -76,6 +76,8 @@ func Outcomes() []OutcomeRow {
 		{Outcome: "tracker: no token", Status: StatusError,
 			Next: "set GH_TOKEN or GITHUB_TOKEN to a token that reads the tracker, then run the command again"},
 		{Outcome: "unaudited_commits", Status: StatusError, Next: "audit the run branch again, then integrate the tip the auditor audited"},
+		{Outcome: "unverified_finding", Status: StatusError,
+			Next: "cite only a path, an identifier and a number the tip and its command resolve"},
 		{Outcome: "ci_not_observed", Status: StatusError, Next: "wait for the CI run of the batch and read its result, then integrate the unit again"},
 		{Outcome: "push_rejected", Status: StatusError,
 			Next: "fetch the branch the remote moved, re-run the unit on its new base, then integrate the tip the auditor audited"},

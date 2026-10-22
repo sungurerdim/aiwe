@@ -2,11 +2,10 @@ package engine
 
 import (
 	"errors"
+	"github.com/sungurerdim/aiwe/internal/core"
 	"strconv"
 	"strings"
 	"testing"
-
-	"github.com/sungurerdim/aiwe/internal/core"
 )
 
 // defaultContractCap is the SPEC §9.2 prompt cap. The spec writes "32 KB"; this
