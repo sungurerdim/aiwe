@@ -1,0 +1,29 @@
+{
+  "formatVersion": 1,
+  "tools": [
+    {
+      "name": "gremlins",
+      "version": "0.5.0",
+      "url": "https://github.com/go-gremlins/gremlins/releases/download/v0.5.0/gremlins_0.5.0_linux_amd64.tar.gz",
+      "sha256": "445dc193249d92c9ab9c019e7885f36b3fb40cc999a2ae74c45561326b63087f",
+      "licence": "Apache-2.0",
+      "source": "https://github.com/go-gremlins/gremlins/releases/tag/v0.5.0"
+    },
+    {
+      "name": "grype",
+      "version": "0.87.0",
+      "url": "https://github.com/anchore/grype/releases/download/v0.87.0/grype_0.87.0_linux_amd64.tar.gz",
+      "sha256": "be710d15f5477e5c77ce03d14e480263415d7ab135e04b8483663f688823087d",
+      "licence": "Apache-2.0",
+      "source": "https://github.com/anchore/grype/releases/tag/v0.87.0"
+    },
+    {
+      "name": "gitleaks",
+      "version": "8.28.0",
+      "url": "https://github.com/gitleaks/gitleaks/releases/download/v8.28.0/gitleaks_8.28.0_linux_x64.tar.gz",
+      "sha256": "a65b5253807a68ac0cafa4414031fd740aeb55f54fb7e55f386acb52e6a840eb",
+      "licence": "MIT",
+      "source": "https://github.com/gitleaks/gitleaks/releases/tag/v8.28.0"
+    }
+  ]
+}
