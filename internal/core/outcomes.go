@@ -28,6 +28,16 @@ type OutcomeRow struct {
 // role never finished it. Each of those rows carries Err nil, as the prompt_too_large row does: the
 // string a sentinel holds is still a row of the table, and the reader gets one next action for it.
 func Outcomes() []OutcomeRow {
+	rows := make([]OutcomeRow, 0, 36)
+	for _, group := range []func() []OutcomeRow{outcomesCommand, outcomesInput, outcomesUnit, outcomesRun} {
+		rows = append(rows, group()...)
+	}
+	return rows
+}
+
+// outcomesCommand is the rows a finished command takes: the three the core names, red, and an
+// incomplete gate report.
+func outcomesCommand() []OutcomeRow {
 	return []OutcomeRow{
 		{Outcome: OutcomeOK, Status: StatusOK, Next: "read the data of the result"},
 		{Outcome: OutcomeError, Status: StatusError, Next: "fix the condition the detail names, then run the command again"},
@@ -42,6 +52,13 @@ func Outcomes() []OutcomeRow {
 			Next: "re-save the file as UTF-8; the detail names the first invalid byte"},
 		{Outcome: "root_unresolved", Status: StatusError, Err: ErrRootUnresolved,
 			Next: "set the named root override to an absolute local directory, or unset it"},
+	}
+}
+
+// outcomesInput is the rows of a value the caller passes in: a parameter, a file, a root, a state
+// file, a key or a run id.
+func outcomesInput() []OutcomeRow {
+	return []OutcomeRow{
 		{Outcome: "not_owned", Status: StatusError, Err: ErrNotOwned,
 			Next: "leave the directory in place: its ledger record does not prove this process made it"},
 		{Outcome: "root_unsafe", Status: StatusError, Err: ErrRootUnsafe,
@@ -59,6 +76,13 @@ func Outcomes() []OutcomeRow {
 			Next: "set the provider's API key variable, such as OPENCODE_API_KEY, to a non-empty value, " +
 				"then run the command again"},
 		{Outcome: "run_id_missing", Status: StatusError, Next: "start the run through the engine, or pass the run id the command needs"},
+	}
+}
+
+// outcomesUnit is the rows of a unit body the intake gates refuse, and the tracker calls that cannot
+// read.
+func outcomesUnit() []OutcomeRow {
+	return []OutcomeRow{
 		{Outcome: "unit: required section missing", Status: StatusError,
 			Next: "add the section the detail names to the unit body, then run the command again"},
 		{Outcome: "unit: body too large", Status: StatusError,
@@ -76,6 +100,13 @@ func Outcomes() []OutcomeRow {
 		{Outcome: "tracker: no token", Status: StatusError,
 			Next: "set GH_TOKEN or GITHUB_TOKEN to a token that reads the tracker, then run the command again"},
 		{Outcome: "unaudited_commits", Status: StatusError, Next: "audit the run branch again, then integrate the tip the auditor audited"},
+	}
+}
+
+// outcomesRun is the rows of a run that did not land: unaudited commits, a CI run not observed, a
+// rejected push, the two limits, and a path or a read the engine refuses.
+func outcomesRun() []OutcomeRow {
+	return []OutcomeRow{
 		{Outcome: "unverified_finding", Status: StatusError,
 			Next: "cite only a path, an identifier and a number the tip and its command resolve"},
 		{Outcome: "ci_not_observed", Status: StatusError, Next: "wait for the CI run of the batch and read its result, then integrate the unit again"},

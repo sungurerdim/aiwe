@@ -35,6 +35,62 @@ func outcomeTable(t *testing.T) map[core.Outcome]core.OutcomeRow {
 func TestOutcomes(t *testing.T) {
 	table := outcomeTable(t)
 
+	// A map of names cannot see a dropped row, an extra row or a reorder. Outcomes() is the
+	// concatenation of outcomesCommand, outcomesInput, outcomesUnit and outcomesRun, in that order.
+	t.Run("outcome row missing, extra or out of order", func(t *testing.T) {
+		want := []core.Outcome{
+			"ok",
+			"error",
+			"usage",
+			"red",
+			"incomplete",
+			"param_duplicate",
+			"param_undeclared",
+			"invalid_utf8",
+			"root_unresolved",
+			"not_owned",
+			"root_unsafe",
+			"residue_locked",
+			"footprint_exceeded",
+			"config_invalid",
+			"unit_invalid",
+			"prompt_too_large",
+			"key_missing",
+			"run_id_missing",
+			"unit: required section missing",
+			"unit: body too large",
+			"unit: scope path outside the repository",
+			"unit: verify command would run a shell",
+			"unit: scope holds too many source files",
+			"unit: verify command does not resolve",
+			"the engine's own environment points a git call at another repository",
+			"tracker: no token",
+			"unaudited_commits",
+			"unverified_finding",
+			"ci_not_observed",
+			"push_rejected",
+			"final_answer",
+			"turn_limit",
+			"time_limit",
+			"path_in_git_dir",
+			"path_through_link",
+			"read_too_large",
+		}
+		rows := core.Outcomes()
+		n := len(rows)
+		if len(want) < n {
+			n = len(want)
+		}
+		for i := 0; i < n; i++ {
+			if rows[i].Outcome != want[i] {
+				t.Errorf("Outcomes()[%d] = %q, want %q", i, rows[i].Outcome, want[i])
+			}
+		}
+		if len(rows) != len(want) {
+			t.Errorf("Outcomes() has %d rows, want %d", len(rows), len(want))
+		}
+	})
+
 	t.Run("status word mapped to the wrong exit code", func(t *testing.T) {
 		tests := []struct {
 			name   string
@@ -234,8 +290,8 @@ func TestOutcomesUsed(t *testing.T) {
 
 // outcomesUsedInSource returns every outcome string literal in the non-test Go files under
 // root/internal and root/cmd: Outcome("x") conversions, Outcome: "x" fields, constants of type
-// Outcome, and package-level sentinels var ErrX = errors.New("x"). The body of a function named
-// Outcomes, the table itself, is skipped.
+// Outcome, and package-level sentinels var ErrX = errors.New("x"). The bodies of Outcomes and of
+// the group functions it appends are the table itself, so a row that appears only there is not a use.
 func outcomesUsedInSource(t *testing.T, root string) map[string]bool {
 	t.Helper()
 	used := map[string]bool{}
@@ -305,7 +361,13 @@ func outcomesUsedInSource(t *testing.T, root string) map[string]bool {
 			ast.Inspect(f, func(n ast.Node) bool {
 				switch x := n.(type) {
 				case *ast.FuncDecl:
-					return x.Name.Name != "Outcomes"
+					// Outcomes appends these four groups; their literals are the table, not a producer.
+					name := x.Name.Name
+					if name == "Outcomes" || name == "outcomesCommand" || name == "outcomesInput" ||
+						name == "outcomesUnit" || name == "outcomesRun" {
+						return false
+					}
+					return true
 				case *ast.CallExpr:
 					if isOutcomeIdent(x.Fun) && len(x.Args) == 1 {
 						if s, ok := lit(x.Args[0]); ok {
