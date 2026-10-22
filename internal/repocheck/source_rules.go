@@ -9,6 +9,7 @@ import (
 	"go/token"
 	"path"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -28,6 +29,8 @@ const (
 	ruleFileName         = "file_name"
 	ruleArchSpecific     = "arch_specific"
 	ruleConfigInCode     = "config_in_code"
+	ruleShellScript      = "shell_script"
+	ruleShellCall        = "shell_call"
 )
 
 const (
@@ -39,6 +42,10 @@ const (
 	sourceRulesPath = "internal/repocheck/source_rules.go"
 	// configDefaultIndex is the position of Default in an unkeyed core.ConfigSetting literal.
 	configDefaultIndex = 2
+	// shellScriptAllow keeps .githooks/commit-msg; #269 defers the bridge scripts (K31). Windows git runs a hook that is not a script: $GIT_DIR/hooks/<hookname>.exe is valid (Git RelNotes 2.12.0).
+	shellScriptAllow = ".githooks/commit-msg"
+	// shellNames are the interpreters a shebang or a shell call names (K31).
+	shellNames = "sh bash dash zsh ksh fish"
 )
 
 // Compiled patterns; the only package-level variables besides sentinel errors (SPEC §5.3).
@@ -51,10 +58,11 @@ var (
 	fileNamePattern = regexp.MustCompile(`^[a-z0-9]+(?:_[a-z0-9]+)*\.go$`)
 )
 
-// SourceFile is one Go source file to check; Path is repository-relative and slash-separated.
+// SourceFile is one repository file to check; Path is repository-relative and slash-separated.
 type SourceFile struct {
-	Path string
-	Body []byte
+	Path       string
+	Body       []byte
+	shebangCut bool // Body is a shebang prefix with no LF; the interpreter may sit past it (DR-6)
 }
 
 // SourceRulesConfig names the product and the one file that may hold its name.
@@ -70,8 +78,7 @@ type SourceFinding struct {
 	Line int
 }
 
-// SourceRules checks each file against the source rules and returns every finding; no finding
-// means every file was read, parsed and passed.
+// SourceRules returns every finding; none means each file was read, parsed and passed.
 func SourceRules(cfg SourceRulesConfig, files []SourceFile) []SourceFinding {
 	var found []SourceFinding
 	for _, f := range files {
@@ -89,8 +96,17 @@ type sourceChecker struct {
 	found   []SourceFinding
 }
 
-// checkSource reads, parses and checks one file; unreadable or unparsable source is a finding.
+// checkSource refuses a shell script outside the allow-list, then checks one Go file; unreadable or unparsable source is a finding, and any other tracked file has no Go rule to break (K31).
 func checkSource(cfg SourceRulesConfig, f SourceFile) []SourceFinding {
+	if isShellScript(f) {
+		if f.Path == shellScriptAllow {
+			return nil
+		}
+		return []SourceFinding{{Rule: ruleShellScript, Path: f.Path}}
+	}
+	if !strings.HasSuffix(f.Path, ".go") {
+		return nil
+	}
 	text, err := core.ReadText(f.Body)
 	if err != nil {
 		return []SourceFinding{{Rule: ruleInvalidUTF8, Path: f.Path}}
@@ -108,10 +124,50 @@ func checkSource(cfg SourceRulesConfig, f SourceFile) []SourceFinding {
 	c.checkFileName()
 	c.checkBuildLines(file)
 	c.checkConfigLiterals(file)
+	c.checkShellCalls(file)
 	return c.found
 }
 
-// errorLine returns the line of the first parse error, or 0 when the error has no position.
+// isShellScript reports a shell script by extension or shebang; shebangCut refuses a prefix whose interpreter may sit past shebangHeadBytes (K31, DR-6).
+func isShellScript(f SourceFile) bool {
+	switch strings.ToLower(path.Ext(f.Path)) {
+	case ".sh", ".ps1":
+		return true
+	}
+	line := firstBodyLine(f.Body)
+	return strings.HasPrefix(line, "#!") && (f.shebangCut || namesShell(strings.Fields(line[2:])))
+}
+func firstBodyLine(body []byte) string {
+	line, _, _ := strings.Cut(string(body), "\n")
+	return strings.TrimSuffix(line, "\r")
+}
+
+// namesShell reports whether a shebang names a shell. After env, flags, a bare flag argument and NAME=VALUE are skipped (K31).
+func namesShell(fields []string) bool {
+	env := len(fields) > 0 && strings.TrimSuffix(asciiLower(path.Base(strings.ReplaceAll(fields[0], `\`, "/"))), ".exe") == "env"
+	if env {
+		fields = fields[1:]
+	}
+	for n := envSkip(env, fields); n > 0; n = envSkip(env, fields) {
+		fields = fields[n:]
+	}
+	return len(fields) > 0 && isShellName(fields[0])
+}
+func envSkip(env bool, fields []string) int {
+	if len(fields) == 0 {
+		return 0
+	}
+	if strings.HasPrefix(fields[0], "-") {
+		if env && len(fields) > 1 && !strings.HasPrefix(fields[1], "-") && !strings.Contains(fields[1], "=") && !isShellName(fields[1]) {
+			return 2
+		}
+		return 1
+	}
+	if env && strings.Contains(fields[0], "=") {
+		return 1
+	}
+	return 0
+}
 func errorLine(err error) int {
 	var list scanner.ErrorList
 	if errors.As(err, &list) && len(list) > 0 {
@@ -120,8 +176,7 @@ func errorLine(err error) int {
 	return 0
 }
 
-// importNames maps each import's local name to its path; a dot import is keyed "." + path, so
-// several dot imports never overwrite each other.
+// importNames maps each local name to its path; a dot import's key is "." + path, so none overwrite.
 func importNames(file *ast.File) map[string]string {
 	names := map[string]string{}
 	for _, imp := range file.Imports {
@@ -140,12 +195,9 @@ func importNames(file *ast.File) map[string]string {
 	}
 	return names
 }
-
 func (c *sourceChecker) add(rule string, pos token.Pos) {
 	c.found = append(c.found, SourceFinding{Rule: rule, Path: c.path, Line: c.fset.Position(pos).Line})
 }
-
-// isPkgSel reports whether sel names fn of the imported package pkg.
 func (c *sourceChecker) isPkgSel(sel *ast.SelectorExpr, pkg, fn string) bool {
 	x, ok := sel.X.(*ast.Ident)
 	return ok && sel.Sel.Name == fn && c.imports[x.Name] == pkg
@@ -165,16 +217,11 @@ func literalRules() []literalRule {
 		{ruleVersionLiteral, (*sourceChecker).isTestFile, matchPattern(versionPattern)},
 	}
 }
-
 func matchPattern(re *regexp.Regexp) func(*sourceChecker, string) bool {
 	return func(_ *sourceChecker, value string) bool { return re.MatchString(value) }
 }
-
 func (c *sourceChecker) isProductFile() bool { return c.path == c.cfg.ProductFile }
-
-func (c *sourceChecker) isTestFile() bool { return strings.HasSuffix(c.path, "_test.go") }
-
-// hasProduct reports whether value holds the product name in any ASCII case.
+func (c *sourceChecker) isTestFile() bool    { return strings.HasSuffix(c.path, "_test.go") }
 func (c *sourceChecker) hasProduct(value string) bool {
 	return c.cfg.Product != "" && strings.Contains(asciiLower(value), asciiLower(c.cfg.Product))
 }
@@ -189,15 +236,9 @@ func asciiLower(s string) string {
 	}, s)
 }
 
-// checkLiterals runs the literal rules on every string literal except import paths.
-// Comments are not scanned: Go doc and the module path legitimately carry the product name.
+// checkLiterals checks string literals except import paths; comments may name the product, so they are skipped.
 func (c *sourceChecker) checkLiterals(file *ast.File) {
-	var rules []literalRule
-	for _, r := range literalRules() {
-		if !r.skip(c) {
-			rules = append(rules, r)
-		}
-	}
+	rules := slices.DeleteFunc(literalRules(), func(r literalRule) bool { return r.skip(c) })
 	ast.Inspect(file, func(n ast.Node) bool {
 		switch n := n.(type) {
 		case *ast.ImportSpec:
@@ -208,7 +249,6 @@ func (c *sourceChecker) checkLiterals(file *ast.File) {
 		return true
 	})
 }
-
 func (c *sourceChecker) checkLiteral(lit *ast.BasicLit, rules []literalRule) {
 	if lit.Kind != token.STRING {
 		return
@@ -224,9 +264,7 @@ func (c *sourceChecker) checkLiteral(lit *ast.BasicLit, rules []literalRule) {
 	}
 }
 
-// checkRemovals flags every RemoveAll selector outside removeFile, whatever its receiver, called or
-// taken as a value; with `import . "os"` a bare RemoveAll counts too. Without type information an
-// *os.Root receiver cannot be told apart, so the rule fails closed (DR-11).
+// checkRemovals flags every RemoveAll selector outside removeFile, called or taken as a value, including a bare name under `import . "os"`; without types an *os.Root fails closed (DR-11).
 func (c *sourceChecker) checkRemovals(file *ast.File) {
 	if c.path == removeFile {
 		return
@@ -234,8 +272,7 @@ func (c *sourceChecker) checkRemovals(file *ast.File) {
 	ast.Inspect(file, c.visitRemoval)
 }
 
-// visitRemoval flags n when it is a RemoveAll selector or, under a dot import of os, a bare
-// RemoveAll; the selected name of a selector is never visited as a bare identifier.
+// visitRemoval flags n when it is a RemoveAll selector or, under a dot import of os, a bare RemoveAll; the selected name of a selector is never visited as a bare identifier.
 func (c *sourceChecker) visitRemoval(n ast.Node) bool {
 	switch n := n.(type) {
 	case *ast.SelectorExpr:
@@ -256,15 +293,13 @@ func (c *sourceChecker) visitRemoval(n ast.Node) bool {
 func (c *sourceChecker) checkPackageVars(file *ast.File) {
 	for _, decl := range file.Decls {
 		gd, ok := decl.(*ast.GenDecl)
-		if !ok || gd.Tok != token.VAR {
-			continue
-		}
-		for _, spec := range gd.Specs {
-			c.checkVarSpec(spec.(*ast.ValueSpec))
+		if ok && gd.Tok == token.VAR {
+			for _, spec := range gd.Specs {
+				c.checkVarSpec(spec.(*ast.ValueSpec))
+			}
 		}
 	}
 }
-
 func (c *sourceChecker) checkVarSpec(vs *ast.ValueSpec) {
 	for i, name := range vs.Names {
 		if !c.allowedVar(vs, i) {
@@ -273,25 +308,20 @@ func (c *sourceChecker) checkVarSpec(vs *ast.ValueSpec) {
 	}
 }
 
-// allowedVar reports whether name i of vs is a sentinel error, a compiled pattern or the
-// build-injected `var version string` of the product's own cmd/<product>/main.go.
+// allowedVar reports whether name i of vs is a sentinel, a compiled pattern or `var version string`.
 func (c *sourceChecker) allowedVar(vs *ast.ValueSpec, i int) bool {
 	if len(vs.Values) == 0 {
 		return c.isVersionVar(vs.Names[i], vs.Type)
 	}
 	return len(vs.Values) == len(vs.Names) && c.isAllowedInit(vs.Values[i])
 }
-
 func (c *sourceChecker) isVersionVar(name *ast.Ident, typ ast.Expr) bool {
 	t, ok := typ.(*ast.Ident)
 	return ok && t.Name == "string" && name.Name == "version" && c.path == "cmd/"+c.cfg.Product+"/main.go"
 }
 
 // allowedInits are the calls whose result may be held in a package-level variable.
-func allowedInits() [][2]string {
-	return [][2]string{{"errors", "New"}, {"regexp", "MustCompile"}}
-}
-
+func allowedInits() [][2]string { return [][2]string{{"errors", "New"}, {"regexp", "MustCompile"}} }
 func (c *sourceChecker) isAllowedInit(expr ast.Expr) bool {
 	call, ok := expr.(*ast.CallExpr)
 	if !ok {
@@ -301,10 +331,67 @@ func (c *sourceChecker) isAllowedInit(expr ast.Expr) bool {
 	if !ok {
 		return false
 	}
-	for _, a := range allowedInits() {
-		if c.isPkgSel(sel, a[0], a[1]) {
+	return slices.ContainsFunc(allowedInits(), func(a [2]string) bool { return c.isPkgSel(sel, a[0], a[1]) })
+}
+
+// checkShellCalls flags a shell Command or CommandContext with -c or -lc in its arguments. A non-literal shell argument fails closed; a non-literal program does so only with a literal -c (K31, §5.20).
+func (c *sourceChecker) checkShellCalls(file *ast.File) {
+	ast.Inspect(file, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
 			return true
 		}
+		if args := commandArgs(call, c.imports); len(args) > 0 && shellArgs(args) {
+			c.add(ruleShellCall, call.Pos())
+		}
+		return true
+	})
+}
+func commandArgs(call *ast.CallExpr, imports map[string]string) []ast.Expr {
+	pkg, name := execTarget(call.Fun, imports)
+	shift := slices.Index([]string{"Command", "CommandContext"}, name)
+	if pkg != "os/exec" || shift < 0 || shift >= len(call.Args) {
+		return nil
 	}
-	return false
+	return call.Args[shift:]
+}
+func execTarget(fun ast.Expr, imports map[string]string) (string, string) {
+	switch fun := fun.(type) {
+	case *ast.SelectorExpr:
+		if x, ok := fun.X.(*ast.Ident); ok {
+			return imports[x.Name], fun.Sel.Name
+		}
+	case *ast.Ident:
+		return imports[".os/exec"], fun.Name
+	}
+	return "", ""
+}
+func shellArgs(args []ast.Expr) bool {
+	prog, ok := stringValue(args[0])
+	if ok && !isShellName(prog) {
+		return false
+	}
+	return slices.ContainsFunc(args[1:], func(arg ast.Expr) bool { return shellOpt(arg, ok) })
+}
+func shellOpt(arg ast.Expr, progLit bool) bool {
+	opt, lit := stringValue(arg)
+	return (lit && dashC(opt)) || (!lit && progLit)
+}
+
+// dashC reports a short option cluster that contains c, such as -c or -lc. A flag with a non-letter, such as -test.count, is not one.
+func dashC(flag string) bool {
+	return len(flag) > 1 && flag[0] == '-' && flag[1] != '-' && strings.TrimLeft(flag[1:], "abcdefghijklmnopqrstuvwxyz") == "" && strings.ContainsRune(flag, 'c')
+}
+
+// isShellName reports a shell stem after either slash and a trailing .exe, in ASCII lower case (K31).
+func isShellName(name string) bool {
+	return slices.Contains(strings.Fields(shellNames), strings.TrimSuffix(asciiLower(path.Base(strings.ReplaceAll(name, `\`, "/"))), ".exe"))
+}
+func stringValue(e ast.Expr) (string, bool) {
+	lit, ok := e.(*ast.BasicLit)
+	if !ok || lit.Kind != token.STRING {
+		return "", false
+	}
+	value, err := strconv.Unquote(lit.Value)
+	return value, err == nil
 }

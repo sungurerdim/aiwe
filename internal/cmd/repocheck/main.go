@@ -241,9 +241,10 @@ func runSize(_ context.Context, repo string) ([]repocheck.Finding, error) {
 	return repocheck.Size(files), nil
 }
 
-// runSourceRules checks every Go file of repo against the source rules (DR-17, SPEC §5.6).
+// runSourceRules checks every source file of repo, including a tracked shell script (DR-17, SPEC §5.6, K31).
+// Zero Go files means the Go rules measured nothing. With no other finding that is an error, never green (DR-6).
 func runSourceRules(_ context.Context, repo string) ([]repocheck.Finding, error) {
-	files, err := repocheck.GoFiles(repo)
+	files, err := repocheck.SourceFiles(repo)
 	if err != nil {
 		return nil, err
 	}
@@ -252,7 +253,20 @@ func runSourceRules(_ context.Context, repo string) ([]repocheck.Finding, error)
 	for _, f := range repocheck.SourceRules(cfg, files) {
 		found = append(found, repocheck.Finding(f))
 	}
+	if len(found) == 0 && !hasGoFile(files) {
+		return nil, fmt.Errorf("read go files of %s: no .go file found", repo)
+	}
 	return found, nil
+}
+
+// hasGoFile reports whether files holds a Go file. A non-Go file does not measure the Go rules (DR-6).
+func hasGoFile(files []repocheck.SourceFile) bool {
+	for _, f := range files {
+		if strings.HasSuffix(f.Path, ".go") {
+			return true
+		}
+	}
+	return false
 }
 
 // runBoundaries compares the imports of repo with the module table (DR-17, SPEC §6.1).

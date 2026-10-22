@@ -2,6 +2,7 @@ package repocheck_test
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -40,14 +41,7 @@ func TestSourceRules(t *testing.T) {
 				"package core",
 				`import "os"`,
 				"func removeDir(p string) error { return os.RemoveAll(p) }"),
-			sourceRulesFile("internal/engine/clone.go",
-				"package engine",
-				`import "path/filepath"`,
-				"func dir(home string) string {",
-				"	var n int",
-				"	_ = n",
-				`	return filepath.Join(home, "internal", "core")`,
-				"}"),
+			sourceRulesFile("internal/engine/clone.go", "package engine", `import "path/filepath"`, "func dir(home string) string {", "\tvar n int", "\t_ = n", "\treturn filepath.Join(home, \"internal\", \"core\")", "}"),
 			// The owner may remove recursively through an *os.Root in every form (DR-11).
 			sourceRulesFile("internal/core/remove.go",
 				"package core",
@@ -60,29 +54,13 @@ func TestSourceRules(t *testing.T) {
 				"	if err := rm(name); err != nil { return err }",
 				"	return (*os.Root).RemoveAll(root, name)",
 				"}"),
-			// Root.Remove removes one entry, not a tree, so it is allowed outside the owner; the file is
-			// an *_io.go file because it imports os (SPEC §5.6).
+			// Root.Remove removes one entry, not a tree, so it is allowed outside the owner; *_io.go may import os (SPEC §5.6).
 			sourceRulesFile("internal/engine/sweep_io.go",
 				"package engine",
 				`import "os"`,
 				"func sweep(root *os.Root, name string) error { return root.Remove(name) }"),
 			// The owner keeps every RemoveAll selector, whatever its receiver (DR-11).
-			sourceRulesFile("internal/core/remove.go",
-				"package core",
-				`import "os"`,
-				"type R = os.Root",
-				"type store struct{ *os.Root }",
-				"type remover interface{ RemoveAll(string) error }",
-				"func open(d string) *os.Root { r, _ := os.OpenRoot(d); return r }",
-				"func drop(r0 *os.Root, rs []*os.Root, s store, x remover, a *R, d, n string) error {",
-				"	r2 := r0",
-				"	sub, _ := r0.OpenRoot(d)",
-				"	get := func() *os.Root { return open(d) }",
-				"	_ = r2.RemoveAll(n); _ = sub.RemoveAll(n); _ = open(d).RemoveAll(n); _ = get().RemoveAll(n)",
-				"	for _, r := range rs { _ = r.RemoveAll(n) }",
-				"	_ = rs[0].RemoveAll(n); _ = s.RemoveAll(n); _ = a.RemoveAll(n)",
-				"	return x.RemoveAll(n)",
-				"}"),
+			sourceRulesFile("internal/core/remove.go", "package core", `import "os"`, "type R = os.Root", "type store struct{ *os.Root }", "type remover interface{ RemoveAll(string) error }", "func open(d string) *os.Root { r, _ := os.OpenRoot(d); return r }", "func drop(r0 *os.Root, rs []*os.Root, s store, x remover, a *R, d, n string) error {", "\tr2 := r0", "\tsub, _ := r0.OpenRoot(d)", "\tget := func() *os.Root { return open(d) }", "\t_ = r2.RemoveAll(n); _ = sub.RemoveAll(n); _ = open(d).RemoveAll(n); _ = get().RemoveAll(n)", "\tfor _, r := range rs { _ = r.RemoveAll(n) }", "\t_ = rs[0].RemoveAll(n); _ = s.RemoveAll(n); _ = a.RemoveAll(n)", "\treturn x.RemoveAll(n)", "}"),
 			sourceRulesFile("internal/core/output_test.go",
 				"package core_test",
 				`const wantVersion = "v1.4.2"`),
@@ -98,27 +76,19 @@ func TestSourceRules(t *testing.T) {
 		rule string
 		line int
 	}{
+		{"sh -c through a shell path", sourceRulesFile("internal/engine/checks_io.go", "package engine", `import "os/exec"`, `func check() *exec.Cmd { return exec.Command("/bin/sh", "-c", "make") }`), "shell_call", 3},
+		{"a shell call naming zsh", sourceRulesFile("internal/engine/checks_io.go", "package engine", `import "os/exec"`, `func check() *exec.Cmd { return exec.Command("zsh", "-c", "make") }`), "shell_call", 3},
 		// Each machine path is split so this file passes machine_path itself (DR-17).
-		{"Windows home path with a Turkish user name", sourceRulesFile("internal/engine/cache.go", "package engine",
-			`const cacheDir = "C`+`:\\Users\\Ayşe\\AppData\\Local\\cache"`), "machine_path", 2},
-		{"Linux home path", sourceRulesFile("internal/engine/cache.go", "package engine",
-			`const src = "/ho`+`me/kerem/src"`), "machine_path", 2},
-		{"Linux root home path", sourceRulesFile("internal/engine/cache.go", "package engine",
-			`const src = "/ro`+`ot/src"`), "machine_path", 2},
-		{"macOS home path in a raw string", sourceRulesFile("internal/engine/cache.go", "package engine",
-			"const caches = `/Us"+"ers/mei/Library/Caches`"), "machine_path", 2},
-		{"drive-letter path with forward slashes", sourceRulesFile("internal/engine/cache.go", "package engine",
-			`const repo = "D`+`:/GitHub/project"`), "machine_path", 2},
-		{"product name in a message", sourceRulesFile("internal/engine/run.go", "package engine",
-			`const msg = "zentra: run failed"`), "product_name", 2},
-		{"product name as a path segment", sourceRulesFile("internal/engine/run.go", "package engine",
-			`const state = ".zentra/state"`), "product_name", 2},
+		{"Windows home path with a Turkish user name", sourceRulesFile("internal/engine/cache.go", "package engine", `const cacheDir = "C`+`:\\Users\\Ayşe\\AppData\\Local\\cache"`), "machine_path", 2},
+		{"Linux home path", sourceRulesFile("internal/engine/cache.go", "package engine", `const src = "/ho`+`me/kerem/src"`), "machine_path", 2},
+		{"Linux root home path", sourceRulesFile("internal/engine/cache.go", "package engine", `const src = "/ro`+`ot/src"`), "machine_path", 2},
+		{"macOS home path in a raw string", sourceRulesFile("internal/engine/cache.go", "package engine", "const caches = `/Us"+"ers/mei/Library/Caches`"), "machine_path", 2},
+		{"drive-letter path with forward slashes", sourceRulesFile("internal/engine/cache.go", "package engine", `const repo = "D`+`:/GitHub/project"`), "machine_path", 2},
+		{"product name in a message", sourceRulesFile("internal/engine/run.go", "package engine", `const msg = "zentra: run failed"`), "product_name", 2},
+		{"product name as a path segment", sourceRulesFile("internal/engine/run.go", "package engine", `const state = ".zentra/state"`), "product_name", 2},
 		{"product name in another case", sourceRulesFile("internal/engine/run.go", "package engine",
 			`const title = "Zentra"`), "product_name", 2},
-		{"recursive removal outside core/remove.go",
-			sourceRulesFile("internal/engine/clone.go", "package engine", `import "os"`,
-				"func drop(p string) error { return os.RemoveAll(p) }"),
-			"recursive_removal", 3},
+		{"recursive removal outside core/remove.go", sourceRulesFile("internal/engine/clone.go", "package engine", `import "os"`, "func drop(p string) error { return os.RemoveAll(p) }"), "recursive_removal", 3},
 		{"recursive removal through an import alias",
 			sourceRulesFile("internal/engine/clone.go", "package engine", `import fsys "os"`,
 				"func drop(p string) error { return fsys.RemoveAll(p) }"),
@@ -358,6 +328,26 @@ func TestSourceRules(t *testing.T) {
 		{"configuration default through a dot import of core", sourceRulesFile("internal/engine/workers.go",
 			"package engine", `import . "github.com/example/zentra/internal/core"`,
 			`var workers = ConfigSetting{Name: "workers", Env: "WORKERS", Default: "4"}`), "config_in_code", 3},
+		{"a tracked shell script", sourceRulesFile("scripts/setup.sh", "set -eu", "go build ./..."), "shell_script", 0},
+		{"a tracked PowerShell script", sourceRulesFile("scripts/setup.ps1", "Write-Host setup"), "shell_script", 0},
+		{"a shebang in an extensionless tracked file", sourceRulesFile("tools/pre-commit", "#!/bin/sh", "go test ./..."), "shell_script", 0},
+		{"sh -c in a Go source", sourceRulesFile("internal/engine/checks_io.go", "package engine", `import "os/exec"`, `func check() *exec.Cmd { return exec.Command("sh", "-c", "go test ./...") }`), "shell_call", 3},
+		{"sh.exe -c in a Go source", sourceRulesFile("internal/engine/checks_io.go", "package engine", `import "os/exec"`, `func check() *exec.Cmd { return exec.Command("sh.exe", "-c", "go test ./...") }`), "shell_call", 3},
+		{"sh.exe -c through a backslash path", sourceRulesFile("internal/engine/checks_io.go", "package engine", `import "os/exec"`, `func check() *exec.Cmd { return exec.Command("bin\\sh.exe", "-c", "go test") }`), "shell_call", 3},
+		{"SH.EXE -c in another case", sourceRulesFile("internal/engine/checks_io.go", "package engine", `import "os/exec"`, `func check() *exec.Cmd { return exec.Command("SH.EXE", "-c", "go test") }`), "shell_call", 3},
+		{"a shebang naming sh.exe", sourceRulesFile("tools/pre-commit", "#!/usr/bin/sh.exe", "go test ./..."), "shell_script", 0},
+		{"a shebang naming bash through env", sourceRulesFile("tools/pre-commit", "#!/usr/bin/env bash", "go test ./..."), "shell_script", 0},
+		{"a shebang naming bash through env.exe", sourceRulesFile("tools/pre-commit", "#!/usr/bin/env.exe bash", "go test ./..."), "shell_script", 0},
+		{"a shebang naming bash after an env assignment", sourceRulesFile("tools/pre-commit", "#!/usr/bin/env FOO=bar bash", "go test ./..."), "shell_script", 0},
+		{"a shebang naming bash after an env option argument", sourceRulesFile("tools/pre-commit", "#!/usr/bin/env -u FOO bash", "go test ./..."), "shell_script", 0},
+		{"a shebang naming bash through env -S", sourceRulesFile("tools/pre-commit", "#!/usr/bin/env -S bash -e", "go test ./..."), "shell_script", 0},
+		{"bash -c in a Go source", sourceRulesFile("internal/engine/checks_io.go", "package engine", `import "os/exec"`, `func check() *exec.Cmd { return exec.Command("bash", "-c", "make") }`), "shell_call", 3},
+		{"bash -lc in a Go source", sourceRulesFile("internal/engine/checks_io.go", "package engine", `import "os/exec"`, `func check() *exec.Cmd { return exec.Command("bash", "-lc", "make") }`), "shell_call", 3},
+		{"sh -c through exec.CommandContext", sourceRulesFile("internal/engine/checks_io.go", "package engine", `import "os/exec"`, `func check(ctx context.Context) *exec.Cmd { return exec.CommandContext(ctx, "sh", "-c", "go test") }`), "shell_call", 3},
+		{"bash -c through a dot import without a receiver", sourceRulesFile("internal/engine/checks_io.go", "package engine", `import . "os/exec"`, `func check(ctx context.Context) *exec.Cmd { return CommandContext(ctx, "bash", "-c", "make") }`), "shell_call", 3},
+		{"sh -e -c in a Go source", sourceRulesFile("internal/engine/checks_io.go", "package engine", `import "os/exec"`, `func check() *exec.Cmd { return exec.Command("sh", "-e", "-c", "make") }`), "shell_call", 3},
+		{"sh with a non-literal argument", sourceRulesFile("internal/engine/checks_io.go", "package engine", `import "os/exec"`, `func check(flag string) *exec.Cmd { return exec.Command("sh", flag) }`), "shell_call", 3},
+		{"a non-literal program with -c", sourceRulesFile("internal/engine/checks_io.go", "package engine", `import "os/exec"`, `func check(bin string) *exec.Cmd { return exec.Command(bin, "-c", "make") }`), "shell_call", 3},
 	}
 	for _, tc := range bad {
 		t.Run(tc.name, func(t *testing.T) {
@@ -381,38 +371,16 @@ func TestSourceRulesAllowedForms(t *testing.T) {
 		name string
 		file repocheck.SourceFile
 	}{
-		{"os/exec import in an *_io.go file",
-			sourceRulesFile("internal/engine/route_io.go", "package engine", `import "os/exec"`,
-				`func run() error { return exec.Command("git", "status").Run() }`)},
-		{"net/http import in an *_io.go file",
-			sourceRulesFile("internal/engine/fetch_io.go", "package engine", `import "net/http"`,
-				`func get(u string) (*http.Response, error) { return http.Get(u) }`)},
-		{"os import in the product's cmd main.go",
-			sourceRulesFile("cmd/zentra/main.go", "package main", `import "os"`,
-				"func main() { os.Exit(0) }")},
-		{"os import in the source rules themselves",
-			sourceRulesFile("internal/repocheck/source_rules.go", "package repocheck", `import "os"`,
-				"func stat(p string) error { _, err := os.Lstat(p); return err }")},
-		{"os import in core/env.go (unit 0.3)",
-			sourceRulesFile("internal/core/env.go", "package core", `import "os"`,
-				"func lookup(k string) (string, bool) { return os.LookupEnv(k) }")},
-		{"os import in core/config.go (unit 0.20)",
-			sourceRulesFile("internal/core/config.go", "package core", `import "os"`,
-				"func list(d string) ([]os.DirEntry, error) { return os.ReadDir(d) }")},
-		{"os import in core/sweep.go (unit 0.5)",
-			sourceRulesFile("internal/core/sweep.go", "package core", `import "os"`,
-				"func list(d string) ([]os.DirEntry, error) { return os.ReadDir(d) }")},
-		{"os/exec import in core/process_windows.go, an OS variant of unit 0.6",
-			sourceRulesFile("internal/core/process_windows.go", "//go:build windows", "",
-				"package core", `import "os/exec"`,
-				`func kill() *exec.Cmd { return exec.Command("taskkill") }`)},
-		{"os/exec import in core/git.go (unit 0.18)",
-			sourceRulesFile("internal/core/git.go", "package core", `import "os/exec"`,
-				`func git() *exec.Cmd { return exec.Command("git") }`)},
-		{"os import in core/realpath_unix.go (unit 0.21)",
-			sourceRulesFile("internal/core/realpath_unix.go", "//go:build unix", "",
-				"package core", `import "os"`,
-				"func real(p string) (string, error) { return os.Readlink(p) }")},
+		{"os/exec import in an *_io.go file", sourceRulesFile("internal/engine/route_io.go", "package engine", `import "os/exec"`, `func run() error { return exec.Command("git", "status").Run() }`)},
+		{"net/http import in an *_io.go file", sourceRulesFile("internal/engine/fetch_io.go", "package engine", `import "net/http"`, `func get(u string) (*http.Response, error) { return http.Get(u) }`)},
+		{"os import in the product's cmd main.go", sourceRulesFile("cmd/zentra/main.go", "package main", `import "os"`, "func main() { os.Exit(0) }")},
+		{"os import in the source rules themselves", sourceRulesFile("internal/repocheck/source_rules.go", "package repocheck", `import "os"`, "func stat(p string) error { _, err := os.Lstat(p); return err }")},
+		{"os import in core/env.go (unit 0.3)", sourceRulesFile("internal/core/env.go", "package core", `import "os"`, "func lookup(k string) (string, bool) { return os.LookupEnv(k) }")},
+		{"os import in core/config.go (unit 0.20)", sourceRulesFile("internal/core/config.go", "package core", `import "os"`, "func list(d string) ([]os.DirEntry, error) { return os.ReadDir(d) }")},
+		{"os import in core/sweep.go (unit 0.5)", sourceRulesFile("internal/core/sweep.go", "package core", `import "os"`, "func list(d string) ([]os.DirEntry, error) { return os.ReadDir(d) }")},
+		{"os/exec import in core/process_windows.go, an OS variant of unit 0.6", sourceRulesFile("internal/core/process_windows.go", "//go:build windows", "", "package core", `import "os/exec"`, `func kill() *exec.Cmd { return exec.Command("taskkill") }`)},
+		{"os/exec import in core/git.go (unit 0.18)", sourceRulesFile("internal/core/git.go", "package core", `import "os/exec"`, `func git() *exec.Cmd { return exec.Command("git") }`)},
+		{"os import in core/realpath_unix.go (unit 0.21)", sourceRulesFile("internal/core/realpath_unix.go", "//go:build unix", "", "package core", `import "os"`, "func real(p string) (string, error) { return os.Readlink(p) }")},
 		{"os/exec import in an adapter",
 			sourceRulesFile("internal/adapters/cli.go", "package adapters", `import "os/exec"`,
 				`func harness() *exec.Cmd { return exec.Command("opencode") }`)},
@@ -451,11 +419,21 @@ func TestSourceRulesAllowedForms(t *testing.T) {
 				"func settings() []core.ConfigSetting {",
 				`	return []core.ConfigSetting{{Name: "logLevel", Env: "LOG_LEVEL", Default: "info"}}`,
 				"}")},
+		{"the allow-listed commit-msg hook", sourceRulesFile(".githooks/commit-msg", "#!/bin/sh", "exec go run ./internal/cmd/repocheck commit-msg --repo .")},
+		{"a shebang naming python after an env assignment", sourceRulesFile("tools/run", "#!/usr/bin/env FOO=bar python", "print(1)")},
+		{"a shebang naming python after an env option argument", sourceRulesFile("tools/run", "#!/usr/bin/env -u FOO python", "print(1)")},
+		{"os/exec without a shell", sourceRulesFile("internal/engine/checks_io.go", "package engine", `import "os/exec"`, `func run() *exec.Cmd { return exec.Command("git", "status") }`)},
+		{"git -c is not a shell call", sourceRulesFile("internal/engine/checks_io.go", "package engine", `import "os/exec"`, `func run() *exec.Cmd { return exec.Command("git", "-c", "core.pager=cat", "status") }`)},
+		{"bash without -c is not a shell call", sourceRulesFile("internal/engine/checks_io.go", "package engine", `import "os/exec"`, `func run() *exec.Cmd { return exec.Command("bash", "--version") }`)},
+		{"sh without -c is not a shell call", sourceRulesFile("internal/engine/checks_io.go", "package engine", `import "os/exec"`, `func run() *exec.Cmd { return exec.Command("sh", "-e", "script") }`)},
+		{"a non-literal program without -c", sourceRulesFile("internal/engine/checks_io.go", "package engine", `import "os/exec"`, `func run(ctx context.Context, bin string, args ...string) *exec.Cmd { return exec.CommandContext(ctx, bin, args...) }`)},
+		{"a re-exec with -test.count is not a shell call", sourceRulesFile("internal/core/owner_key_windows_test.go", "package core", `import ("os"; "os/exec")`, `func reexec(ctx context.Context) *exec.Cmd { return exec.CommandContext(ctx, os.Args[0], "-test.count=1") }`)},
+		{"git with non-literal arguments", sourceRulesFile("internal/engine/checks_io.go", "package engine", `import "os/exec"`, `func check(args ...string) *exec.Cmd { return exec.Command("git", args...) }`)},
+		{"a tracked file that is not a script", sourceRulesFile("docs/SPEC.md", "# the spec")},
 	}
 	for _, tc := range allowed {
 		t.Run(tc.name, func(t *testing.T) {
-			// Guards against a rule so broad that an allowed form (SPEC §5.6, §5.12, §6.2) turns
-			// repo/source-rules red.
+			// Guards against a rule so broad that an allowed form (SPEC §5.6, §5.12, §6.2) turns red.
 			if got := repocheck.SourceRules(cfg, []repocheck.SourceFile{tc.file}); len(got) != 0 {
 				t.Fatalf("SourceRules(%s) = %+v, want no finding", tc.file.Path, got)
 			}
@@ -463,8 +441,7 @@ func TestSourceRulesAllowedForms(t *testing.T) {
 	}
 }
 
-// TestSourceRulesOwnTestFile guards against a fixture in this file that holds a machine path, which
-// turns repo/source-rules red on this repository's own tree (DR-17).
+// TestSourceRulesOwnTestFile guards against a fixture that holds a machine path (DR-17).
 func TestSourceRulesOwnTestFile(t *testing.T) {
 	cfg := repocheck.SourceRulesConfig{Product: "zentra", ProductFile: "internal/core/product.go"}
 	body, err := os.ReadFile("source_rules_test.go")
@@ -480,7 +457,42 @@ func TestSourceRulesOwnTestFile(t *testing.T) {
 		}
 	}
 	if len(bad) != 0 {
-		t.Fatalf("SourceRules(%s) = %+v, want no machine_path, parse_error or invalid_utf8 finding",
-			file.Path, bad)
+		t.Fatalf("SourceRules(%s) = %+v, want no machine_path, parse_error or invalid_utf8 finding", file.Path, bad)
+	}
+}
+
+// TestSourceRulesSeesTrackedScript catches a tracked script the walk drops, including testdata, vendor, and a shebang whose name sits past 4096 bytes (K31, DR-6).
+func TestSourceRulesSeesTrackedScript(t *testing.T) {
+	repo := t.TempDir()
+	tree := map[string]string{"main.go": "package main\n", "scripts/setup.sh": "set -eu\n", "scripts/setup.ps1": "Write-Host x\n", "tools/pre-commit": "#!/bin/sh\n", ".githooks/commit-msg": "#!/bin/sh\n", ".githooks/extra": "#!/bin/sh\n", ".git/hooks/pre-commit": "#!/bin/sh\n", "docs/SPEC.md": "# spec\n", "internal/pkg/testdata/setup.sh": "set -eu\n", "vendor/setup.sh": "set -eu\n", "tools/past": "#!" + strings.Repeat("x", 4096) + "/bin/sh\n" + strings.Repeat("z", 4<<20)}
+	tree["tools/huge"] = "#!/bin/sh\n" + strings.Repeat("x", 4<<20)
+	tree["docs/big.md"] = "# title\n" + strings.Repeat("y", 4<<20)
+	for rel, body := range tree {
+		p := filepath.Join(repo, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	files, err := repocheck.SourceFiles(repo)
+	if err != nil {
+		t.Fatalf("SourceFiles: %v", err)
+	}
+	got := map[string]bool{}
+	for _, f := range repocheck.SourceRules(repocheck.SourceRulesConfig{Product: "zentra", ProductFile: "internal/core/product.go"}, files) {
+		if f.Rule == "shell_script" {
+			got[f.Path] = true
+		}
+	}
+	want := map[string]bool{"scripts/setup.sh": true, "scripts/setup.ps1": true, "tools/pre-commit": true, ".githooks/extra": true, "tools/huge": true, "internal/pkg/testdata/setup.sh": true, "vendor/setup.sh": true, "tools/past": true}
+	for p := range want {
+		if !got[p] {
+			t.Fatalf("SourceRules(SourceFiles) = %v, missing %s", got, p)
+		}
+	}
+	if len(got) != len(want) {
+		t.Fatalf("SourceRules(SourceFiles) = %v, want %v", got, want)
 	}
 }
