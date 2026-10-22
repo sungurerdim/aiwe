@@ -72,9 +72,12 @@ func loopTestLoop(endpoint string, client *http.Client, log *slog.Logger, maxTur
 	})
 }
 
-// loopTestRequest returns one run of the fixture role with the clone root and the tools it allows.
-func loopTestRequest(root string, perms ToolPermissions) RunRequest {
-	return RunRequest{RunID: chatRunID, Role: chatRole, Task: chatTask, Tools: perms, Root: root}
+// loopTestRequest returns one run of the fixture role with the clone root, the tools it allows and
+// an environment that can find a program without the parent's home, profile or repository pointers.
+// A nil environment would bind an empty child, so a shell call could not run (SPEC §6.5, DR-10).
+func loopTestRequest(t *testing.T, root string, perms ToolPermissions) RunRequest {
+	t.Helper()
+	return RunRequest{RunID: chatRunID, Role: chatRole, Task: chatTask, Tools: perms, Root: root, Env: commandEnv(t)}
 }
 
 // scriptedAnswers answers the chat path with the replies in order; a turn past the script is refused,
@@ -190,7 +193,7 @@ func TestLoopRunsARoleThroughToolsToAFinalAnswer(t *testing.T) {
 	))
 	endpoint := newGoFixture(f, ProcessEnv(), log).Endpoints().Chat
 	loop := loopTestLoop(endpoint, f.srv.Client(), log, 10, time.Minute)
-	res, err := loop.Run(context.Background(), loopTestRequest(root, allTools()))
+	res, err := loop.Run(context.Background(), loopTestRequest(t, root, allTools()))
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -243,7 +246,7 @@ func TestLoopKeepsTheStablePrefixAcrossTurns(t *testing.T) {
 	))
 	endpoint := newGoFixture(f, ProcessEnv(), log).Endpoints().Chat
 	loop := loopTestLoop(endpoint, f.srv.Client(), log, 5, time.Minute)
-	if _, err := loop.Run(context.Background(), loopTestRequest(root, ToolPermissions{Read: true})); err != nil {
+	if _, err := loop.Run(context.Background(), loopTestRequest(t, root, ToolPermissions{Read: true})); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	turns := loopTurns(t, f)
@@ -288,7 +291,7 @@ func TestLoopRecordsEveryTurnsUsage(t *testing.T) {
 	))
 	endpoint := newGoFixture(f, ProcessEnv(), log).Endpoints().Chat
 	loop := loopTestLoop(endpoint, f.srv.Client(), log, 5, time.Minute)
-	res, err := loop.Run(context.Background(), loopTestRequest(root, ToolPermissions{Read: true}))
+	res, err := loop.Run(context.Background(), loopTestRequest(t, root, ToolPermissions{Read: true}))
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -314,7 +317,7 @@ func TestLoopEndsOnTheTurnLimit(t *testing.T) {
 		assistantToolCall("call", ToolList, `{"path":"."}`), usageFull)))
 	endpoint := newGoFixture(f, ProcessEnv(), log).Endpoints().Chat
 	loop := loopTestLoop(endpoint, f.srv.Client(), log, 2, time.Minute)
-	res, err := loop.Run(context.Background(), loopTestRequest(root, ToolPermissions{List: true}))
+	res, err := loop.Run(context.Background(), loopTestRequest(t, root, ToolPermissions{List: true}))
 	if err != nil {
 		t.Fatalf("Run: %v; a turn limit is a named outcome, not an error (SPEC §10.2)", err)
 	}
@@ -352,7 +355,7 @@ func TestLoopEndsOnTheTimeLimit(t *testing.T) {
 	t.Cleanup(srv.Close)
 	t.Cleanup(func() { close(stopped) })
 	loop := loopTestLoop(srv.URL+openCodeChatPath, srv.Client(), log, 10, 60*time.Millisecond)
-	res, err := loop.Run(context.Background(), loopTestRequest(t.TempDir(), ToolPermissions{Read: true}))
+	res, err := loop.Run(context.Background(), loopTestRequest(t, t.TempDir(), ToolPermissions{Read: true}))
 	if err != nil {
 		t.Fatalf("Run: %v; a time limit is a named outcome, not an error (SPEC §10.2)", err)
 	}
@@ -382,7 +385,7 @@ func TestLoopPassesTheReasoningEffort(t *testing.T) {
 			f.serve(openCodeChatPath, answerJSON(replyTurn(DefaultModel, assistantText("done"), usageFull)))
 			endpoint := newGoFixture(f, ProcessEnv(), log).Endpoints().Chat
 			loop := loopTestLoop(endpoint, f.srv.Client(), log, 2, time.Minute)
-			req := loopTestRequest(t.TempDir(), ToolPermissions{})
+			req := loopTestRequest(t, t.TempDir(), ToolPermissions{})
 			req.Effort = tc.effort
 			if _, err := loop.Run(context.Background(), req); err != nil {
 				t.Fatalf("Run: %v", err)
@@ -420,7 +423,7 @@ func TestLoopRefusesAPathOutsideTheClone(t *testing.T) {
 	))
 	endpoint := newGoFixture(f, ProcessEnv(), log).Endpoints().Chat
 	loop := loopTestLoop(endpoint, f.srv.Client(), log, 5, time.Minute)
-	res, err := loop.Run(context.Background(), loopTestRequest(root, ToolPermissions{Read: true}))
+	res, err := loop.Run(context.Background(), loopTestRequest(t, root, ToolPermissions{Read: true}))
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -467,7 +470,7 @@ func TestLoopRefusesAReplyThatAnsweredNothing(t *testing.T) {
 			f.serve(openCodeChatPath, answerJSON(tc.reply))
 			endpoint := newGoFixture(f, ProcessEnv(), log).Endpoints().Chat
 			loop := loopTestLoop(endpoint, f.srv.Client(), log, 5, time.Minute)
-			res, err := loop.Run(context.Background(), loopTestRequest(t.TempDir(), ToolPermissions{}))
+			res, err := loop.Run(context.Background(), loopTestRequest(t, t.TempDir(), ToolPermissions{}))
 			if err == nil {
 				t.Fatalf("Run ended with outcome %q and no error, want a refusal: %s is not an answer (SPEC §10.2, §7.4)",
 					res.Data.Outcome, tc.name)

@@ -17,6 +17,23 @@ func allTools() ToolPermissions {
 	return ToolPermissions{Read: true, Write: true, Edit: true, List: true, Shell: true}
 }
 
+// commandEnv returns the environment a shell call needs to find a program: PATH, and on Windows
+// the extension list and the system root. It leaves out the home, the profile and every repository
+// pointer, so a direct tool call can run a command without inheriting the parent (SPEC §6.5, DR-10).
+func commandEnv(t *testing.T) []string {
+	t.Helper()
+	if os.Getenv("PATH") == "" {
+		t.Fatal("the test process has no PATH, so a shell command cannot be found")
+	}
+	var env []string
+	for _, name := range []string{"PATH", "PATHEXT", "SYSTEMROOT"} {
+		if value := os.Getenv(name); value != "" {
+			env = append(env, name+"="+value)
+		}
+	}
+	return env
+}
+
 // cloneFixture returns a clone whose tools are framed by a base directory: the clone holds one
 // file inside it and the base holds one file outside it, so a test proves a tool stays inside the
 // clone (SPEC §10.2, O2).
@@ -65,6 +82,7 @@ func TestToolsRunInsideTheClone(t *testing.T) {
 	if err != nil || !strings.Contains(got, "note.txt") {
 		t.Errorf("list of the clone = %q, %v, want the entries of the clone (SPEC §10.2)", got, err)
 	}
+	tools.bindRunEnv(commandEnv(t))
 	got, err = tools.Do(ctx, ToolShell, map[string]any{"command": "git --version"})
 	if err != nil || strings.TrimSpace(got) == "" {
 		t.Errorf("shell in the clone = %q, %v, want the output of the command (SPEC §10.2)", got, err)

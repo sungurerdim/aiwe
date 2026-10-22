@@ -47,8 +47,10 @@ type ToolPermissions struct {
 }
 
 // RunRequest is the one request vocabulary of every provider: the run id, the role and task, the
-// model, the tool permissions, the clone the tools stay inside and the reasoning effort of the
-// candidate (SPEC §10.2, DR-15).
+// model, the tool permissions, the clone the tools stay inside, the run environment the shell tool
+// hands its child and the reasoning effort of the candidate (SPEC §10.2, DR-10, DR-15). Env is the
+// environment the engine builds for the run. The shell child gets only that copy, never the parent
+// process, so a command of the clone cannot see the parent's repository pointers or profile.
 type RunRequest struct {
 	RunID  string
 	Role   string
@@ -56,6 +58,7 @@ type RunRequest struct {
 	Model  string
 	Tools  ToolPermissions
 	Root   string
+	Env    []string
 	Effort string
 }
 

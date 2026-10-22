@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/sungurerdim/aiwe/internal/adapters"
 	"github.com/sungurerdim/aiwe/internal/core"
 )
 
@@ -89,6 +90,13 @@ func NewClone(ctx context.Context, owner *core.Owner, spec CloneSpec) (*Clone, e
 		return nil, errors.Join(err, clone.remove(ctx, owner))
 	}
 	return clone, nil
+}
+
+// BindRequest copies the run environment onto req. The shell tool of the run gets only that
+// copy, so a command of the clone never sees the parent's repository pointers or profile
+// (SPEC §6.5, DR-10).
+func (c *Clone) BindRequest(req *adapters.RunRequest) {
+	req.Env = append([]string{}, c.Env...)
 }
 
 // make clones the canonical repository into the run's own directory, fetches the base commit and

@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/sungurerdim/aiwe/internal/core"
 )
@@ -273,9 +274,11 @@ func (t *Tools) list(path string) (string, error) {
 
 // shell runs one command with the clone as its working directory and returns its combined output.
 // The command goes through no shell, so a metacharacter is an argument, never a second command
-// (SPEC §5.20), and it runs in the run environment — the parent environment minus its secret-shaped
-// variables (SPEC §6.5), so the provider key and the tracker token never reach a command of the
-// clone. What a command of the clone may reach besides that is the sandbox level of the clone, the
+// (SPEC §5.20). A run hands the child only the environment the request carried, so the parent's
+// repository pointers and profile never reach a command of the clone (SPEC §6.5, DR-10). Output
+// over the read cap is refused, never cut, and the refusal names the cap; under the cap the output
+// is the text of the result, so the child's own line ends read the same on every OS (SPEC §10.2,
+// DR-3). What a command of the clone may reach besides that is the sandbox level of the clone, the
 // one open risk of the skeleton (SPEC §6.7, §10.2, O2).
 func (t *Tools) shell(ctx context.Context, command string) (string, error) {
 	dir, err := t.dir()
@@ -286,14 +289,89 @@ func (t *Tools) shell(ctx context.Context, command string) (string, error) {
 	if len(argv) == 0 {
 		return "", errors.New("shell: the call names no command")
 	}
-	out := &bytes.Buffer{}
-	spec := core.ChildSpec{Argv: argv, Dir: dir, Env: core.CleanEnv(core.Environ(), nil), Stdout: out, Stderr: out}
+	out := &cappedOutput{limit: maxToolReadBytes}
+	spec := core.ChildSpec{Argv: argv, Dir: dir, Env: t.shellEnv(), Stdout: out, Stderr: out}
 	child, err := core.Start(ctx, spec)
 	if err != nil {
 		return "", fmt.Errorf("shell: %w", err)
 	}
-	if err := child.Wait(); err != nil {
-		return out.String(), fmt.Errorf("shell: %s: %w", argv[0], err)
+	waitErr := child.Wait()
+	if out.overCap() {
+		return "", fmt.Errorf("shell: %w: the output is over the cap of %d bytes", ErrReadTooLarge, maxToolReadBytes)
 	}
-	return out.String(), nil
+	text := toolText(out.String())
+	if waitErr != nil {
+		return text, fmt.Errorf("shell: %s: %w", argv[0], waitErr)
+	}
+	return text, nil
+}
+
+// shellEnv returns the environment of one shell child. A run that bound an environment gets only
+// that copy, including when it is empty. A tools value no run bound gets an empty environment
+// too: a nil environment would inherit the parent process, and the parent's repository pointers
+// and profile must never reach a command (SPEC §6.5, DR-10).
+func (t *Tools) shellEnv() []string {
+	if t.envSet {
+		return t.env
+	}
+	return []string{}
+}
+
+// cappedOutput stores at most limit+1 bytes of a command's output. Anything past that is discarded
+// and over is set, so the shell tool refuses the output whole instead of returning a cut prefix
+// (SPEC §10.2). Stdout and stderr share one writer and the process launcher copies them in two
+// goroutines, so the lock keeps the two apart.
+type cappedOutput struct {
+	mu    sync.Mutex
+	buf   bytes.Buffer
+	limit int
+	over  bool
+}
+
+// Write stores p up to one byte past the limit, which is enough to know the output went over. It
+// reports a full write even where it discards bytes, so the command is not stopped by a short write
+// and its exit status stays its own.
+func (b *cappedOutput) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.over {
+		return len(p), nil
+	}
+	room := b.limit + 1 - b.buf.Len()
+	if room < 0 {
+		room = 0
+	}
+	if room > len(p) {
+		room = len(p)
+	}
+	if room > 0 {
+		_, _ = b.buf.Write(p[:room])
+	}
+	if b.buf.Len() > b.limit {
+		b.over = true
+	}
+	return len(p), nil
+}
+
+// overCap reports whether the command wrote more than the limit.
+func (b *cappedOutput) overCap() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.over
+}
+
+// String returns the bytes stored under the limit; it is read once the child has ended.
+func (b *cappedOutput) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// toolText returns a command's output as the text of a tool result: a line the child ended with
+// "\r\n" reads as one ended with "\n". A Windows child ends every line that way, so folding it
+// keeps the result of one command the same whatever OS ran it (DR-3, SPEC §10.2). The cap is
+// decided on the child's own bytes, so folding never hides output; no consumer of a tool result
+// needs the carriage return.
+func toolText(out string) string {
+	return strings.ReplaceAll(out, "\r\n", "\n")
 }

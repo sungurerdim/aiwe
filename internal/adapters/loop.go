@@ -138,13 +138,18 @@ type loopRun struct {
 }
 
 // newLoopRun returns the run of req: the role prompt and the task come first and the tool
-// definitions follow once, so the stable prefix never changes within the run (SPEC §10.2).
+// definitions follow once, so the stable prefix never changes within the run (SPEC §10.2). The
+// shell child is bound to the environment the request carries before any turn, including when that
+// environment is empty, so a command of the clone never inherits the parent process (SPEC §6.5,
+// DR-10).
 func newLoopRun(prices PriceTable, req RunRequest, key Secret) *loopRun {
+	tools := NewTools(req.Root, req.Tools)
+	tools.bindRunEnv(req.Env)
 	return &loopRun{
 		prices: prices,
 		req:    req,
 		key:    key,
-		tools:  NewTools(req.Root, req.Tools),
+		tools:  tools,
 		messages: []wireMessage{
 			{Role: roleSystem, Content: rolePrompt(req.Role)},
 			{Role: roleUser, Content: req.Task},

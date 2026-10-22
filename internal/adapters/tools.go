@@ -31,22 +31,34 @@ var (
 	// ErrPathLink refuses a path through a link the clone holds, which may point at the git
 	// directory without naming it.
 	ErrPathLink = errors.New("path_through_link")
-	// ErrReadTooLarge refuses a read of a file over maxToolReadBytes.
+	// ErrReadTooLarge refuses a tool result over maxToolReadBytes: a read of a larger file, and a
+	// shell command whose output is larger (SPEC §10.2).
 	ErrReadTooLarge = errors.New("read_too_large")
 )
 
 // Tools runs the tool calls of one run confined to its clone: the decisions live here and every
 // body that touches the clone lives in loop_io.go, so a call reaches the clone through its
-// file-system root only (SPEC §5.6, §10.2, O2).
+// file-system root only (SPEC §5.6, §10.2, O2). env is the environment a bound run hands the shell
+// child; envSet reports that a run bound it, so an empty environment stays empty and the child
+// never inherits the parent process (SPEC §6.5, DR-10).
 type Tools struct {
-	root  string
-	perms ToolPermissions
+	root   string
+	perms  ToolPermissions
+	env    []string
+	envSet bool
 }
 
 // NewTools returns the tools of a run confined to root and offering only the tools perms allows
 // (SPEC §10.2, O2).
 func NewTools(root string, perms ToolPermissions) *Tools {
 	return &Tools{root: root, perms: perms}
+}
+
+// bindRunEnv records the environment the shell tool of this run hands its child. The child gets a
+// copy of env and nothing of the parent process, including when env is empty (SPEC §6.5, DR-10).
+func (t *Tools) bindRunEnv(env []string) {
+	t.envSet = true
+	t.env = append([]string{}, env...)
 }
 
 // Do runs one tool call and returns its output. A tool the run does not allow, a path outside the

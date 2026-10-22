@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sungurerdim/aiwe/internal/adapters"
 	"github.com/sungurerdim/aiwe/internal/core"
 )
 
@@ -269,16 +270,14 @@ func TestRunClone(t *testing.T) {
 	})
 }
 
-// TestRunCloneEnv guards DR-10 and SPEC §6.5: the run gets a secret-free environment with its home,
-// its profile and its temp variables inside the run's own scratch directory. It catches a run that
-// hands the agent a parent credential or lets it write into the user's home or profile.
+// TestRunCloneEnv guards DR-10 and SPEC §6.5: the run environment is secret-free, its home, profile
+// and temp sit in the run scratch, and BindRequest copies that environment onto the run request.
 func TestRunCloneEnv(t *testing.T) {
 	leaked := []string{"GITHUB_TOKEN", "OPENAI_API_KEY", "CI_TEST_PASSWORD", "AWS_SECRET_ACCESS_KEY"}
 	for _, name := range leaked {
 		t.Setenv(name, "leaked-value")
 	}
-	// The parent's own home and profile: a runtime of the run that reads one of them would write
-	// into the user's tree. The run must see its own scratch in every one of them.
+	// The parent's home and profile: the run must see its own scratch, not these.
 	userHome := t.TempDir()
 	for _, name := range []string{"HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA"} {
 		t.Setenv(name, userHome)
@@ -292,8 +291,12 @@ func TestRunCloneEnv(t *testing.T) {
 		t.Fatalf("NewClone: %v", err)
 	}
 
-	// Catches a credential of the parent that reaches the run.
-	for _, kv := range clone.Env {
+	req := adapters.RunRequest{RunID: engineTestRunID, Role: "engineer", Task: "keep the profile inside the run scratch"}
+	clone.BindRequest(&req)
+	if strings.Join(req.Env, "\n") != strings.Join(clone.Env, "\n") {
+		t.Fatalf("the request environment differs from the run environment the clone built")
+	}
+	for _, kv := range req.Env {
 		name, value, ok := strings.Cut(kv, "=")
 		if !ok {
 			continue
@@ -304,8 +307,7 @@ func TestRunCloneEnv(t *testing.T) {
 				t.Errorf("the run environment holds the credential-shaped %s=%s", name, value)
 			}
 		}
-		// The engine's own git settings name a key: GIT_CONFIG_KEY_0 clears the credential helper
-		// (SPEC §6.5), so only those names may hold KEY.
+		// GIT_CONFIG_KEY_* names the cleared credential helper, so only those may hold KEY (SPEC §6.5).
 		if strings.Contains(upper, "KEY") && !strings.HasPrefix(upper, "GIT_CONFIG_") {
 			t.Errorf("the run environment holds the credential-shaped %s=%s", name, value)
 		}
@@ -314,10 +316,9 @@ func TestRunCloneEnv(t *testing.T) {
 		}
 	}
 
-	// Catches a run environment whose home, profile or temp is the user's own: on Windows USERPROFILE
-	// and the app-data directories point a runtime at the user's profile, not HOME.
+	// Home, profile and temp must sit in the run scratch, including USERPROFILE and the app-data directories.
 	for _, name := range scratchEnvNames() {
-		value := engineTestEnvValue(clone.Env, name)
+		value := engineTestEnvValue(req.Env, name)
 		if value == "" {
 			t.Errorf("the run environment does not set %s", name)
 			continue
@@ -334,29 +335,28 @@ func TestRunCloneEnv(t *testing.T) {
 	}
 }
 
-// TestRunCloneScrubsRepoPointers guards DR-10 and the done criterion of [sk-07], a run never
-// touches the owner's tree: a parent variable that would point the run's git at another repository
-// never reaches the run. It catches a run whose git works in the owner's checkout through an
-// inherited GIT_DIR or GIT_WORK_TREE, or writes the owner's index through GIT_INDEX_FILE.
+// TestRunCloneScrubsRepoPointers guards DR-10: a parent GIT_DIR, GIT_WORK_TREE or GIT_INDEX_FILE
+// never reaches the request environment, so the run's git cannot touch another repository.
 func TestRunCloneScrubsRepoPointers(t *testing.T) {
 	pointers := repoEnvNames()
 	base := t.TempDir()
 	for _, name := range pointers {
 		t.Setenv(name, filepath.Join(base, strings.ToLower(name)))
 	}
-	// The fixture is armed: the parent of the run holds every pointer, with a value that carries no
-	// secret marker, so only the repository scrub can keep it out of the run.
+	// The fixture is armed: the parent holds every pointer, with a value that carries no secret marker.
 	for _, name := range pointers {
 		if engineTestEnvValue(core.Environ(), name) == "" {
 			t.Fatalf("fixture not armed: the parent environment holds no %s", name)
 		}
 	}
 
-	// The environment NewClone builds for the run out of the parent its process runs in.
-	env := runEnv(t.TempDir())
+	// The environment NewClone builds is what BindRequest copies onto the run request.
+	clone := &Clone{Env: runEnv(t.TempDir())}
+	req := adapters.RunRequest{RunID: engineTestRunID, Role: "engineer", Task: "leave the outside repository unchanged"}
+	clone.BindRequest(&req)
 	for _, name := range pointers {
-		if entry, ok := engineTestEnvEntry(env, name); ok {
-			t.Errorf("the run environment passes the parent's %s to the run", entry)
+		if entry, ok := engineTestEnvEntry(req.Env, name); ok {
+			t.Errorf("the request environment passes the parent's %s to the run", entry)
 		}
 	}
 }
