@@ -85,6 +85,10 @@ func Outcomes() []OutcomeRow {
 		{Outcome: "path_in_git_dir", Status: StatusError, Next: "change files of the work tree only: the git directory of the clone is the engine's"},
 		{Outcome: "path_through_link", Status: StatusError, Next: "name the file by its own path in the clone, never through a link"},
 		{Outcome: "read_too_large", Status: StatusError, Next: "read a file below the cap the detail names, or split the file or the task"},
+		{Outcome: "reproduction refused: the clone belongs to the run of the review", Status: StatusError,
+			Next: "reproduce the finding in the engine's own run clone of the tip"},
+		{Outcome: "reproduction refused: the clone holds another commit than the finding's tip", Status: StatusError,
+			Next: "reproduce the finding in a scratch clone of the tip the finding names"},
 	}
 }
 
