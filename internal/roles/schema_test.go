@@ -102,7 +102,7 @@ func skeletonCards() []skeletonCard {
 		},
 		{
 			id: "test-author", tier: "base", purpose: "before code",
-			method: []string{"Done criteria", "production entry point", "missing behaviour", "fixture error"},
+			method: []string{"done entries", "production entry point", "missing behaviour", "fixture error"},
 			limits: []string{"production code", "skipped", "focused", "empty test"},
 			gates:  []string{"D1", "D10", "D11"},
 		},
