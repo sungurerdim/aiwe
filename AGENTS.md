@@ -44,8 +44,7 @@ Every fact has one owner below. Link to it; copy nothing.
 | Bridge: open a unit clone | `aiwe-wt/start.sh <issue> <slug>` (a bridge unit is cloned by hand until #422); never a git worktree (SPEC §6.5) |
 | Bridge: issue writer for this repository | `aiwe-wt/issue.py`; the global `issue.py` conflicts with SPEC §8.4 |
 | Bridge: batch of finished units, parked clones | clone `aiwe-wt/batch`; `aiwe-wt-parked/` |
-| Machine and user rules, Windows and Git Bash traps (tr) | `~/.claude/CLAUDE.md` |
-| General engineering rules (en) | `~/.claude/rules/dev-rules.md`; lead-only part `~/.claude/dev-rules-lead.md` |
+| General engineering rules, user and machine notes (en) | `~/.agents/AGENTS.md`; this file wins where they differ (section 3, "Global rules this project replaces"); lead-only part `~/.claude/dev-rules-lead.md` |
 | Extra guardrails for hosts weaker than Claude Code | `~/.claude/dev-rules-references/portable-supplement.md`, `safety.md`, `operations.md` |
 | Role cards | `~/.claude/agents/*.md`; the bridge reads its own copy in `aiwe-wt/roles/` |
 | Lead tools: load measurement, narrow test, issue writer | `~/.claude/araclar/` |
@@ -80,6 +79,17 @@ before a unit is done.
 - Source, docs and commit messages are in English (DR-18); commit messages follow SPEC §12.3. A breaking marker needs
   the owner's approval.
 - Every element must be necessary (DR-22).
+
+**Global rules this project replaces.** `~/.agents/AGENTS.md` binds here except where this list differs:
+
+- Issue records: write them only with `aiwe-wt/issue.py`, as the English JSON record of SPEC §8.4. The global
+  `issue.py` and its Turkish headings are not used here.
+- Commit trailers: no `Refs` and no `Etki` line on any commit. A unit commit carries the one `Closes` the engine
+  writes; a non-unit commit carries no issue trailer (SPEC §12.3, R5).
+- Language: every committed text, issue record and commit message is English (DR-18); only replies to the owner are
+  Turkish.
+- Checks: an agent runs no test, narrow or full, and no `dar-test.py`; it asks for its verify (Checks above, DR-8).
+- Push: an external agent never pushes, merges or closes (DR-13, `aiwe-wt/HANDOFF.md`).
 
 **Known traps.** Tool facts that cost a run, kept here until the bridge retires (R8).
 
