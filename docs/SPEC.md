@@ -714,7 +714,7 @@ a full commit SHA with the version in a comment. Built today: jobs `gate` and `b
 file or human choice; GoReleaser alone creates no tags, and release-please needs a release pull request and a personal token.
 
 Release job: (1) checkout with tags; (2) `svu next`; equal to the current tag → `no_change`; (3) dry mode until
-M-Usable closes (L9): print the version and stop; (4) live: `git tag`, `goreleaser release --clean` (six targets,
+M-Release closes (L9): print the version and stop; (4) live: `git tag`, `goreleaser release --clean` (six targets,
 archives, `checksums.txt`, the GitHub Release with notes, Scoop, winget and Homebrew manifests); (5) `actions/attest` on
 `checksums.txt` (`contents: write`, `id-token: write`, `attestations: write`), then
 `gh attestation verify dist/checksums.txt --repo "$GITHUB_REPOSITORY"`; (6) sign `checksums.txt` with the Ed25519
@@ -728,7 +728,7 @@ The closing commit carries `Effect: <before> → <after>` with measured values. 
 `external` commits (Dependabot, outside contributors) are exempt from the trailer and `Run-Id` rules; `owner` commits (for an `owner-action` issue) are exempt from the `Run-Id` rule (Q17).
 `repocheck commit-msg` checks this repository's commits; the engine composes its own messages to the same rules.
 
-Rules: versions follow L9 (`v0.1.0` at M-Usable, `1.0.0` at M-Trust); bumps (§17): breaking → major, `feat` → minor,
+Rules: versions follow L9 (`v0.1.0` at M-Release, `1.0.0` at M-Trust); bumps (§17): breaking → major, `feat` → minor,
 `fix` → patch, others → none. A breaking marker is a red line (DR-1): `breaking_change` until the owner runs
 `aiwe unit approve-breaking`. No version in any file; GoReleaser injects the tag; `repo/source-rules` rejects version
 literals. Release notes (Q15): Keep a Changelog layout via `changelog.groups` (`feat` → Added, `fix` → Fixed, others →
@@ -738,10 +738,12 @@ Changed); CI never commits to `main`. Provenance: one attestation, verified with
 Each milestone has one goal issue; the tracker holds the units as its sub-issues (L1).
 - **M-Skeleton**: CI gates `main`, and `aiwe work --repo . --unit N` takes one aiwe issue to a merged pull request
   with zero owner actions, running on pinned models over the OpenCode Go model API (O14); this is the self-hosting point (O1, DR-23).
-- **M-Usable**: the MCP server, the work session and self-update (O10), concurrent sessions (O11) and model choice
-  (O9) first; sources with fallback and quota reaction; the DeepSeek, Fireworks and Gemini model APIs, then the cursor, claude-code,
-  codex and gemini agent runtimes (O12, O14); `aiwe plan`; unit validation; core D-checks; the
-  security-reviewer; a sandbox-repository end-to-end run; the repository turns public and `v0.1.0` ships (L9).
+- **M-Usable**: aiwe is usable in its own work: the MCP server, the work session, concurrent sessions (O11) and model choice
+  (O9) first; sources with fallback and quota reaction; the DeepSeek, Fireworks and Gemini model APIs, then the cursor and
+  claude-code agent runtimes (O14); `aiwe plan`; unit validation.
+- **M-Release**: aiwe works other repositories and ships (O17): self-update (O10), the Go stack profile with the derived gate
+  and the core D-checks, `aiwe onboard`, the security-reviewer, the codex and gemini agent runtimes (O12), CI on three
+  operating systems, a sandbox-repository end-to-end run; the repository turns public and `v0.1.0` ships (L9).
 - **M-Tracking**: `aiwe issue` and `aiwe report` across repositories (O8); in the product the work model lands as
   `aiwe issue`, `aiwe unit check`, `aiwe verify` and `aiwe status` with MCP tools from one registry (DR-16), in M-Tracking
   and M-Usable (R11).
@@ -785,13 +787,26 @@ Each decision keeps its id. **Enforced by** is that decision's one cell (L2).
 | O7 | At most one consumer subscription per provider; API keys unlimited; a subscription at its limit waits or moves to another provider or API, never to a second account of the same provider (owner, 2026-10-12). | valid | judgement: auditor |
 | O8 | After the skeleton aiwe absorbs the global issue tooling: `aiwe issue` (create, edit, check) and `aiwe report` across repositories; the template lives only in aiwe (owner, 2026-10-12). | valid | planned #264 |
 | O9 | Model choice is automatic, by fixed rules, assigned per session at MCP server start or `aiwe work` start (§8.1); it is placed first in M-Usable, and the skeleton runs on pins (owner, 2026-10-12). | valid | test `roles/roles_test.go` TestPinnedListPerRole |
-| O10 | The primary interface is an MCP server started by the user's harness session, with a detached work session and self-update (§6.3); placed at the start of M-Usable (owner, 2026-10-12). | valid | planned #263 |
+| O10 | The primary interface is an MCP server started by the user's harness session, with a detached work session (§6.3), placed at the start of M-Usable, and self-update (§6.3), placed in M-Release because it needs a signed release (owner, 2026-10-12; split by O17). | valid | planned #263 |
 | O11 | Many concurrent sessions work without conflict and without a daemon (§6.6); placed in M-Usable with O10 (owner, 2026-10-12). | valid | planned #293 |
-| O12 | The Codex and Gemini CLI adapters come after self-hosting, in M-Usable (owner, 2026-10-12, #209). | valid | planned #209 |
+| O12 | The Codex and Gemini CLI adapters come after self-hosting, in M-Release (owner, 2026-10-12, #209; O17). | valid | planned #209 |
 | O13 | The skeleton harness is opencode 2.0 (the owner's OpenCode Go subscription); Cursor is the first M-Usable adapter and Claude Code a later one. Any harness may host the lead session; nothing in aiwe (MCP server, CLI, docs, `AGENTS.md`) depends on one host. Every agent run is lean (§10.2) (owner, 2026-10-12, #245). | host neutrality and lean run valid; the skeleton harness is replaced by O14 | judgement: auditor |
 | O14 | One provider interface with two kinds: model API (aiwe's lean agent loop over the provider's HTTP API, tools local and confined to the clone) and agent runtime (the vendor's own agent, only as a fallback for an account whose quota offers no API access); API access is always the first choice for every account, subscriptions included; one request and result vocabulary everywhere. Model APIs: OpenCode Go first (skeleton), then DeepSeek, Fireworks, Gemini; agent runtime: Cursor via its CLI, isolated. Rejected: Cursor SDK Bridge, Cloud Agents API, the opencode CLI. Facts and the cache rule: §10.2 (owner, 2026-10-12, #32). | valid | test `adapters/provider_test.go` TestProviderContractFake |
 | O15 | Until #341 closes, every mechanism unit's post-impl audit is written by the lead Claude session; there is no fallback and a unit with no lead verdict waits (owner, 2026-10-22). | valid; overrides L5 and Q6 for that period | judgement: auditor |
 | O16 | Every unit gets an auditor run, and the #314 K2 residue only widens its evidence (§7.3 step 9); the test-author writes the failing test first for every behaviour unit, risky or not (§9.1, R6); an irreversible step waits for the owner's approval in the terminal or by a `workflow_dispatch` the owner starts (DR-1) (owner, 2026-10-23). | valid | judgement: auditor |
+| O17 | M-Usable is aiwe usable in its own work; the new M-Release is the public repository, the signed release, self-update and `v0.1.0` (§13, L9, O10, O12) (owner, 2026-10-23). | valid | planned #428 |
+| O18 | Quality comes before time and time before cost; a unit is right the first time, in the bridge and in the product (owner, 2026-10-17; #314 K32). | valid | judgement: auditor |
+| O19 | No aiwe text (SPEC, README, issue, commit, code comment, task text, agent return) names another project by name, path, issue or commit; the design derives from the ideal, and no old code or structure carries over. A task text or return that does is corrected (owner, 2026-10-12 and 2026-10-17). | valid | judgement: auditor |
+| O20 | The lead session merges a batch when CI is green and the audit is GREEN, and opens an issue for every new piece of work after the duplicate check, without asking; it asks the owner only about a red line or a product decision (owner). | valid | judgement: auditor |
+| O21 | Every error, finding and improvement is recorded as an issue or in the body of an existing one, never only in a comment; "do not open new work" means do not start work on a new issue, not do not file it (owner). | valid | judgement: auditor |
+| O22 | A ship is a boundary, never a per-unit step: related units collect in the batch clone, one pull request carries them, CI runs once per batch and a green run fast-forwards `main`; the lead ships without asking when the batched group is done and about every two hours while work keeps arriving (owner, 2026-10-14). | valid | judgement: auditor |
+| O23 | Unit work goes to external agents (the OpenCode Go API or the Cursor CLI) wherever possible and the lead session stays small; the lead's own subagent runs only when the external quota is spent or both paths are red (owner, 2026-10-18). | valid | judgement: auditor |
+| O24 | An external agent takes a unit to the point where it waits for audit; the lead session confirms, audits, lands, pushes, merges and closes, in batches; the bridge contract and queue are `aiwe-wt/HANDOFF.md` (owner, 2026-10-23). | valid | judgement: auditor |
+| O25 | aiwe answers only for runs it starts; the user's own harness session and its context settings are out of scope, and no issue, rule, check or owner action targets them (owner, 2026-10-15). | valid | judgement: auditor |
+| O26 | The autopilot is the default behaviour of `aiwe work`, never a separate mode and never a hook: work without a user while an issue is open, an end-of-period report that also lists changes made outside aiwe, and the largest safe parallel count from measured load; the one switch is the owner's presence (#305). A hook that cannot be avoided is installed, updated and repaired by aiwe itself (owner, 2026-10-15). | valid | planned #293 |
+| O27 | A task text for a run that starts a process or a launcher forbids starting a file with no executable extension, because a Windows file association opens a program picker on the owner's screen; only an extension listed in `PATHEXT` is used (owner). | valid | judgement: auditor |
+| O28 | When the repository turns public, the lead enables the ruleset (branch protection), secret scanning and push protection in the same turn and checks each with the API (owner). | valid | planned #261 |
+| O29 | Security work is never deferred in favour of other work (owner). | valid | judgement: auditor |
 | L1 | This file holds product, architecture and contracts, ≤ 900 lines (cap, owner 2026-10-17; #307 brought the file back under the cap); the delivery plan and the unknowns live in tracker issues; §17 keeps only cited facts (lead, 2026-10-12). | valid | judgement: doc-writer |
 | L2 | Every rule id has one enforcement cell; its grammar is in `docs/standards.md` (lead, 2026-10-12; amended #307). `repo/rules` checks that the §12.1 files exist and does not parse these tables. | valid | planned #308 |
 | L3 | The skeleton binds one tracker (GitHub over HTTPS with the standard library; gh is optional, §10.1) and one provider (the OpenCode Go model API client, O14), driven through the CLI; the MCP server opens M-Usable (O10) (lead, 2026-10-12). | valid | test `tracker/github_test.go` TestGitHubReadsIssuesOverHTTPS |
@@ -800,7 +815,7 @@ Each decision keeps its id. **Enforced by** is that decision's one cell (L2).
 | L6 | The owner key and the keyed hash on owned-directory records and markers are removed; removal keeps the root, link, marker and mount-point checks. Reason: a forged marker can only remove aiwe's own temp directory, and a run below `os-sandbox` could read the key anyway (lead, 2026-10-12). | decided; not built (planned #260) | planned #260 |
 | L7 | Close on merge (§6.3, §12.3): a red merge → revert pull request and the unit reopens (lead, 2026-10-12). | valid | test `repocheck/commit_message_test.go` TestCommitMessage |
 | L8 | Unit dependencies are native blocked-by links; goal → units are native sub-issues; owner-only work has label `owner-action` and is never dispatched (lead, 2026-10-12). | valid | judgement: auditor |
-| L9 | `v0.1.0` when M-Usable closes, with the repository public; `1.0.0` when M-Trust closes (lead, 2026-10-12). | valid | judgement: auditor |
+| L9 | `v0.1.0` when M-Release closes, with the repository public; `1.0.0` when M-Trust closes (lead, 2026-10-12; O17). | valid | judgement: auditor |
 | L10 | Product metrics are M1–M7; duplicate-check counts and gate-slowdown reports are deferred (§15); footprint ceilings stay enforced by the sweep (§6.4) (lead, 2026-10-12). | valid | judgement: auditor |
 | L11 | Working code is not removed only to shrink; meta-machinery is not extended, except code a decision removes (L2, L6, Q22 marking) (lead, 2026-10-12). | valid | judgement: auditor |
 | L12 | Docs land with code: this file, README, AGENTS and CONTRIBUTING sit on one branch and pull request with the repo-check change (L2), the tools module (L4) and the code-comment rule renumbering, so the gate is green when it merges (lead, 2026-10-12). | valid | judgement: auditor |
