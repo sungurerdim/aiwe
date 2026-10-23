@@ -42,12 +42,12 @@ Every fact has one owner below. Link to it; copy nothing.
 | Bridge: lead commands | `aiwe-wt/lead.py`, `land.sh`, `queue.sh`, `ship.sh` (one PR from the batch clone; the lead ships) |
 | Bridge: run one role on an external provider | `aiwe-wt/ext.py`, `ext.sh` |
 | Bridge: open a unit clone | `aiwe-wt/start.sh <issue> <slug>` (a bridge unit is cloned by hand until #422); never a git worktree (SPEC §6.5) |
-| Bridge: issue writer for this repository | `aiwe-wt/issue.py`; the global `issue.py` conflicts with SPEC §8.4 |
+| Bridge: issue writer for this repository | `aiwe-wt/issue.py` (SPEC §8.4) |
 | Bridge: batch of finished units, parked clones | clone `aiwe-wt/batch`; `aiwe-wt-parked/` |
-| General engineering rules, user and machine notes (en) | `~/.agents/AGENTS.md`; this file wins where they differ (section 3, "Global rules this project replaces"); lead-only part `~/.claude/dev-rules-lead.md` |
-| Extra guardrails for hosts weaker than Claude Code | `~/.claude/dev-rules-references/portable-supplement.md`, `safety.md`, `operations.md` |
+| General engineering rules, user and machine notes (en) | `~/.agents/AGENTS.md`; section 3 holds the project settings it asks for; lead-only part `~/.claude/dev-rules-lead.md` |
+| Extra guardrails for hosts weaker than Claude Code | `~/.agents/dev-rules-references/portable-supplement.md`, `safety.md`, `operations.md` |
 | Role cards | `~/.claude/agents/*.md`; the bridge reads its own copy in `aiwe-wt/roles/` |
-| Lead tools: load measurement, narrow test, issue writer | `~/.claude/araclar/` |
+| Machine tools: load measurement, heavy-job queue | `~/.agents/araclar/` (the bridge still reads the old folder until #429) |
 | Unattended mode, past subagent reports, rule rationale (tr) | skill `otopilot` in `~/.claude/skills/`; `~/.claude/raporlar/`; `~/.claude/olcumler.md` |
 | Claude memory | Owner preferences and Claude working notes only (section 4) |
 
@@ -80,15 +80,14 @@ before a unit is done.
   the owner's approval.
 - Every element must be necessary (DR-22).
 
-**Global rules this project replaces.** `~/.agents/AGENTS.md` binds here except where this list differs:
+**What the global rules leave to this project.** `~/.agents/AGENTS.md` binds here; it names these as project settings:
 
-- Issue records: write them only with `aiwe-wt/issue.py`, as the English JSON record of SPEC §8.4. The global
-  `issue.py` and its Turkish headings are not used here.
-- Commit trailers: no `Refs` and no `Etki` line on any commit. A unit commit carries the one `Closes` the engine
-  writes; a non-unit commit carries no issue trailer (SPEC §12.3, R5).
-- Language: every committed text, issue record and commit message is English (DR-18); only replies to the owner are
-  Turkish.
-- Checks: an agent runs no test, narrow or full, and no `dar-test.py`; it asks for its verify (Checks above, DR-8).
+- Issue tool and template: `aiwe-wt/issue.py` only, writing the English JSON record of SPEC §8.4.
+- Commit trailers: SPEC §12.3 (R5). A unit commit carries the one `Closes` the engine writes; a non-unit commit
+  carries no issue trailer. No `Refs`, and the effect goes in the body, never in a trailer.
+- Language of issues and commits: English (DR-18); only replies to the owner are Turkish.
+- Narrow test command: none for an agent. One global rule does not apply: an agent runs no test, narrow or full; it
+  asks for its verify (Checks above, DR-8).
 - Push: an external agent never pushes, merges or closes (DR-13, `aiwe-wt/HANDOFF.md`).
 
 **Known traps.** Tool facts that cost a run, kept here until the bridge retires (R8).
