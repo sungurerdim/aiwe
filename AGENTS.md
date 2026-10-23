@@ -6,7 +6,7 @@ Read this first. It points at the rules; it does not repeat them.
 
 aiwe turns a goal issue into verified, merged code through small units, each run by a role-specific agent. Go, one
 binary per OS and architecture. The design lives in [docs/SPEC.md](docs/SPEC.md); the rule registry is
-[docs/standards.md](docs/standards.md) (#314 K41), and the SPEC §3 tables come from it. The tracker holds the work:
+[docs/standards.md](docs/standards.md) (#314 K41), and the SPEC §3 tables mirror it. The tracker holds the work:
 one goal issue per milestone, units as its sub-issues (SPEC §13).
 
 ## First priority
@@ -28,16 +28,15 @@ before a unit is done.
 
 ## Red lines
 
-Each line names the rule; the rule text is in the registry `docs/standards.md` (SPEC §3 is generated from it).
+Each line names the rule; the rule text is in the registry `docs/standards.md` (SPEC §3 mirrors it).
 
 - aiwe is built with aiwe (DR-23). Until M-Skeleton closes, only the lead session and its role-specific agents work, by
   hand. The lead applies the standard under L5. After M-Skeleton closes, a unit worked outside aiwe is a defect and is
-  recorded as one. From then on, CI flags a `main` commit that closes or references a unit issue and has no `Run-Id`
+  recorded as one. From then on, CI flags a `main` commit that closes a unit issue and has no `Run-Id`
   trailer (Q17).
 - Issues are the single source of truth for work: every piece of work is an issue before it starts (DR-20, O5), and
-  the issue is a typed record (SPEC §8.4, R2). A unit commit carries exactly one `Closes <owner>/<repo>#N` and no
-  `Refs`, written by the engine; a non-unit commit carries no issue trailer (R5, SPEC §12.3). A bridge unit has no
-  remote: the engine closes it with its evidence file until #269 removes the bridge.
+  the issue is a typed record (SPEC §8.4, R2). Commit trailers are in SPEC §12.3 (R5), written by the engine. A bridge unit
+  has no remote: it closes with its evidence file until #269 removes the bridge (SPEC §6.3).
 - Every diff counts from the run's base commit (DR-9).
 - Commit only on your run branch; no push, merge, issue close or tracker write (DR-13).
 - A unit stays inside its declared file set (DR-7, DR-9).
@@ -55,7 +54,7 @@ Each line names the rule; the rule text is in the registry `docs/standards.md` (
 | Need | Place |
 |---|---|
 | Purpose, users, metrics | SPEC §1 |
-| Design rules DR-1…DR-23 and the §3.1 standards | `docs/standards.md` (the one registry, R9); SPEC §3 is generated from it |
+| Design rules DR-1…DR-23 and the §3.1 standards | `docs/standards.md` (the one registry, R9); SPEC §3 mirrors it |
 | The issue record, intake gates and closing | SPEC §8.4, §7.3 |
 | One report format (SARIF) | SPEC §7.9 |
 | Coding rules and patterns | SPEC §4, §5 |
@@ -163,7 +162,7 @@ Full text is in the memory notes named here; they are not repeated.
 - No mention of any other project in any aiwe text (`eski-proje-atif-yasagi.md`).
 - aiwe stores no secret; provider CLI login or an environment variable only (`kimlik-bilgisi-sifir-sorumluluk.md`).
 - Unit work is delegated to external agents; the lead stays small. Mechanism units are audited by Claude until #341
-  closes; the external auditors were measured too lenient (`dis-ajan-yurutme.md`, `aiwe-wt/evidence/calibration-pairs.md`).
+  closes (SPEC O15); the external auditors were measured too lenient (`dis-ajan-yurutme.md`, `aiwe-wt/evidence/calibration-pairs.md`).
   There is no fallback: the owner rejected an external audit on 2026-10-22. With no Claude session, the unit waits
   for one; it is never audited by the model that wrote it.
 - The lead merges when CI is green and the audit is GREEN, and files every finding as an issue (`lead-yetkileri.md`,
