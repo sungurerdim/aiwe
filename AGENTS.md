@@ -85,14 +85,18 @@ before a unit is done.
 
 - Claude hooks enforce these only in Claude Code; follow them by hand elsewhere: no `--no-verify`, no
   `git filter-branch`, no `git reset --hard`, no `git clean -f`; commit messages come from a file
-  (`git commit -F <explicit path>`).
+  (`git commit -F <explicit path>`). To undo work in a tree, use `git restore --staged --worktree .`; to reword a
+  local commit, use a new branch, `git cherry-pick -n` and `git commit -F <explicit path>`.
+- A clone's pre-commit hook counts DR-11 from `.git/aiwe-base`, else from the merge base with `origin/main`. A clone
+  that works on top of the batch and has no `aiwe-base` sets `git update-ref refs/remotes/origin/main <batch tip>`.
 - Turkish text never enters git or `gh` argv, a commit message or a tracked file (DR-18).
 - A lint step that builds `custom-gcl` from the upstream clone loaded no packages on the measured host; the gate runs
   the tools-module golangci-lint instead (SPEC §5.17, §12.2, #365).
 - Read a process's command line before killing it. `pipe.py`, `ext.py` and `pytest` all belong to some unit's run, and a
   kill by process name takes a neighbour's work with it; name the pid and the unit it serves.
 - One heavy integration at a time. `queue.sh` and `ship.sh` hold `.batch.lock` because two of them collide in the
-  process tree, not out of caution: a second queue is refused with a reason, and that refusal is correct.
+  process tree, not out of caution: a second queue is refused with a reason, and that refusal is correct. A killed queue
+  leaves the lock behind (its exit trap never runs): with no live `queue.sh` or `ship.sh`, `rmdir aiwe-wt/.batch.lock`.
 - A session that drives units keeps its working discipline in `aiwe-wt/evidence/mcp-path.md` (parallel width, gate
   batching, evidence before a close). It is a pointer: the rules stay in the SPEC and the registry.
 

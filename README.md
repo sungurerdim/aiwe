@@ -28,7 +28,7 @@ later (SPEC §6.7).
 
 ## Install and first run
 
-Not released yet. `v0.1.0` ships when the M-Usable milestone closes (SPEC §12.3, L9). Until then, build from source
+Not released yet. `v0.1.0` ships when the M-Release milestone closes (SPEC §12.3, L9). Until then, build from source
 with `go build ./cmd/aiwe`. Register the MCP server in your harness with the entry that `aiwe mcp snippet` prints
 (SPEC §6.3).
 
