@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/sungurerdim/aiwe/internal/core"
 )
@@ -94,7 +95,7 @@ func TestClaims(t *testing.T) {
 		// Catches a lock left by a run that died, which would block the unit forever.
 		ctx := t.Context()
 		const deadUnit = 37
-		if err := claims.Take(ctx, Claim{Unit: deadUnit, RunID: engineTestDeadRunID, Owner: engineTestDeadProcess(t)}); err != nil {
+		if err := claims.Take(ctx, Claim{Unit: deadUnit, RunID: engineTestDeadRunID, Owner: engineTestDeadHolder(t)}); err != nil {
 			t.Fatalf("Take unit %d for a dead holder: %v", deadUnit, err)
 		}
 		if err := claims.Take(ctx, Claim{Unit: deadUnit, RunID: engineTestRunID, Owner: self}); err != nil {
@@ -181,7 +182,7 @@ func TestClaimReclaimConcurrent(t *testing.T) {
 		t.Fatalf("OpenClaims: %v", err)
 	}
 	if err := claims.Take(ctx, Claim{Unit: unit, RunID: engineTestDeadRunID,
-		Owner: engineTestDeadProcess(t)}); err != nil {
+		Owner: engineTestDeadHolder(t)}); err != nil {
 		t.Fatalf("Take unit %d for a dead holder: %v", unit, err)
 	}
 
@@ -251,7 +252,7 @@ func TestClaimReclaimRemovesOnlyTheClaimItRead(t *testing.T) {
 		t.Fatalf("OpenClaims: %v", err)
 	}
 	if err := claims.Take(ctx, Claim{Unit: unit, RunID: engineTestDeadRunID,
-		Owner: engineTestDeadProcess(t)}); err != nil {
+		Owner: engineTestDeadHolder(t)}); err != nil {
 		t.Fatalf("Take unit %d for a dead holder: %v", unit, err)
 	}
 	// The claim a run read before another run reclaimed the unit.
@@ -349,7 +350,7 @@ func TestClaimHolderUninspected(t *testing.T) {
 }
 
 // TestReclaimHolderConfirmedGone guards DR-11, SPEC §7.3 step 2 and #380: the reclaim tests build
-// their dead holder with engineTestDeadProcess and then expect the engine to reclaim the unit, so
+// their dead holder with engineTestDeadHolder and then expect the engine to reclaim the unit, so
 // the holder must be an id the OS no longer names. It catches a holder the OS still names: a
 // process object can outlive the exit its parent waited for, probeProcess then answers "not gone"
 // (fail-closed, DR-11) and every reclaim of the unit is refused, which is how
@@ -357,7 +358,7 @@ func TestClaimHolderUninspected(t *testing.T) {
 func TestReclaimHolderConfirmedGone(t *testing.T) {
 	const runs = 200
 	for i := 1; i <= runs; i++ {
-		holder := engineTestDeadProcess(t)
+		holder := engineTestDeadHolder(t)
 		if state := probeProcess(holder); state != processGone {
 			t.Fatalf("holder run %d: probeProcess(pid %d) = %d, want processGone: the OS still names the exited process, so a reclaim of the unit it holds is refused (#380)",
 				i, holder.PID, state)
@@ -387,4 +388,49 @@ func TestClaimFileRefused(t *testing.T) {
 	if err := claims.Take(ctx, Claim{Unit: unit, RunID: engineTestRunID, Owner: self}); err == nil {
 		t.Errorf("Take of unit %d while its claim file is no claim = nil error, want a refusal", unit)
 	}
+}
+
+const (
+	// engineTestDeadHolderTries is how many exited children the fixture may spend to find one the
+	// OS confirms gone.
+	engineTestDeadHolderTries = 6
+	// engineTestDeadHolderWait bounds one wait; engineTestDeadHolderPoll is how often it reads the
+	// answer again.
+	engineTestDeadHolderWait = 10 * time.Millisecond
+	engineTestDeadHolderPoll = time.Millisecond
+)
+
+// engineTestDeadHolder returns the identity of a child that exited once the OS confirms no process
+// runs under its pid: the dead holder the reclaim tests claim a unit for. The wait is needed
+// because the process object of an exited child can outlive the exit its parent waited for, and
+// probeProcess then answers processUnknown, so a reclaim of the unit the holder claimed is refused
+// (fail-closed, DR-11, #380). The fixture reads that answer, never elapsed time, and discards a
+// holder the OS keeps naming for a fresh one, so a test never waits on a pilot the OS still names
+// and never flaked by it either; a run that spends every try fails with the reason.
+func engineTestDeadHolder(t *testing.T) core.ProcessID {
+	t.Helper()
+	var last core.ProcessID
+	for range engineTestDeadHolderTries {
+		last = engineTestDeadProcess(t)
+		if engineTestWaitHolderGone(last) {
+			return last
+		}
+	}
+	t.Fatalf("dead holder %d: the OS still names the exited process after %d tries, so a reclaim of the unit it holds is refused (#380)",
+		last.PID, engineTestDeadHolderTries)
+	return last
+}
+
+// engineTestWaitHolderGone reports whether the OS stops naming the exited process of holder within
+// engineTestDeadHolderWait: the answer probeProcess reads, so the fixture waits for the state the
+// reclaim depends on.
+func engineTestWaitHolderGone(holder core.ProcessID) bool {
+	deadline := time.Now().Add(engineTestDeadHolderWait)
+	for probeProcess(holder) != processGone {
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(engineTestDeadHolderPoll)
+	}
+	return true
 }
