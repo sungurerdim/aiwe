@@ -348,6 +348,23 @@ func TestClaimHolderUninspected(t *testing.T) {
 	})
 }
 
+// TestReclaimHolderConfirmedGone guards DR-11, SPEC §7.3 step 2 and #380: the reclaim tests build
+// their dead holder with engineTestDeadProcess and then expect the engine to reclaim the unit, so
+// the holder must be an id the OS no longer names. It catches a holder the OS still names: a
+// process object can outlive the exit its parent waited for, probeProcess then answers "not gone"
+// (fail-closed, DR-11) and every reclaim of the unit is refused, which is how
+// TestClaimReclaimRemovesOnlyTheClaimItRead flaked under the gate's load.
+func TestReclaimHolderConfirmedGone(t *testing.T) {
+	const runs = 200
+	for i := 1; i <= runs; i++ {
+		holder := engineTestDeadProcess(t)
+		if state := probeProcess(holder); state != processGone {
+			t.Fatalf("holder run %d: probeProcess(pid %d) = %d, want processGone: the OS still names the exited process, so a reclaim of the unit it holds is refused (#380)",
+				i, holder.PID, state)
+		}
+	}
+}
+
 // TestClaimFileRefused guards DR-6 and #199: a claim file that is no claim of its unit is refused,
 // never read as a free unit, so a damaged table cannot hand one unit to two runs.
 func TestClaimFileRefused(t *testing.T) {
