@@ -8,8 +8,22 @@ import (
 	"github.com/sungurerdim/aiwe/internal/core"
 )
 
-// ruleMissingRepoFile is the one rule of check repo/rules (SPEC §12.1, L2).
-const ruleMissingRepoFile = "missing_repo_file"
+// The rule names of check repo/rules (SPEC §12.1, L2, STD-1, STD-2, STD-29, STD-44).
+const (
+	ruleMissingRepoFile   = "missing_repo_file"
+	ruleWrongLicenceText  = "wrong_licence_text"
+	ruleUnstatedStandard  = "unstated_standard"
+	ruleWrongSPDX         = "wrong_spdx_identifier"
+	licenceFile           = "LICENSE"
+	conductFile           = "CODE_OF_CONDUCT.md"
+	securityFile          = "SECURITY.md"
+	licenceIdentifier     = "MIT"
+	covenantMarker        = "contributor-covenant.org/version/3/0"
+	privateReportingText  = "report a vulnerability"
+	spdxIdentifierPrefix  = "SPDX-License-Identifier:"
+	licenceGrantMarker    = "Permission is hereby granted, free of charge"
+	licenceDisclaimerLine = "THE SOFTWARE IS PROVIDED \"AS IS\""
+)
 
 // specFile is the spec whose §12.1 list names the required repository files.
 const specFile = "docs/SPEC.md"
@@ -17,9 +31,11 @@ const specFile = "docs/SPEC.md"
 // backtickPattern matches one backticked span of the spec and captures its text.
 var backtickPattern = regexp.MustCompile("`([^`]+)`")
 
-// Rules checks that every repository file the §12.1 list of docs/SPEC.md names exists; an absent
-// one is missing_repo_file. It parses no spec table (L2). A repository without a readable spec, or
-// a spec whose §12.1 names no file, is an error: no rule was checked (DR-6).
+// Rules checks that every repository file the §12.1 list of docs/SPEC.md names exists, and that the
+// four files whose text a standard names say what that standard requires (STD-1, STD-2, STD-29,
+// STD-44). An absent one is missing_repo_file and its text is not judged: there is none. It parses
+// no spec table (L2). A repository without a readable spec, or a spec whose §12.1 names no file, is
+// an error: no rule was checked (DR-6).
 func Rules(repo string) ([]Finding, error) {
 	body, err := readRepoFile(repo, specFile)
 	if err != nil {
@@ -34,8 +50,98 @@ func Rules(repo string) ([]Finding, error) {
 	if err != nil {
 		return nil, err
 	}
+	text, err := contentFindings(repo, found)
+	if err != nil {
+		return nil, err
+	}
+	found = append(found, text...)
 	sortFindings(found)
 	return found, nil
+}
+
+// contentFindings returns the text findings of the four standards' files that are present. absent
+// names the files the existence rule already reported.
+func contentFindings(repo string, absent []Finding) ([]Finding, error) {
+	var found []Finding
+	for _, c := range textChecks() {
+		if reported(absent, c.path) {
+			continue
+		}
+		text, err := readRepoFile(repo, c.path)
+		if err != nil {
+			continue // a file the list does not require, or an unreadable one: absent is the finding
+		}
+		body, err := core.ReadText(text)
+		if err != nil {
+			return nil, fmt.Errorf("rules: %s: %w", c.path, err)
+		}
+		if !c.stated(body) {
+			found = append(found, Finding{Rule: c.rule, Path: c.path})
+		}
+	}
+	return found, nil
+}
+
+// textCheck is one standard's file and the statement that meets it.
+type textCheck struct {
+	path   string
+	rule   string
+	stated func(string) bool
+}
+
+// textChecks are the four files a standard names, each with the statement that satisfies it.
+func textChecks() []textCheck {
+	return []textCheck{
+		{licenceFile, ruleWrongLicenceText, statesMITLicence},
+		{licenceFile, ruleWrongSPDX, statesSPDXIdentifier},
+		{conductFile, ruleUnstatedStandard, statesCovenant},
+		{securityFile, ruleUnstatedStandard, statesPrivateReporting},
+	}
+}
+
+// statesMITLicence reports the MIT grant and its disclaimer: a file that names MIT but carries the
+// text of another licence misleads the reader about what they may do (STD-1, Q1).
+func statesMITLicence(body string) bool {
+	return strings.Contains(body, licenceGrantMarker) && strings.Contains(body, licenceDisclaimerLine)
+}
+
+// statesCovenant reports a link to Contributor Covenant 3.0, the version STD-2 names. A link to
+// another version is not this standard: its text differs from the one the project adopted.
+func statesCovenant(body string) bool {
+	return strings.Contains(strings.ToLower(body), covenantMarker)
+}
+
+// statesPrivateReporting reports the private channel STD-29 names: the repository's own Security tab
+// report form, so a reporter never has to open a public issue.
+func statesPrivateReporting(body string) bool {
+	return strings.Contains(strings.ToLower(body), privateReportingText)
+}
+
+// statesSPDXIdentifier reports the licence identifier STD-44 wants next to the licence: an
+// `SPDX-License-Identifier: MIT` line naming the same licence the LICENSE carries. STD-44 places it
+// "next to the licence", so the LICENSE is read, not the module metadata. Another identifier tells a
+// consumer a permission the licence text does not give. A licence that carries no identifier at all
+// is not this rule's finding: STD-44 asks the identifier to agree with the licence when it is
+// present, and adding one is a separate change to LICENSE.
+func statesSPDXIdentifier(body string) bool {
+	for _, line := range strings.Split(strings.ReplaceAll(body, "\r\n", "\n"), "\n") {
+		i := strings.Index(line, spdxIdentifierPrefix)
+		if i < 0 {
+			continue
+		}
+		return strings.TrimSpace(line[i+len(spdxIdentifierPrefix):]) == licenceIdentifier
+	}
+	return true
+}
+
+// reported reports whether the existence rule already named path.
+func reported(absent []Finding, path string) bool {
+	for _, f := range absent {
+		if f.Path == path {
+			return true
+		}
+	}
+	return false
 }
 
 // missingRepoFiles returns a finding for each file of the §12.1 list that is absent; a §12.1

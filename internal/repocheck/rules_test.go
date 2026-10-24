@@ -78,17 +78,34 @@ func rulesRepoFiles() []string {
 }
 
 // rulesRepoSpec writes a repository with spec as docs/SPEC.md and every §12.1 file except those
-// in skip, each with a one-line body.
+// in skip. The four files a standard reads carry the text that standard asks for, so a case that
+// tests the file list is not answered by the text rules; the rest carry a one-line body.
 func rulesRepoSpec(t *testing.T, spec string, skip map[string]bool) string {
 	t.Helper()
 	dir := t.TempDir()
 	writeRulesFile(t, dir, "docs/SPEC.md", spec)
 	for _, f := range rulesRepoFiles() {
 		if !skip[f] {
-			writeRulesFile(t, dir, f, "fixture\n")
+			writeRulesFile(t, dir, f, rulesFileBody(f))
 		}
 	}
 	return dir
+}
+
+// rulesFileBody is the body the fixture writes for rel: the statement a standard names for the four
+// files one reads, and a one-line body for the rest.
+func rulesFileBody(rel string) string {
+	switch rel {
+	case "LICENSE":
+		return mitLicence
+	case "CODE_OF_CONDUCT.md":
+		return conductText
+	case "SECURITY.md":
+		return securityText
+	case "go.mod":
+		return goModText
+	}
+	return "fixture\n"
 }
 
 // writeRulesFile writes body to the slash-separated, repository-relative file rel of dir.
@@ -260,7 +277,9 @@ Report a vulnerability privately through this repository's **Security** tab →
 `
 
 // goModText is a go.mod that meets STD-44: its module metadata carries the licence identifier.
-const goModText = `module github.com/fixture/zentra
+const goModText = `// SPDX-License-Identifier: MIT
+
+module github.com/fixture/zentra
 
 go 1.27.3
 
@@ -347,22 +366,35 @@ func TestRulesContent(t *testing.T) {
 		}
 	})
 
-	t.Run("a wrong SPDX identifier is red", func(t *testing.T) {
-		// Guards STD-44: the go.mod reaches a licence scanner, so a wrong identifier there tells a
-		// consumer a permission the LICENSE does not give.
+	t.Run("a licence that names another SPDX identifier is red", func(t *testing.T) {
+		// Guards STD-44: an identifier next to the grant that names another licence tells a consumer
+		// a permission the licence text does not give.
 		for _, tc := range []struct{ name, body string }{
-			{"the MIT identifier", "module github.com/fixture/zentra\n\n// SPDX-License-Identifier: MIT\n"},
-			{"the Apache identifier", "module github.com/fixture/zentra\n\n// SPDX-License-Identifier: Apache-2.0\n"},
+			{"the Apache identifier", strings.Replace(mitLicence, "MIT License\n", "MIT License\n\nSPDX-License-Identifier: Apache-2.0\n", 1)},
+			{"a dual licence", strings.Replace(mitLicence, "MIT License\n", "MIT License\n\nSPDX-License-Identifier: MIT OR Apache-2.0\n", 1)},
+			{"the BSD identifier", strings.Replace(mitLicence, "MIT License\n", "MIT License\n\nSPDX-License-Identifier: BSD-3-Clause\n", 1)},
 		} {
 			dir := rulesRepoContent(t)
-			writeRulesFile(t, dir, "go.mod", tc.body)
+			writeRulesFile(t, dir, "LICENSE", tc.body)
 			got, err := repocheck.Rules(dir)
 			if err != nil {
 				t.Fatalf("Rules(%s): %v", tc.name, err)
 			}
-			if !hasFinding(got, "wrong_spdx_identifier", "go.mod") {
-				t.Errorf("Rules(%s) = %+v, want a wrong_spdx_identifier finding on go.mod", tc.name, got)
+			if !hasFinding(got, "wrong_spdx_identifier", "LICENSE") {
+				t.Errorf("Rules(%s) = %+v, want a wrong_spdx_identifier finding on LICENSE", tc.name, got)
 			}
+		}
+	})
+
+	t.Run("the identifier matching the licence passes", func(t *testing.T) {
+		// Guards the other half of STD-44: the line this repository will carry is accepted, so the
+		// rule does not redden the remedy it asks for.
+		dir := rulesRepoContent(t)
+		writeRulesFile(t, dir, "LICENSE",
+			strings.Replace(mitLicence, "MIT License\n", "MIT License\n\nSPDX-License-Identifier: MIT\n", 1))
+		got, err := repocheck.Rules(dir)
+		if err != nil || len(got) != 0 {
+			t.Fatalf("Rules(SPDX-License-Identifier: MIT) = %+v, %v; want no finding", got, err)
 		}
 	})
 
