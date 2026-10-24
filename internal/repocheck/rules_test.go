@@ -217,3 +217,172 @@ func TestRules(t *testing.T) {
 		}
 	})
 }
+
+// mitLicence is the licence text this repository ships (Q1, §12.1): the MIT grant, so a file that
+// only exists is not enough.
+const mitLicence = `MIT License
+
+Copyright (c) 2026 Fixture Owner
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+`
+
+// conductText is a conduct file that meets STD-2: it links Contributor Covenant 3.0.
+const conductText = `# Code of conduct
+
+This project follows the
+[Contributor Covenant, version 3.0](https://www.contributor-covenant.org/version/3/0/code_of_conduct/).
+
+Report unacceptable behaviour privately to the maintainer on GitHub.
+`
+
+// securityText is a security policy that meets STD-29: it names the private reporting channel.
+const securityText = `# Security policy
+
+Report a vulnerability privately through this repository's **Security** tab →
+**Report a vulnerability**. Do not open a public issue.
+`
+
+// goModText is a go.mod that meets STD-44: its module metadata carries the licence identifier.
+const goModText = `module github.com/fixture/zentra
+
+go 1.27.3
+
+require golang.org/x/sys v0.49.0
+`
+
+// rulesRepoContent writes a repository whose four read-checked files carry the text each standard
+// names: the licence grant (STD-1), the covenant link (STD-2), the private channel (STD-29) and the
+// module's SPDX identifier (STD-44).
+func rulesRepoContent(t *testing.T) string {
+	t.Helper()
+	dir := rulesRepoSpec(t, rulesSpec(), nil)
+	writeRulesFile(t, dir, "LICENSE", mitLicence)
+	writeRulesFile(t, dir, "CODE_OF_CONDUCT.md", conductText)
+	writeRulesFile(t, dir, "SECURITY.md", securityText)
+	writeRulesFile(t, dir, "go.mod", goModText)
+	return dir
+}
+
+func TestRulesContent(t *testing.T) {
+	t.Run("the fixture's own texts pass", func(t *testing.T) {
+		// Guards the cases below: they fail the text checks, not the shape of the fixture.
+		got, err := repocheck.Rules(rulesRepoContent(t))
+		if err != nil || len(got) != 0 {
+			t.Fatalf("Rules(full text) = %+v, %v; want no finding and no error", got, err)
+		}
+	})
+
+	t.Run("a replaced licence text is red", func(t *testing.T) {
+		// Guards STD-1: the file exists and says something else, so the project is not MIT and a
+		// reader of the repository is misled about what they may do with it.
+		for _, tc := range []struct{ name, body string }{
+			{"the Apache 2.0 heading", "Apache License\nVersion 2.0, January 2004\n"},
+			{"a bare title", "MIT License\n"},
+			{"an empty file", ""},
+			{"the grant with the disclaimer removed", strings.Split(mitLicence, "THE SOFTWARE IS PROVIDED")[0]},
+		} {
+			dir := rulesRepoContent(t)
+			writeRulesFile(t, dir, "LICENSE", tc.body)
+			got, err := repocheck.Rules(dir)
+			if err != nil {
+				t.Fatalf("Rules(%s): %v", tc.name, err)
+			}
+			if !hasFinding(got, "wrong_licence_text", "LICENSE") {
+				t.Errorf("Rules(%s) = %+v, want a wrong_licence_text finding on LICENSE", tc.name, got)
+			}
+		}
+	})
+
+	t.Run("a conduct file without the covenant link is red", func(t *testing.T) {
+		// Guards STD-2: a conduct file that names no version leaves a reporter with no text to read.
+		for _, tc := range []struct{ name, body string }{
+			{"no link at all", "# Code of conduct\n\nBe nice to each other.\n"},
+			{"the 2.0 covenant", "# Code of conduct\n\n[Contributor Covenant 2.0](https://www.contributor-covenant.org/version/2/0/code_of_conduct/)\n"},
+		} {
+			dir := rulesRepoContent(t)
+			writeRulesFile(t, dir, "CODE_OF_CONDUCT.md", tc.body)
+			got, err := repocheck.Rules(dir)
+			if err != nil {
+				t.Fatalf("Rules(%s): %v", tc.name, err)
+			}
+			if !hasFinding(got, "unstated_standard", "CODE_OF_CONDUCT.md") {
+				t.Errorf("Rules(%s) = %+v, want an unstated_standard finding", tc.name, got)
+			}
+		}
+	})
+
+	t.Run("a security policy without the private channel is red", func(t *testing.T) {
+		// Guards STD-29: a policy that only sends the reporter to a public issue publishes the
+		// vulnerability it was meant to keep private.
+		for _, tc := range []struct{ name, body string }{
+			{"a public issue only", "# Security policy\n\nOpen an issue and we will look at it.\n"},
+			{"an empty file", ""},
+		} {
+			dir := rulesRepoContent(t)
+			writeRulesFile(t, dir, "SECURITY.md", tc.body)
+			got, err := repocheck.Rules(dir)
+			if err != nil {
+				t.Fatalf("Rules(%s): %v", tc.name, err)
+			}
+			if !hasFinding(got, "unstated_standard", "SECURITY.md") {
+				t.Errorf("Rules(%s) = %+v, want an unstated_standard finding", tc.name, got)
+			}
+		}
+	})
+
+	t.Run("a wrong SPDX identifier is red", func(t *testing.T) {
+		// Guards STD-44: the go.mod reaches a licence scanner, so a wrong identifier there tells a
+		// consumer a permission the LICENSE does not give.
+		for _, tc := range []struct{ name, body string }{
+			{"the MIT identifier", "module github.com/fixture/zentra\n\n// SPDX-License-Identifier: MIT\n"},
+			{"the Apache identifier", "module github.com/fixture/zentra\n\n// SPDX-License-Identifier: Apache-2.0\n"},
+		} {
+			dir := rulesRepoContent(t)
+			writeRulesFile(t, dir, "go.mod", tc.body)
+			got, err := repocheck.Rules(dir)
+			if err != nil {
+				t.Fatalf("Rules(%s): %v", tc.name, err)
+			}
+			if !hasFinding(got, "wrong_spdx_identifier", "go.mod") {
+				t.Errorf("Rules(%s) = %+v, want a wrong_spdx_identifier finding on go.mod", tc.name, got)
+			}
+		}
+	})
+
+	t.Run("a missing file stays red with its old finding", func(t *testing.T) {
+		// Guards the check this unit keeps: the text rules never replace the existence rule.
+		dir := rulesRepoContent(t)
+		if err := os.Remove(filepath.Join(dir, "LICENSE")); err != nil {
+			t.Fatalf("remove LICENSE: %v", err)
+		}
+		got, err := repocheck.Rules(dir)
+		if err != nil {
+			t.Fatalf("Rules(no LICENSE): %v", err)
+		}
+		if !hasFinding(got, "missing_repo_file", "LICENSE") {
+			t.Fatalf("Rules(no LICENSE) = %+v, want a missing_repo_file finding", got)
+		}
+		for _, f := range got {
+			if f.Rule != "missing_repo_file" {
+				t.Errorf("Rules(no LICENSE) also reported %+v; an absent file has no text to judge", f)
+			}
+		}
+	})
+}
