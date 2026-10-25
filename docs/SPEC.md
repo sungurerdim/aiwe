@@ -335,6 +335,8 @@ aiwe owns the tools that keep a machine usable while sessions work (L26), so no 
 5. `[M]` Prove the gate on the base commit in a leased slot reset to the base commit: each step `green`, `red_at_base` (stored `known_red`,
    reported, not blocking) or `not_measured`, with a measured duration.
 6. `[M]` Store gate and proof under `projects/<repo-id>/` with the input hash; an unchanged rerun is `no_change`.
+
+After onboarding, `aiwe init` (§11.3) writes the profile and opens items for the rows of the stage catalogue `catalog/stages.json` that bind and fail. The stage gate `aiwe stage next` prints the one binding, failing row that blocks the most others, and `aiwe sync` (§11.4) opens the work that closes any later difference.
 ### 7.2 Planning — `aiwe plan --repo R --goal <id>`, or the user's own session
 Both paths use the `item-template` and the §8.4 record (R2). **Architect path**: `[J]` an architect run returns unit
 records · `[M]` each record is validated; a failure returns once · `[J]` an auditor run (DR-5) audits the split
@@ -711,7 +713,7 @@ Each decision keeps its id. **Enforced by** is that decision's one cell (L2).
 | L22 | A parent closes by itself when every child is done or cancelled and its own `done` checks pass (§6.3). (lead, 2026-10-25). | valid | planned: stage work store |
 | L23 | `priority` is derived from the owner's severity table `work/severity.json` (severity × urgency); the schema carries the inputs `affected`, `class` and `urgency`, and lint flags a stored value that differs as a priority mismatch (`priority_mismatch`) (§8.4). (lead, 2026-10-25). | valid | planned: stage work store |
 | L24 | The role registry holds each role's tier, effort and card model; `aiwe roles fit` proposes registry changes from measured fit and never applies them (§9.5). (lead, 2026-10-25). | superseded in part by L55 (the proposal command is deleted; the registry keeps tier, effort and card model) | planned: stage rule registry |
-| L25 | Languages and every other derivable fact are detected and never stored; the project profile stores only the flags no tool can derive and the project stage (§11.1). (lead, 2026-10-25). | valid | planned: stage init and sync |
+| L25 | Languages and every other derivable fact are detected and never stored; the project profile stores only the non-derivable flags, those no tool can derive, and the project stage (§11.1). (lead, 2026-10-25). | valid | planned: stage init and sync |
 | L26 | The machine tools move into aiwe: the heavy-job queue, the load meter, the narrow test and the gate runners (§6.8). (lead, 2026-10-25). | valid | planned: stage isolation |
 | L27 | One rule table: the registry holds every rule once; catalogue rows, hooks, lints, checks and cards cite its ids and restate no rule (§3.2). (lead, 2026-10-25). | valid | planned: stage rule registry |
 | L28 | Terms: a **slot** is a workspace clone only; CPU admission is a **ticket**; work ownership is a **claim**; a role's answer is a **verdict record** (§1.6). (lead, 2026-10-25). | valid | judgement: doc-writer |
