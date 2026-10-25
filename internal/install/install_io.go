@@ -1,8 +1,10 @@
 package install
 
 import (
+	"bytes"
 	"crypto/rand"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -24,13 +26,14 @@ var ErrSettingsLink = errors.New("the settings file is a symbolic link")
 
 // Apply wires the row's hook entries into the settings of one harness under home and returns what
 // it changed. Every file access goes through an *os.Root at home, so no link inside it leads out.
-// A missing file or directory is created; a file that is a symbolic link, no regular file, too
+// A home that is not absolute is refused, so a project's settings never take the entries. A
+// missing file or directory is created; a file that is a symbolic link, no regular file, too
 // large or cannot be merged is refused and left as it was. Nothing is written when nothing
 // changed, and the write replaces the file in one rename, so a failed write never leaves half a
 // settings file.
 func Apply(home string, h Harness) ([]Change, error) {
-	if home == "" {
-		return nil, refuse("a home directory", "none", nil)
+	if !filepath.IsAbs(home) {
+		return nil, refuse("an absolute home directory", fmt.Sprintf("%q", home), nil)
 	}
 	root, err := os.OpenRoot(home)
 	if err != nil {
@@ -43,7 +46,7 @@ func Apply(home string, h Harness) ([]Change, error) {
 		return nil, err
 	}
 	merged, changes, err := Merge(current, h.Entries())
-	if err != nil || len(changes) == 0 {
+	if err != nil || bytes.Equal(merged, current) {
 		return changes, err
 	}
 	if err := replace(root, h, name, merged); err != nil {

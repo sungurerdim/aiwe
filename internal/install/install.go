@@ -13,11 +13,16 @@ import (
 	"github.com/sungurerdim/aiwe/internal/core"
 )
 
-// The two kinds of change a merge reports.
+// The kinds of change a merge reports: an entry added, an entry repaired, and settings whose
+// hooks the owner turned off, which install reports and leaves as they are.
 const (
-	actionAdd    = "add"
-	actionRepair = "repair"
+	actionAdd      = "add"
+	actionRepair   = "repair"
+	actionDisabled = "disabled"
 )
+
+// disableKey is the settings key with which the owner turns every hook off (Claude Code).
+const disableKey = "disableAllHooks"
 
 // Wire is one event of a harness: the harness's name for it, the matcher its group needs ("" for
 // none) and the verb of the `aiwe hook` command it calls.
@@ -52,8 +57,9 @@ type Change struct {
 	Command string `json:"command"`
 }
 
-// Harnesses returns the adapter rows. The pre-tool entry watches Bash only: the heavy commands and
-// the destructive ones the hook refuses run there.
+// Harnesses returns the adapter rows. The pre-tool entry watches every tool that runs a command,
+// Bash, PowerShell and Monitor (Claude Code tools reference), so a heavy or destructive command
+// meets the hook whichever shell tool runs it.
 func Harnesses() []Harness {
 	return []Harness{{
 		Name: "claude-code", Dir: ".claude", File: "settings.json",
@@ -61,7 +67,7 @@ func Harnesses() []Harness {
 			{Event: "Stop", Verb: "stop"},
 			{Event: "SessionStart", Verb: "session-start"},
 			{Event: "PostToolUse", Verb: "post-tool"},
-			{Event: "PreToolUse", Matcher: "Bash", Verb: "pre-tool"},
+			{Event: "PreToolUse", Matcher: "Bash|PowerShell|Monitor", Verb: "pre-tool"},
 			{Event: "SubagentStop", Verb: "return"},
 		},
 	}}
@@ -120,8 +126,9 @@ func describe(changes []Change) string {
 // Merge wires entries into settings, a harness's settings file (nil or empty for none), and
 // returns the new bytes and what changed. Only aiwe's own handlers are touched: a foreign handler,
 // group, event and top-level key stay as they were. When nothing changed the bytes are returned
-// as given, so a second run is a no-op. Settings that are not one JSON object, or whose hooks are
-// not an object of lists, are refused (DR-6).
+// as given, so a second run is a no-op. Settings whose hooks the owner turned off are returned as
+// given with one disabled change: the owner's choice is never overridden. Settings that are not one
+// JSON object, or whose hooks are not an object of lists, are refused (DR-6).
 func Merge(settings []byte, entries []Entry) ([]byte, []Change, error) {
 	if _, err := core.ReadText(settings); err != nil {
 		return nil, nil, refuse("settings that are UTF-8", err.Error(), err)
@@ -129,6 +136,11 @@ func Merge(settings []byte, entries []Entry) ([]byte, []Change, error) {
 	top, err := parseObject(settings, "the settings")
 	if err != nil {
 		return nil, nil, err
+	}
+	var off bool
+	if json.Unmarshal(top[disableKey], &off) == nil && off {
+		return settings, []Change{{Event: disableKey, Action: actionDisabled,
+			Command: "nothing changed: the settings turn every hook off"}}, nil
 	}
 	hooks, err := parseObject(top["hooks"], "hooks")
 	if err != nil {
@@ -178,12 +190,14 @@ type slot struct {
 	kept    bool
 	found   bool
 	changed bool
+	// carry holds the fields of the first own handler that had to go, for the fresh handler.
+	carry map[string]json.RawMessage
 }
 
-// wireEvent returns the groups of one event with aiwe's handler exact: the first own handler that
-// is exact under the right matcher stays, every other own handler goes, and a fresh group is added
-// when none stayed. The action is "add" when no own handler existed, "repair" when one was
-// dropped or replaced, and "" when the event was already exact.
+// wireEvent returns the groups of one event with aiwe's handler exact: the first own handler under
+// the right matcher stays with its command set to the row's, every other own handler goes, and a
+// fresh group is added when none stayed. The action is "add" when no own handler existed,
+// "repair" when one was dropped or changed, and "" when the event was already exact.
 func wireEvent(list []json.RawMessage, e Entry) ([]json.RawMessage, string, error) {
 	s := &slot{matcher: e.Matcher, command: e.Command}
 	out := make([]json.RawMessage, 0, len(list)+1)
@@ -197,11 +211,7 @@ func wireEvent(list []json.RawMessage, e Entry) ([]json.RawMessage, string, erro
 		}
 	}
 	if !s.kept {
-		group := map[string]any{"hooks": []any{map[string]string{"type": "command", "command": e.Command}}}
-		if e.Matcher != "" {
-			group["matcher"] = e.Matcher
-		}
-		raw, err := encode(group, "")
+		raw, err := s.fresh()
 		if err != nil {
 			return nil, "", err
 		}
@@ -228,20 +238,20 @@ func (s *slot) scan(raw json.RawMessage) (json.RawMessage, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
-	matcher := matcherOf(g["matcher"])
+	right := matcherOf(g["matcher"]) == s.matcher
 	keep := make([]json.RawMessage, 0, len(handlers))
+	edited := false
 	for _, h := range handlers {
-		switch {
-		case !isOwn(h):
-			keep = append(keep, h)
-		case !s.kept && matcher == s.matcher && isExact(h, s.command):
-			s.found, s.kept = true, true
-			keep = append(keep, h)
-		default:
-			s.found, s.changed = true, true
+		out, ok, err := s.handler(h, right)
+		if err != nil {
+			return nil, false, err
 		}
+		if ok {
+			keep = append(keep, out)
+		}
+		edited = edited || !ok || !bytes.Equal(out, h)
 	}
-	if len(keep) == len(handlers) {
+	if !edited {
 		return raw, true, nil
 	}
 	if len(keep) == 0 {
@@ -252,6 +262,57 @@ func (s *slot) scan(raw json.RawMessage) (json.RawMessage, bool, error) {
 	}
 	out, err := encode(g, "")
 	return out, true, err
+}
+
+// handler decides one handler of a group, under the right matcher or not. A foreign handler stays
+// as it is. The first own handler under the right matcher stays with every field the owner added;
+// only its type and command are set to the row's. Any other own handler goes; the fields of the
+// first one that goes are carried to the fresh handler, so moving an entry keeps them too.
+func (s *slot) handler(h json.RawMessage, right bool) (json.RawMessage, bool, error) {
+	fields, own := ownFields(h)
+	if !own {
+		return h, true, nil
+	}
+	s.found = true
+	if s.kept || !right {
+		s.changed = true
+		if s.carry == nil {
+			s.carry = fields
+		}
+		return nil, false, nil
+	}
+	s.kept = true
+	if isExact(fields, s.command) {
+		return h, true, nil
+	}
+	s.changed = true
+	out, err := withCommand(fields, s.command)
+	return out, true, err
+}
+
+// fresh returns a new group of the row's matcher with one handler: the row's command and the
+// fields carried from an own handler that went.
+func (s *slot) fresh() (json.RawMessage, error) {
+	h, err := withCommand(s.carry, s.command)
+	if err != nil {
+		return nil, err
+	}
+	group := map[string]any{"hooks": []json.RawMessage{h}}
+	if s.matcher != "" {
+		group["matcher"] = s.matcher
+	}
+	return encode(group, "")
+}
+
+// withCommand returns a handler with the owner's fields of an own handler, its type command and
+// its command the row's.
+func withCommand(fields map[string]json.RawMessage, command string) (json.RawMessage, error) {
+	out := make(map[string]any, len(fields)+2)
+	for k, v := range fields {
+		out[k] = v
+	}
+	out["type"], out["command"] = "command", command
+	return encode(out, "")
 }
 
 // matcherOf returns the matcher of a group; an absent one is "". A matcher that is not a string
@@ -267,27 +328,25 @@ func matcherOf(raw json.RawMessage) string {
 	return s
 }
 
-// isOwn reports whether a handler is aiwe's: a command whose first two words are the product and
-// "hook". A foreign command that merely mentions the product is not.
-func isOwn(h json.RawMessage) bool {
-	var v struct {
-		Command string `json:"command"`
+// ownFields returns the fields of a handler and whether it is aiwe's: a command whose first two
+// words are the product and "hook". A foreign command that merely mentions the product is not, and
+// the key is matched as the harness matches it, case and all, so "Command" is no command.
+func ownFields(h json.RawMessage) (map[string]json.RawMessage, bool) {
+	var fields map[string]json.RawMessage
+	var command string
+	if json.Unmarshal(h, &fields) != nil || json.Unmarshal(fields["command"], &command) != nil {
+		return nil, false
 	}
-	if json.Unmarshal(h, &v) != nil {
-		return false
-	}
-	f := strings.Fields(v.Command)
-	return len(f) >= 2 && f[0] == core.Product && f[1] == "hook"
+	f := strings.Fields(command)
+	return fields, len(f) >= 2 && f[0] == core.Product && f[1] == "hook"
 }
 
-// isExact reports whether an own handler is exactly the row's: type command, the command, no other
-// field.
-func isExact(h json.RawMessage, command string) bool {
-	var v map[string]any
-	if json.Unmarshal(h, &v) != nil {
-		return false
-	}
-	return len(v) == 2 && v["type"] == "command" && v["command"] == command
+// isExact reports whether an own handler runs the row's command as a command; every other field
+// is the owner's and is no drift.
+func isExact(fields map[string]json.RawMessage, command string) bool {
+	var typ, cmd string
+	return json.Unmarshal(fields["type"], &typ) == nil && json.Unmarshal(fields["command"], &cmd) == nil &&
+		typ == "command" && cmd == command
 }
 
 // parseObject parses raw as a JSON object; an absent, blank or null value is an empty object.
