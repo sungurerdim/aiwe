@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 module github.com/sungurerdim/aiwe
 
 go 1.27.3

@@ -1,7 +1,9 @@
 package repocheck
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"regexp"
 	"strings"
 
@@ -17,6 +19,7 @@ const (
 	licenceFile           = "LICENSE"
 	conductFile           = "CODE_OF_CONDUCT.md"
 	securityFile          = "SECURITY.md"
+	moduleFile            = "go.mod"
 	licenceIdentifier     = "MIT"
 	covenantMarker        = "contributor-covenant.org/version/3/0"
 	privateReportingText  = "report a vulnerability"
@@ -60,22 +63,21 @@ func Rules(repo string) ([]Finding, error) {
 }
 
 // contentFindings returns the text findings of the standards' files that are present. absent names
-// the files the existence rule already reported. A file that is present but cannot be read as text
-// is an error, never a pass or a skip: its text was not judged (DR-6).
+// the files the existence rule already reported. A file the list does not name and the repository
+// lacks has no text to judge: the file rule owns absence, so it is skipped. A file that is present
+// but cannot be read as text is an error, never a pass or a skip: its text was not judged (DR-6).
 func contentFindings(repo string, absent []Finding) ([]Finding, error) {
 	var found []Finding
-	bodies := map[string]string{}
 	for _, c := range textChecks() {
 		if reported(absent, c.path) {
 			continue
 		}
-		body, read := bodies[c.path]
-		if !read {
-			var err error
-			if body, err = readStandardText(repo, c.path); err != nil {
-				return nil, err
-			}
-			bodies[c.path] = body
+		body, err := readStandardText(repo, c.path)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, err
 		}
 		if !c.stated(body) {
 			found = append(found, Finding{Rule: c.rule, Path: c.path})
@@ -105,11 +107,11 @@ type textCheck struct {
 	stated func(string) bool
 }
 
-// textChecks are the four files a standard names, each with the statement that satisfies it.
+// textChecks are the files a standard names, each with the statement that satisfies it.
 func textChecks() []textCheck {
 	return []textCheck{
 		{licenceFile, ruleWrongLicenceText, statesMITLicence},
-		{licenceFile, ruleWrongSPDX, statesSPDXIdentifier},
+		{moduleFile, ruleWrongSPDX, statesSPDXIdentifier},
 		{conductFile, ruleUnstatedStandard, statesCovenant},
 		{securityFile, ruleUnstatedStandard, statesPrivateReporting},
 	}
@@ -133,18 +135,19 @@ func statesPrivateReporting(body string) bool {
 	return strings.Contains(strings.ToLower(body), privateReportingText)
 }
 
-// statesSPDXIdentifier reports the licence identifier STD-44 wants next to the licence: at least
-// one `SPDX-License-Identifier:` line, and every such line naming MIT, the licence the LICENSE
-// carries. STD-44 places it "next to the licence", so the LICENSE is read, not the module metadata.
-// A missing identifier is not a pass: the shipped LICENSE carries none, and a rule that passes on
-// absence can never be red there. Another identifier, an empty one or a compound one such as
-// "MIT OR Apache-2.0" tells a consumer a permission the licence text does not give. The line is read
-// as internal/core/tools.go spdxLicence reads it (line start after a byte order mark and spaces,
-// same prefix); unlike it, the whole remainder must be the identifier, not its first word.
+// statesSPDXIdentifier reports the licence identifier STD-44 wants in the package metadata: at least
+// one `SPDX-License-Identifier:` line, as a `//` comment of go.mod, and every such line naming MIT,
+// the licence the LICENSE carries. The owner put it in go.mod, so go.mod is read, not LICENSE. A
+// missing identifier is not a pass: a rule that passes on absence can never be red. Another
+// identifier, an empty one or a compound one such as "MIT OR Apache-2.0" tells a consumer a
+// permission the licence text does not give. The line is read as internal/core/tools.go spdxLicence
+// reads it (line start after a byte order mark, spaces and the comment marker, same prefix); unlike
+// it, the whole remainder must be the identifier, not its first word.
 func statesSPDXIdentifier(body string) bool {
 	found := false
 	for _, line := range strings.Split(body, "\n") {
 		line = strings.TrimSpace(strings.TrimPrefix(line, "\uFEFF"))
+		line = strings.TrimSpace(strings.TrimPrefix(line, "//"))
 		if !strings.HasPrefix(line, spdxIdentifierPrefix) {
 			continue
 		}
