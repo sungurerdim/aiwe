@@ -14,7 +14,7 @@ import (
 var idShape = regexp.MustCompile(`^W-[0-9A-HJKMNP-TV-Z]{6}$`)
 
 // idNow is a fixed instant, so every id in these tests is reproducible.
-var idNow = time.Date(2026, 10, 25, 9, 30, 0, 0, time.UTC)
+func idNow() time.Time { return time.Date(2026, 10, 25, 9, 30, 0, 0, time.UTC) }
 
 // idRandom is a fixed random source of the two bytes an id draws.
 func idRandom(b0, b1 byte) *bytes.Reader { return bytes.NewReader([]byte{b0, b1}) }
@@ -31,7 +31,7 @@ func TestIDFormat(t *testing.T) {
 		b1   byte
 		want string
 	}{
-		{name: "a typical clock and random pair", now: idNow, b0: 0x3A, b1: 0xC5, want: "W-YW0EP5"},
+		{name: "a typical clock and random pair", now: idNow(), b0: 0x3A, b1: 0xC5, want: "W-YW0EP5"},
 		{name: "the epoch with no random bits is all zeros, not a short id", now: time.UnixMilli(0), b0: 0, b1: 0,
 			want: "W-000000"},
 		{name: "every drawn bit set reaches the last symbol of the alphabet", now: time.UnixMilli(0x3FFF),
@@ -60,7 +60,7 @@ func TestIDFormatAcrossManyDraws(t *testing.T) {
 	t.Parallel()
 	for b0 := 0; b0 < 256; b0 += 5 {
 		for b1 := 0; b1 < 256; b1 += 7 {
-			got, err := item.NewID(idNow.Add(time.Duration(b0*b1)*time.Millisecond), idRandom(byte(b0), byte(b1)))
+			got, err := item.NewID(idNow().Add(time.Duration(b0*b1)*time.Millisecond), idRandom(byte(b0), byte(b1)))
 			if err != nil {
 				t.Fatalf("NewID(%d, %d): %v", b0, b1, err)
 			}
@@ -76,11 +76,11 @@ func TestIDFormatAcrossManyDraws(t *testing.T) {
 // collide for every item made in one instant or for every item drawn from one random source.
 func TestIDDrawsOnClockAndRandom(t *testing.T) {
 	t.Parallel()
-	base, err := item.NewID(idNow, idRandom(0x3A, 0xC5))
+	base, err := item.NewID(idNow(), idRandom(0x3A, 0xC5))
 	if err != nil {
 		t.Fatalf("NewID base: %v", err)
 	}
-	again, err := item.NewID(idNow, idRandom(0x3A, 0xC5))
+	again, err := item.NewID(idNow(), idRandom(0x3A, 0xC5))
 	if err != nil {
 		t.Fatalf("NewID again: %v", err)
 	}
@@ -94,11 +94,11 @@ func TestIDDrawsOnClockAndRandom(t *testing.T) {
 		b1   byte
 		want string
 	}{
-		{name: "the clock moves by one millisecond", now: idNow.Add(time.Millisecond), b0: 0x3A, b1: 0xC5,
+		{name: "the clock moves by one millisecond", now: idNow().Add(time.Millisecond), b0: 0x3A, b1: 0xC5,
 			want: "W-YW2EP5"},
-		{name: "the clock moves by one hour", now: idNow.Add(time.Hour), b0: 0x3A, b1: 0xC5, want: "W-P40EP5"},
-		{name: "the low random byte changes", now: idNow, b0: 0x3A, b1: 0xC6, want: "W-YW0EP6"},
-		{name: "the high random byte changes", now: idNow, b0: 0x3B, b1: 0xC5},
+		{name: "the clock moves by one hour", now: idNow().Add(time.Hour), b0: 0x3A, b1: 0xC5, want: "W-P40EP5"},
+		{name: "the low random byte changes", now: idNow(), b0: 0x3A, b1: 0xC6, want: "W-YW0EP6"},
+		{name: "the high random byte changes", now: idNow(), b0: 0x3B, b1: 0xC5},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -131,7 +131,7 @@ func TestIDRefusesShortRandomSource(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := item.NewID(idNow, tt.source)
+			got, err := item.NewID(idNow(), tt.source)
 			if err == nil {
 				t.Fatalf("NewID = %q with no error, want an error for a short random source", got)
 			}
@@ -142,7 +142,7 @@ func TestIDRefusesShortRandomSource(t *testing.T) {
 	}
 	t.Run("the source fails", func(t *testing.T) {
 		t.Parallel()
-		got, err := item.NewID(idNow, iotest.ErrReader(iotest.ErrTimeout))
+		got, err := item.NewID(idNow(), iotest.ErrReader(iotest.ErrTimeout))
 		if err == nil || got != "" {
 			t.Fatalf("NewID = %q, %v; want an empty id and the source error", got, err)
 		}

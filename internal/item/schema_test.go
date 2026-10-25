@@ -15,12 +15,12 @@ import (
 
 // schemaPath is work/schema.json, the one owner of the record format (SPEC §8.4), relative to this
 // package's directory.
-var schemaPath = filepath.Join("..", "..", "work", "schema.json")
+func schemaPath() string { return filepath.Join("..", "..", "work", "schema.json") }
 
 // readSchema parses work/schema.json.
 func readSchema(t *testing.T) map[string]any {
 	t.Helper()
-	data, err := os.ReadFile(schemaPath)
+	data, err := os.ReadFile(schemaPath())
 	if err != nil {
 		t.Fatalf("read the schema: %v", err)
 	}

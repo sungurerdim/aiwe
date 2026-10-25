@@ -21,7 +21,7 @@ func fullRecord() item.Record {
 		Title:    "Item records get a stable id and one versioned schema",
 		Type:     item.TypeStory,
 		Status:   item.StatusActive,
-		Repo:     "github.com/sungurerdim/aiwe",
+		Repo:     "github.com/example/project",
 		Outcome:  "Every work item keeps one name for its whole life.",
 		Flow:     "feature",
 		Quality:  "maintainability",
