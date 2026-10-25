@@ -300,8 +300,7 @@ A row cites a registry id in `principle` or an id of `catalog/problems.json`; on
 3. Run each row's check; a `not_measured` row stays so.
 4. For each failing row, compute the fingerprint `sync:<catalogue-id>:<path>`.
 5. An open or `waiting` item with that fingerprint is left alone; a `cancelled` one is not reopened unless the row changed; a `done` one whose row now fails again is reopened with a note.
-6. Otherwise open an item from the row's template, with its `done` criteria and the check as `verify`, through `aiwe item new` (§8.4).
+6. Otherwise open an item from the row's template, with its `done` criteria and the check as `verify`, through `aiwe item new` (§8.4), only while fewer than 10 sync items are open or waiting (its work-in-progress limit); findings are taken in priority order (L23), ties in catalogue order.
 7. Print the counts: rows checked, passing, failing, `not_measured`, items opened.
 
-Sync opens at most the top 10 failing findings as items; that is its work-in-progress limit, and the rest are not opened as items.
 Invariants: a run changes nothing in the project's files, only its `work/` store; two runs on the same tree open the same items once; the fingerprint, not the title, decides identity. `--incremental` checks the rows whose inputs changed since the last run (by the cache key of §7.8). Acceptance: on a repository that passes every binding row, `aiwe sync` opens no item; after one row is made to fail, it opens exactly one; a second run opens none.
