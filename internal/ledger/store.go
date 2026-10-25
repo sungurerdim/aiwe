@@ -97,6 +97,12 @@ func decodeRecord(kind Kind, line string) (Record, error) {
 			return nil, refuse("a check record", err.Error())
 		}
 		return check, nil
+	case KindEvent:
+		var event Event
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			return nil, refuse("an event record", err.Error())
+		}
+		return event, nil
 	}
 	return nil, refuse(fmt.Sprintf("kind %q or %q", KindRun, KindCheck), fmt.Sprintf("kind %q", kind))
 }

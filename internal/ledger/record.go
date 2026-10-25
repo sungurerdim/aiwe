@@ -29,6 +29,9 @@ const (
 	KindCheck Kind = "check"
 )
 
+// KindEvent is the kind of one lifecycle event of an item (K45, SPEC §8.5).
+const KindEvent Kind = "event"
+
 // Header holds the fields every ledger record carries: the schema version, the kind of the record,
 // its instant, and the repository, goal, unit and run it belongs to (SPEC §8.5).
 type Header struct {
@@ -162,6 +165,8 @@ func validateRecord(rec Record) error {
 	case Run:
 		return r.validate()
 	case Check:
+		return r.validate()
+	case Event:
 		return r.validate()
 	}
 	return refuse("a run or a check record", fmt.Sprintf("%T", rec))
