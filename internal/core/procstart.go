@@ -37,10 +37,17 @@ func CurrentProcess() (ProcessID, error) {
 	return p, nil
 }
 
-// ownerAlive reports whether p still runs: the pid runs and its start matches. A p with an exact
+// OwnerAlive reports whether p still runs: the pid runs and its start matches. A p with an exact
 // start identity is compared by startID; any other by the OS start time within startTolerance, which
 // on Linux has no limit: a p built by hand counts as alive while its pid runs. When the start cannot
-// be read, the owner counts as alive, so nothing is removed (fail-closed).
+// be read, the owner counts as alive, so nothing is removed (fail-closed). A process that exited
+// does not run, even while an open handle keeps the OS naming its pid: on Windows the exit code
+// decides, not whether the pid opens. The engine's claim table judges the holder of a claim with it.
+func OwnerAlive(p ProcessID) bool {
+	return ownerAlive(p)
+}
+
+// ownerAlive is OwnerAlive, the name the sweep judges temp owners with.
 func ownerAlive(p ProcessID) bool {
 	if p.id != "" {
 		id, running, err := startID(p.PID)

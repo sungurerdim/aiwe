@@ -252,10 +252,12 @@ func (c *Claims) create(ctx context.Context, claim Claim) error {
 type processState int
 
 const (
-	// processUnknown is a probe that learned nothing about the id: the OS refused to open the
-	// process, or answered with no proof that it is gone. The claim stays (fail-closed, DR-11).
+	// processUnknown is a probe that learned nothing about the id: no proof that it is gone. The
+	// claim stays (fail-closed, DR-11). probeProcess folds it into processAlive, which keeps the
+	// claim the same way.
 	processUnknown processState = iota
-	// processAlive is an id the OS confirms still names a running process.
+	// processAlive is an id core.OwnerAlive does not prove gone: a running process with the
+	// recorded start, or one whose start the OS would not give (fail-closed).
 	processAlive
 	// processGone is an id the OS confirms is no longer there.
 	processGone
@@ -270,9 +272,8 @@ type processProbe func(core.ProcessID) processState
 // the process is gone frees its unit: an id the OS refuses to inspect, which is how it answers for a
 // live process of another user, keeps the claim, and every other answer that is no proof of death
 // keeps it too (fail-closed, DR-11); lock_io.go holds which answers those are. A pid another process
-// now runs counts as alive as well: this probe reads no start time, and only core reads the start of
-// another process (core/procstart.go), so the unit of a pid a dead holder left behind stays claimed
-// until an owner releases it (DR-11).
+// now runs is judged by the start the claim recorded (core.OwnerAlive): where the OS start moves with
+// the clock (Linux) a running pid keeps its claim until an owner releases it (DR-11).
 func (c *Claims) holderAlive(owner core.ProcessID) bool {
 	if owner.PID <= 0 {
 		return false

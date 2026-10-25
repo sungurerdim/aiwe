@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"syscall"
 
 	"github.com/sungurerdim/aiwe/internal/core"
 )
@@ -161,39 +160,16 @@ func dropClaimTicket(root *os.Root, ticket string) error {
 	return fmt.Errorf("remove the claim ticket %s: %w", ticket, err)
 }
 
-// probeProcess asks the OS whether the process with the id owner still runs: the id is opened, and a
-// process handed over is probed with signal 0, which asks about it without touching it. Only an
-// answer that no process runs under the id counts as gone: os.ErrProcessDone, which the process
-// handle answers once the process ended, and ESRCH, which the signal call answers with on Unix when
-// no process runs under the id. An id the OS refuses to inspect keeps its claim: that is how it
-// answers for a live process of another user (fail-closed, DR-11). An id the OS cannot open at all
-// names no process, and on Windows this failed open is the only answer a dead holder leaves, since
-// it supports no signal 0; a claim nothing would reclaim blocks its unit for good. A pid another
-// process now runs answers alive, since this probe reads no start time. The handle is released
-// before the probe returns: on Windows an open handle keeps the object of an exited process, so a
-// handle left to the GC would keep the OS naming a dead holder's pid and its claim refused (#380).
+// probeProcess asks the OS whether the process with the id owner still runs, through
+// core.OwnerAlive: the pid must run and its start must match the one the claim recorded. A process
+// that exited is gone even while an open handle keeps the OS naming its pid: on Windows its exit
+// code decides, never whether the pid opens, since Windows supports no signal 0 and the object of
+// an exited process lives on while any handle (a scanner's, a parent's) is open (#380). A pid another
+// process now runs answers gone once its start differs. A start the OS refuses to give counts as
+// alive, which is how it answers for a live process of another user (fail-closed, DR-11).
 func probeProcess(owner core.ProcessID) processState {
-	proc, err := os.FindProcess(owner.PID)
-	if err != nil {
-		if errors.Is(err, fs.ErrPermission) {
-			// The OS refused to look at the id: a live process this run may not inspect.
-			return processUnknown
-		}
-		// The OS answered about the id, and no process runs under it.
-		return processGone
-	}
-	if proc == nil {
-		// An id the OS neither refused nor handed over says nothing about its process.
-		return processUnknown
-	}
-	defer func() { _ = proc.Release() }()
-	err = proc.Signal(syscall.Signal(0))
-	switch {
-	case err == nil:
+	if core.OwnerAlive(owner) {
 		return processAlive
-	case errors.Is(err, os.ErrProcessDone), errors.Is(err, syscall.ESRCH):
-		return processGone
-	default:
-		return processUnknown
 	}
+	return processGone
 }
