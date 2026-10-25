@@ -1,0 +1,233 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "aiwe work item",
+  "description": "One work item record, SPEC-contracts section 8.4. The Go type is item.Record; item.SchemaVersion is the version v. An item has no time field: every time is an event of the ledger.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["v", "id", "title", "type", "status", "repo", "outcome", "flow", "quality", "priority", "severity", "review", "area"],
+  "properties": {
+    "v": {"const": 1},
+    "id": {"type": "string", "pattern": "^W-[0-9A-HJKMNP-TV-Z]{6}$"},
+    "title": {"type": "string", "maxLength": 72},
+    "type": {"enum": ["goal", "epic", "story", "task", "bug", "spike", "chore", "owner-action"]},
+    "status": {"enum": ["open", "active", "waiting", "deferred", "done", "cancelled"]},
+    "repo": {"type": "string"},
+    "outcome": {"type": "string"},
+    "flow": {"type": "string"},
+    "quality": {"type": "string"},
+    "priority": {"type": "string"},
+    "severity": {"type": "string"},
+    "key": {"type": "string"},
+    "rules": {"type": "array", "items": {"type": "string"}},
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "required": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "parent": {"type": "string"},
+    "area": {"type": "string"},
+    "areasRelated": {"type": "array", "items": {"type": "string"}},
+    "blockedBy": {"type": "array", "items": {"type": "string"}},
+    "related": {"type": "array", "items": {"type": "string"}},
+    "urgency": {"type": "string"},
+    "tags": {"type": "array", "items": {"type": "string"}},
+    "writers": {"type": "array", "items": {"type": "string"}},
+    "reviews": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "role": {"type": "string"},
+          "verdict": {"type": "string"},
+          "runId": {"type": "string"},
+          "session": {"type": "string"},
+          "evidence": {"type": "string"}
+        }
+      }
+    },
+    "problem": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "symptom": {"type": "string"},
+        "expected": {"type": "string"},
+        "cause": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "state": {"type": "string"},
+            "text": {"type": "string"}
+          }
+        },
+        "impact": {"type": "string"},
+        "affected": {"type": "array", "items": {"type": "string"}},
+        "class": {"type": "string"}
+      }
+    },
+    "need": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "problemEvidence": {"type": "string"},
+        "deleteOption": {"type": "string"},
+        "existing": {"type": "string"},
+        "smallestChange": {"type": "string"},
+        "alternatives": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "what": {"type": "string"},
+              "files": {"type": "array", "items": {"type": "string"}},
+              "whyNot": {"type": "string"}
+            }
+          }
+        },
+        "ifNotDone": {"type": "string"},
+        "risksNotAdded": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "risk": {"type": "string"},
+              "likelihood": {"type": "string"},
+              "complexity": {"type": "string"}
+            }
+          }
+        }
+      }
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "in": {"type": "array", "items": {"type": "string"}},
+        "new": {"type": "array", "items": {"type": "string"}},
+        "out": {"type": "array", "items": {"type": "string"}},
+        "constraints": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "estimate": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "files": {"type": "integer"},
+        "lines": {"type": "integer"}
+      }
+    },
+    "done": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {"type": "string"},
+          "check": {"type": "string"},
+          "expect": {"type": "string"},
+          "judgement": {"type": "string"},
+          "text": {"type": "string"}
+        }
+      }
+    },
+    "steps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "do": {"type": "string"},
+          "at": {"type": "string"}
+        }
+      }
+    },
+    "red": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "check": {"type": "string"},
+        "base": {"type": "string"},
+        "items": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "distinct": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {"type": "string"},
+          "reason": {"type": "string"}
+        }
+      }
+    },
+    "legacy": {"type": "boolean"},
+    "context": {"type": "string"},
+    "timebox": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "hours": {"type": "integer"},
+        "sessions": {"type": "integer"}
+      }
+    },
+    "decisions": {"type": "array", "items": {"type": "string"}},
+    "defer": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "until": {"type": "string"},
+        "after": {"type": "string"},
+        "reason": {"type": "string"}
+      }
+    },
+    "waiting": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "on": {"type": "string"},
+        "questionFile": {"type": "string"},
+        "options": {"type": "array", "items": {"type": "string"}},
+        "recommendation": {"type": "string"}
+      }
+    },
+    "cancel": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "reason": {"type": "string"},
+        "supersededBy": {"type": "string"}
+      }
+    },
+    "handoff": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "state": {"type": "string"},
+        "next": {"type": "string"}
+      }
+    },
+    "close": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "commit": {"type": "string"},
+        "verifyOutputPath": {"type": "string"},
+        "effect": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "line": {"type": "string"},
+            "what": {"type": "string"},
+            "before": {"type": "string"},
+            "after": {"type": "string"}
+          }
+        }
+      }
+    }
+  }
+}
