@@ -117,6 +117,11 @@ func TestDoctorGoFilesEmptyRepo(t *testing.T) {
 	}
 }
 
+// doctorIOReadWait is how long a repository read may run before it counts as blocked. The test only
+// proves the read does not block forever, so the wait is generous: a 4 MiB read took over 1 s on a
+// 2-core windows-latest runner while the whole package ran in parallel.
+const doctorIOReadWait = 10 * time.Second
+
 // TestDoctorGoFilesNotRegular catches a doctor walk that hangs on a FIFO named x.go, or later reads
 // it as an empty Go file, or reads a Go file of any size (#199). The cap is 4 MiB.
 func TestDoctorGoFilesNotRegular(t *testing.T) {
@@ -158,12 +163,12 @@ func TestDoctorGoFilesNotRegular(t *testing.T) {
 				if err == nil || !strings.Contains(err.Error(), "x.go") {
 					t.Fatalf("GoFiles = %v; want an error that names x.go", err)
 				}
-			case <-time.After(time.Second):
+			case <-time.After(doctorIOReadWait):
 				if w, err := os.OpenFile(path, os.O_WRONLY, 0); err == nil {
 					_ = w.Close()
 				}
 				<-done
-				t.Fatal("GoFiles still blocked after 1 s; want a named error")
+				t.Fatalf("GoFiles still blocked after %s; want a named error", doctorIOReadWait)
 			}
 		})
 	}
