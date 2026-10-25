@@ -252,13 +252,10 @@ func (c *Claims) create(ctx context.Context, claim Claim) error {
 type processState int
 
 const (
-	// processUnknown is a probe that learned nothing about the id: no proof that it is gone. The
-	// claim stays (fail-closed, DR-11). probeProcess folds it into processAlive, which keeps the
-	// claim the same way.
-	processUnknown processState = iota
-	// processAlive is an id core.OwnerAlive does not prove gone: a running process with the
-	// recorded start, or one whose start the OS would not give (fail-closed).
-	processAlive
+	// processAlive is an id the probe does not prove gone: a running process with the recorded
+	// start, one whose start the OS would not give, or a claim with no start recorded. The claim
+	// stays (fail-closed, DR-11); it is the zero state, so a probe that sets nothing keeps it too.
+	processAlive processState = iota
 	// processGone is an id the OS confirms is no longer there.
 	processGone
 )
@@ -284,7 +281,9 @@ func (c *Claims) holderAlive(owner core.ProcessID) bool {
 	return c.probe(owner) != processGone
 }
 
-// checkClaim refuses a claim that names no unit, no plain run id or no holder process.
+// checkClaim refuses a claim that names no unit, no plain run id or no holder process with its start
+// time: the probe judges a holder by the start its claim recorded, so a claim without one could never
+// be told from a pid another process now runs.
 func checkClaim(claim Claim) error {
 	if claim.Unit <= 0 {
 		return fmt.Errorf("claim: unit %d: want a positive unit number", claim.Unit)
@@ -295,6 +294,9 @@ func checkClaim(claim Claim) error {
 	}
 	if claim.Owner.PID <= 0 {
 		return fmt.Errorf("claim of unit %d: process %d: want a process id", claim.Unit, claim.Owner.PID)
+	}
+	if claim.Owner.Start.IsZero() {
+		return fmt.Errorf("claim of unit %d: process %d: want its start time", claim.Unit, claim.Owner.PID)
 	}
 	return nil
 }

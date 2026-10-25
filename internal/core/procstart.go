@@ -44,11 +44,6 @@ func CurrentProcess() (ProcessID, error) {
 // does not run, even while an open handle keeps the OS naming its pid: on Windows the exit code
 // decides, not whether the pid opens. The engine's claim table judges the holder of a claim with it.
 func OwnerAlive(p ProcessID) bool {
-	return ownerAlive(p)
-}
-
-// ownerAlive is OwnerAlive, the name the sweep judges temp owners with.
-func ownerAlive(p ProcessID) bool {
 	if p.id != "" {
 		id, running, err := startID(p.PID)
 		return err != nil || running && id == p.id
@@ -66,6 +61,10 @@ func ownerAlive(p ProcessID) bool {
 	}
 	return d <= startTolerance()
 }
+
+// ownerAlive is OwnerAlive under the name sweep.go calls; it stays only until sweep.go, outside
+// this unit's file set, calls OwnerAlive.
+var ownerAlive = OwnerAlive
 
 // startTolerance is how far the OS start time of a p without an exact start identity may lie from
 // p.Start. On Windows and macOS the start is a stored value, read the same way at every call, so the

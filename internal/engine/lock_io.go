@@ -166,9 +166,11 @@ func dropClaimTicket(root *os.Root, ticket string) error {
 // code decides, never whether the pid opens, since Windows supports no signal 0 and the object of
 // an exited process lives on while any handle (a scanner's, a parent's) is open (#380). A pid another
 // process now runs answers gone once its start differs. A start the OS refuses to give counts as
-// alive, which is how it answers for a live process of another user (fail-closed, DR-11).
+// alive, which is how it answers for a live process of another user, and so does a claim with no
+// start recorded, which a damaged or older claim file can hold: a zero start proves nothing about
+// the process (fail-closed, DR-11).
 func probeProcess(owner core.ProcessID) processState {
-	if core.OwnerAlive(owner) {
+	if owner.Start.IsZero() || core.OwnerAlive(owner) {
 		return processAlive
 	}
 	return processGone
