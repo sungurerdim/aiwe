@@ -303,4 +303,5 @@ A row cites a registry id in `principle` or an id of `catalog/problems.json`; on
 6. Otherwise open an item from the row's template, with its `done` criteria and the check as `verify`, through `aiwe item new` (§8.4).
 7. Print the counts: rows checked, passing, failing, `not_measured`, items opened.
 
+Sync opens at most the top 10 failing findings as items; that is its work-in-progress limit, and the rest are not opened as items.
 Invariants: a run changes nothing in the project's files, only its `work/` store; two runs on the same tree open the same items once; the fingerprint, not the title, decides identity. `--incremental` checks the rows whose inputs changed since the last run (by the cache key of §7.8). Acceptance: on a repository that passes every binding row, `aiwe sync` opens no item; after one row is made to fail, it opens exactly one; a second run opens none.
