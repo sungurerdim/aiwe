@@ -160,10 +160,8 @@ func refuseCheck(check string, env Env) string {
 	if err != nil {
 		return err.Error()
 	}
-	for _, arg := range argv {
-		if headRelative.MatchString(arg) {
-			return "an argument names a revision that moves with HEAD"
-		}
+	if slices.ContainsFunc(argv, headRelative.MatchString) {
+		return "an argument names a revision that moves with HEAD"
 	}
 	// A check that is not blank holds a token; the length test only keeps argv[0] in range.
 	if len(argv) == 0 || argv[0] == "" || !env.Resolves(argv[0]) {
