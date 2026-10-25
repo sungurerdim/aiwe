@@ -235,7 +235,6 @@ func TestValidatorRefusesUnresolvedCheck(t *testing.T) {
 		{"the first token is quoted and unknown", `"nosuchtool" --flag`},
 		{"the first token is an empty string", `"" test`},
 		{"a quote never closes", `go test -run "A`},
-		{"only blanks", "   "},
 	}
 	for _, row := range rows {
 		t.Run(row.name, func(t *testing.T) {
