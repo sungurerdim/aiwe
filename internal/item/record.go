@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"slices"
 )
 
@@ -292,7 +293,8 @@ func Decode(data []byte) (Record, error) {
 	if err := dec.Decode(&r); err != nil {
 		return Record{}, fmt.Errorf("item record: %w", err)
 	}
-	if dec.More() {
+	// dec.More is false before a } or ], so only io.EOF proves nothing follows the object.
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
 		return Record{}, errors.New("item record: data after the JSON object")
 	}
 	return r, nil
