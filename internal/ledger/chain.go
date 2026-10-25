@@ -38,7 +38,8 @@ func hashLine(line []byte) (string, error) {
 // canonicalBytes returns the RFC 8785 (JCS) bytes of the one JSON value in data: keys sorted by UTF-16
 // code units, no whitespace, strings and numbers in the form of ECMAScript JSON.stringify (SPEC §17).
 // Input outside I-JSON (RFC 7493), which RFC 8785 requires, is refused, never canonicalized loosely:
-// non-UTF-8 bytes, a lone surrogate, a key twice, a number beyond float64 or an integer it rewrites.
+// non-UTF-8 bytes, a lone surrogate, a key twice, a number beyond float64, an integer literal it
+// rewrites. A fraction or an exponent is rounded to the nearest float64, as RFC 8785 does.
 func canonicalBytes(data []byte) ([]byte, error) {
 	p := &jcsParser{data: data}
 	out, err := p.value(0)
@@ -332,8 +333,10 @@ func (p *jcsParser) exponentDigits() int {
 }
 
 // numberForm returns the ECMAScript form of lit (RFC 8785 §3.2.2.3); integer: no fraction or exponent.
-// A number beyond float64 range is refused, and so is an integer float64 writes in another form, such
-// as an int64 above 2^53, which it rounds: two counts would have one hash (I-JSON, RFC 7493 §2.2).
+// A number beyond float64 range is refused, and so is an integer literal float64 writes in another
+// form, such as an int64 above 2^53, which it rounds: two counts would have one hash (I-JSON, RFC 7493
+// §2.2). A literal with a fraction or an exponent is rounded to the nearest float64, as RFC 8785 does:
+// 9007199254740993.0 is accepted and written 9007199254740992. Go writes no int64 in that form.
 func (p *jcsParser) numberForm(lit string, integer bool) ([]byte, error) {
 	f, err := strconv.ParseFloat(lit, 64)
 	if err != nil {
