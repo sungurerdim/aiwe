@@ -215,8 +215,8 @@ func installed(t *testing.T, matcher, handler string) string {
 }
 
 // TestInstallKeepsOwnerFields proves install rewrites only what is its own in its entry, the
-// command: every field the owner added, such as onFailure or a timeout, stays, and an entry that
-// already runs the row's command is no drift (security review B2).
+// command: every field the owner added that the row keeps, a timeout or a status message, stays,
+// and an entry that already runs the row's command is no drift (security review B2).
 func TestInstallKeepsOwnerFields(t *testing.T) {
 	t.Parallel()
 	pre := core.Product + " hook pre-tool"
@@ -233,12 +233,12 @@ func TestInstallKeepsOwnerFields(t *testing.T) {
 		handler string
 		change  bool
 	}{
-		{"owner hardened the entry", "an owner's onFailure and timeout stripped as drift, so the hook fails open",
-			row.Matcher, `{"type":"command","command":"` + pre + `","onFailure":"block","timeout":5}`, false},
+		{"owner tuned the entry", "an owner's timeout and status message stripped as drift",
+			row.Matcher, `{"type":"command","command":"` + pre + `","statusMessage":"guard","timeout":5}`, false},
 		{"command drifted", "a repair that drops the owner's fields while it restores the command",
-			row.Matcher, `{"type":"command","command":"` + pre + ` --off","onFailure":"block","timeout":5}`, true},
+			row.Matcher, `{"type":"command","command":"` + pre + ` --off","statusMessage":"guard","timeout":5}`, true},
 		{"entry under the old matcher", "the owner's fields lost when the entry moves to the row's matcher",
-			"Bash", `{"type":"command","command":"` + pre + `","onFailure":"block","timeout":5}`, true},
+			"Bash", `{"type":"command","command":"` + pre + `","statusMessage":"guard","timeout":5}`, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -252,13 +252,47 @@ func TestInstallKeepsOwnerFields(t *testing.T) {
 				t.Fatalf("install = %v, %v; want a change %v; catches: %s", changes, err, tc.change, tc.catches)
 			}
 			own := ownHandlers(t, decode(t, readBytes(t, home, h)), "PreToolUse")
-			want := map[string]any{"type": "command", "command": pre, "onFailure": "block", "timeout": float64(5)}
+			want := map[string]any{"type": "command", "command": pre, "statusMessage": "guard", "timeout": float64(5)}
 			if len(own) != 1 || !reflect.DeepEqual(own[0], want) {
 				t.Errorf("PreToolUse own handlers = %v, want exactly %v; catches: %s", own, want, tc.catches)
 			}
 			assertMatchers(t, decode(t, readBytes(t, home, h)), tc.catches)
 			if !tc.change && string(readBytes(t, home, h)) != before {
 				t.Errorf("install rewrote settings it reported no change for; catches: %s", tc.catches)
+			}
+		})
+	}
+}
+
+// TestInstallRepairsFieldsThatDisarm proves an own handler with a field that changes whether or how
+// it runs is drift: repair removes the field and reports it, so the guard is never "up to date"
+// while it no longer blocks (security re-review N1).
+func TestInstallRepairsFieldsThatDisarm(t *testing.T) {
+	t.Parallel()
+	pre := core.Product + " hook pre-tool"
+	cases := []struct {
+		name    string
+		catches string
+		field   string
+	}{
+		{"async", "a handler run in the background, whose exit 2 blocks nothing, read as exact", `"async":true`},
+		{"if", "a handler narrowed to a rule that never matches read as exact", `"if":"Bash(zz-never-matches *)"`},
+		{"args", "a handler spawned as a program that does not exist read as exact", `"args":[]`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			home := t.TempDir()
+			h := claudeCode(t)
+			seed(t, home, h, installed(t, preToolMatcher(t), `{"type":"command","command":"`+pre+`",`+tc.field+`}`))
+			changes, err := Apply(home, h)
+			want := []Change{{Event: "PreToolUse", Action: actionRepair, Command: pre}}
+			if err != nil || !reflect.DeepEqual(changes, want) {
+				t.Fatalf("install = %v, %v; want %v; catches: %s", changes, err, want, tc.catches)
+			}
+			own := ownHandlers(t, decode(t, readBytes(t, home, h)), "PreToolUse")
+			if exact := map[string]any{"type": "command", "command": pre}; len(own) != 1 || !reflect.DeepEqual(own[0], exact) {
+				t.Errorf("PreToolUse own handlers = %v, want exactly %v; catches: %s", own, exact, tc.catches)
 			}
 		})
 	}
