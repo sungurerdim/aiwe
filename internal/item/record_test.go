@@ -353,3 +353,32 @@ func TestRecordRefusesTimeField(t *testing.T) {
 		walk(reflect.TypeFor[item.Record](), "Record")
 	})
 }
+
+// TestRecordRefusesTrailingData proves Decode reads exactly one JSON object and refuses any byte
+// after it but white space, so a damaged or concatenated item file is never read as a valid record.
+func TestRecordRefusesTrailingData(t *testing.T) {
+	t.Parallel()
+	whole := recordJSON(t, fullRecord())
+	if _, err := item.Decode(append(slices.Clone(whole), '\n')); err != nil {
+		t.Fatalf("Decode of a record with a trailing newline: %v", err)
+	}
+	tests := []struct {
+		name  string
+		after string
+	}{
+		{name: "a closing brace, which dec.More reports as no more data", after: "}"},
+		{name: "a closing bracket, which dec.More reports as no more data", after: "]"},
+		{name: "brackets then garbage after the object", after: "]]]garbage"},
+		{name: "garbage after the object", after: " garbage"},
+		{name: "a second object after the first", after: `{"v":1}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			data := append(slices.Clone(whole), tt.after...)
+			if _, err := item.Decode(data); err == nil {
+				t.Fatalf("Decode accepted a record followed by %q, want an error", tt.after)
+			}
+		})
+	}
+}
