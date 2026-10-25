@@ -3,10 +3,10 @@ package item
 import (
 	"errors"
 	"fmt"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
-	"unicode"
 )
 
 // Env is the outside world that validation needs, taken through an interface so that Validate stays
@@ -27,7 +27,8 @@ func (noEnv) Resolves(string) bool { return false }
 func (noEnv) Exists(string) bool   { return false }
 
 // Refusal is one defect of a record. Field names the field in the dotted form of the JSON keys,
-// with an index for a list entry, such as "done[0].check".
+// with an index for a list entry, such as "done[0].check". Reason never repeats the refused value,
+// which is untrusted text.
 type Refusal struct {
 	Field  string
 	Reason string
@@ -43,21 +44,23 @@ func (v *refusals) add(field, format string, args ...any) {
 	*v = append(*v, Refusal{Field: field, Reason: fmt.Sprintf(format, args...)})
 }
 
-// Validate applies the refusals of SPEC §8.4 to a record that already passed Decode and returns every
-// defect it finds, none for a record that breaks no rule. It refuses a version v other than
-// SchemaVersion, a missing field, a placeholder or a relative reference in a text, a shell operator
-// outside quotes or a HEAD-relative base in a check, a check whose first token does not resolve, a
-// scope.in path that does not exist and is not in scope.new, a scope.new path that exists, and a done
-// entry with neither a check nor a judgement role. Decode does not check v, so this is the place.
-// The K44 field rules, done-entry lint and status consistency are other units.
+// Validate applies the validator refusals of SPEC §8.4 to a record that already passed Decode and
+// returns every defect it finds, none for a record that breaks no rule. It refuses a version v other
+// than SchemaVersion, a missing field, a unit without scope.in (DR-7), a bidirectional control in
+// any field (STD-22), a placeholder or a relative reference in a free text, a shell operator outside
+// quotes or a revision that moves with HEAD in a check, a check whose first token does not resolve,
+// a scope.in path that does not exist and is not in scope.new, a scope.new path that exists, and a
+// done entry with neither a check nor a judgement role. Decode does not check v, so this is the
+// place. The K44 field rules, done-entry lint and status consistency are other units.
 func Validate(r Record, env Env) []Refusal {
 	if env == nil {
 		env = noEnv{}
 	}
 	var v refusals
 	v.required(r)
+	v.bidi(reflect.ValueOf(r), "")
 	v.texts(r)
-	v.scope(r.Scope, env)
+	v.scope(r, env)
 	v.done(r.Done, env)
 	return v
 }
@@ -80,20 +83,35 @@ func (v *refusals) required(r Record) {
 	}
 }
 
-// scope refuses a scope.in path that is neither there nor in scope.new, and a scope.new path that
-// is there already.
-func (v *refusals) scope(s *Scope, env Env) {
-	if s == nil {
-		return
+// isUnit reports whether t is a dispatchable leaf (SPEC §8.4): a unit carries its file set.
+func isUnit(t Type) bool {
+	switch t {
+	case TypeStory, TypeTask, TypeBug, TypeSpike, TypeChore:
+		return true
+	case TypeGoal, TypeEpic, TypeOwnerAction:
+		return false
+	}
+	return false
+}
+
+// scope refuses a unit without scope.in, a scope.in path that is neither there nor in scope.new, and
+// a scope.new path that is there already.
+func (v *refusals) scope(r Record, env Env) {
+	var s Scope
+	if r.Scope != nil {
+		s = *r.Scope
+	}
+	if len(s.In) == 0 && isUnit(r.Type) {
+		v.add("scope.in", "is missing: a unit names its file set (DR-7)")
 	}
 	for i, p := range s.In {
 		if !slices.Contains(s.New, p) && !env.Exists(p) {
-			v.add(fmt.Sprintf("scope.in[%d]", i), "path %q does not exist and is not in scope.new", p)
+			v.add(fmt.Sprintf("scope.in[%d]", i), "does not exist and is not in scope.new")
 		}
 	}
 	for i, p := range s.New {
 		if env.Exists(p) {
-			v.add(fmt.Sprintf("scope.new[%d]", i), "path %q exists already", p)
+			v.add(fmt.Sprintf("scope.new[%d]", i), "exists already")
 		}
 	}
 }
@@ -127,27 +145,28 @@ func (v *refusals) doneEntry(at string, d Done, env Env) {
 	}
 }
 
-// headRelative matches a base that moves with HEAD, such as HEAD~1 or HEAD^.
-var headRelative = regexp.MustCompile(`HEAD[~^]`)
+// headRelative matches a revision that moves with HEAD, in any case because git resolves refs
+// case-insensitively on some file systems: HEAD~n, HEAD^, HEAD@{n}, @~n, @^, @{n}, @{-n}, @ alone or
+// as the base of a range, and ORIG_HEAD. An @ after a letter, a digit, _ / or -, as in an email
+// address or a branch reflog, is not HEAD.
+var headRelative = regexp.MustCompile(`(?i)head(?:[~^]|@\{)|(?:^|[^\w/-])@[~^{]|^@(?:$|\.\.)|orig_head`)
 
 // refuseCheck returns why a check cannot run unattended, or "" when it can. A check is split into
 // argv by shell-style quoting and runs without a shell, so a shell operator outside quotes is
-// refused; it is checked here and never run.
+// refused; it is checked here and never run. The reason never repeats the check.
 func refuseCheck(check string, env Env) string {
 	argv, err := splitArgv(check)
 	if err != nil {
 		return err.Error()
 	}
-	if len(argv) == 0 {
-		return "is empty"
-	}
 	for _, arg := range argv {
 		if headRelative.MatchString(arg) {
-			return fmt.Sprintf("argument %q uses a HEAD-relative base", arg)
+			return "an argument names a revision that moves with HEAD"
 		}
 	}
-	if argv[0] == "" || !env.Resolves(argv[0]) {
-		return fmt.Sprintf("first token %q does not resolve", argv[0])
+	// A check that is not blank holds a token; the length test only keeps argv[0] in range.
+	if len(argv) == 0 || argv[0] == "" || !env.Resolves(argv[0]) {
+		return "the first token does not resolve"
 	}
 	return ""
 }
@@ -237,118 +256,4 @@ func (sc *argvScanner) unquoted(rs []rune, i int) (int, error) {
 		sc.cur, sc.inArg = append(sc.cur, c), true
 	}
 	return i, nil
-}
-
-// wordRule is a kind of word that a text must not hold, with the phrases of that kind.
-type wordRule struct {
-	kind    string
-	phrases []string
-}
-
-// wordRules are the placeholders and the relative references of SPEC §8.4, in lower case.
-func wordRules() []wordRule {
-	return []wordRule{
-		{"placeholder", []string{"tbd", "tba", "tbc", "etc", "fixme", "lorem ipsum", "to be determined", "to be decided"}},
-		{"relative reference", []string{"above", "below", "ditto", "same as", "as before", "as mentioned", "the latter", "the former"}},
-	}
-}
-
-// words returns the words of s in lower case, each with a space before and after it. A word is a
-// run of letters, digits, underscore, hyphen and apostrophe; only ASCII is lower-cased (STD-37).
-func words(s string) string {
-	lower := strings.Map(func(r rune) rune {
-		if r >= 'A' && r <= 'Z' {
-			return r + 'a' - 'A'
-		}
-		return r
-	}, s)
-	parts := strings.FieldsFunc(lower, func(r rune) bool {
-		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_' && r != '-' && r != '\''
-	})
-	return " " + strings.Join(parts, " ") + " "
-}
-
-// namedText is one text field with its dotted name.
-type namedText struct{ field, value string }
-
-// texts refuses a placeholder or a relative reference in a text field. A path, a check, an id and a
-// done id are not text: the id of a done entry may name the very refusal it tests.
-func (v *refusals) texts(r Record) {
-	for _, t := range textFields(r) {
-		padded := words(t.value)
-		for _, rule := range wordRules() {
-			for _, p := range rule.phrases {
-				if strings.Contains(padded, " "+p+" ") {
-					v.add(t.field, "holds the %s %q", rule.kind, p)
-				}
-			}
-		}
-	}
-}
-
-// textFields lists the free-text fields of a record.
-func textFields(r Record) []namedText {
-	ts := []namedText{{"title", r.Title}, {"outcome", r.Outcome}, {"context", r.Context}}
-	ts = append(ts, problemTexts(r.Problem)...)
-	ts = append(ts, needTexts(r.Need)...)
-	if r.Scope != nil {
-		for i, c := range r.Scope.Constraints {
-			ts = append(ts, namedText{fmt.Sprintf("scope.constraints[%d]", i), c})
-		}
-	}
-	for i, s := range r.Steps {
-		ts = append(ts, namedText{fmt.Sprintf("steps[%d].do", i), s.Do})
-	}
-	for i, d := range r.Done {
-		ts = append(ts, namedText{fmt.Sprintf("done[%d].text", i), d.Text})
-	}
-	return append(ts, statusTexts(r)...)
-}
-
-func problemTexts(p *Problem) []namedText {
-	if p == nil {
-		return nil
-	}
-	return []namedText{
-		{"problem.symptom", p.Symptom}, {"problem.expected", p.Expected},
-		{"problem.cause.text", p.Cause.Text}, {"problem.impact", p.Impact},
-	}
-}
-
-func needTexts(n *Need) []namedText {
-	if n == nil {
-		return nil
-	}
-	ts := []namedText{
-		{"need.problemEvidence", n.ProblemEvidence}, {"need.deleteOption", n.DeleteOption},
-		{"need.existing", n.Existing}, {"need.smallestChange", n.SmallestChange},
-		{"need.ifNotDone", n.IfNotDone},
-	}
-	for i, a := range n.Alternatives {
-		ts = append(ts,
-			namedText{fmt.Sprintf("need.alternatives[%d].what", i), a.What},
-			namedText{fmt.Sprintf("need.alternatives[%d].whyNot", i), a.WhyNot})
-	}
-	return ts
-}
-
-// statusTexts lists the text fields that only some statuses carry.
-func statusTexts(r Record) []namedText {
-	var ts []namedText
-	if r.Defer != nil {
-		ts = append(ts, namedText{"defer.reason", r.Defer.Reason})
-	}
-	if r.Waiting != nil {
-		ts = append(ts, namedText{"waiting.recommendation", r.Waiting.Recommendation})
-	}
-	if r.Cancel != nil {
-		ts = append(ts, namedText{"cancel.reason", r.Cancel.Reason})
-	}
-	if r.Handoff != nil {
-		ts = append(ts, namedText{"handoff.state", r.Handoff.State}, namedText{"handoff.next", r.Handoff.Next})
-	}
-	if r.Close != nil {
-		ts = append(ts, namedText{"close.effect.line", r.Close.Effect.Line})
-	}
-	return ts
 }
