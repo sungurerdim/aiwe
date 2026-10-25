@@ -212,6 +212,9 @@ func TestEventRefusesPersonalData(t *testing.T) {
 		{"a path after a pipe in the evidence", func(e *Event) { e.Evidence = "exit 0 log|/home/u/x" }},
 		{"a Windows path in brackets in the evidence", func(e *Event) { e.Evidence = `exit 0 [C:\Users\x]` }},
 		{"an e-mail address with a non-ASCII domain", func(e *Event) { e.Evidence = "reviewed by ali@örnek.com.tr" }},
+		{"an e-mail address with a non-ASCII local part and domain", func(e *Event) { e.Evidence = "reviewed by barış@örnek.com.tr" }},
+		{"an e-mail address with a non-ASCII local part", func(e *Event) { e.Evidence = "reviewed by çağrı@example.com" }},
+		{"an upper-case file URL in the evidence", func(e *Event) { e.Evidence = "opened FILE:///home/u/x, exit 0" }},
 		{"an absolute path in the goal", func(e *Event) { e.Goal = "/home/sungur/goals/sk-06" }},
 		{"an absolute path in a landed file", func(e *Event) {
 			e.Files = []string{"internal/ledger/event.go", "/home/sungur/aiwe/internal/ledger/record.go"}
