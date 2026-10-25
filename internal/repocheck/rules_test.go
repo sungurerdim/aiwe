@@ -78,7 +78,7 @@ func rulesRepoFiles() []string {
 }
 
 // rulesRepoSpec writes a repository with spec as docs/SPEC.md and every §12.1 file except those
-// in skip. The three files a standard reads carry the text that standard asks for, so a case that
+// in skip. The four files a standard reads carry the text that standard asks for, so a case that
 // tests the file list is not answered by the text rules; the rest carry a one-line body.
 func rulesRepoSpec(t *testing.T, spec string, skip map[string]bool) string {
 	t.Helper()
@@ -92,7 +92,7 @@ func rulesRepoSpec(t *testing.T, spec string, skip map[string]bool) string {
 	return dir
 }
 
-// rulesFileBody is the body the fixture writes for rel: the statement a standard names for the three
+// rulesFileBody is the body the fixture writes for rel: the statement a standard names for the four
 // files one reads, and a one-line body for the rest.
 func rulesFileBody(rel string) string {
 	switch rel {
@@ -102,6 +102,8 @@ func rulesFileBody(rel string) string {
 		return conductText
 	case "SECURITY.md":
 		return securityText
+	case "go.mod":
+		return goModText
 	}
 	return "fixture\n"
 }
@@ -250,11 +252,9 @@ func TestRules(t *testing.T) {
 	})
 }
 
-// mitLicence is the licence text this repository ships (Q1, §12.1): the MIT grant with the SPDX
-// identifier next to it (STD-44), so a file that only exists is not enough.
+// mitLicence is the licence text this repository ships (Q1, §12.1): the MIT grant, so a file that
+// only exists is not enough.
 const mitLicence = `MIT License
-
-SPDX-License-Identifier: MIT
 
 Copyright (c) 2026 Fixture Owner
 
@@ -293,20 +293,31 @@ Report a vulnerability privately through this repository's **Security** tab →
 **Report a vulnerability**. Do not open a public issue.
 `
 
-// spdxLicence is mitLicence with id as its SPDX identifier.
-func spdxLicence(id string) string {
-	return strings.Replace(mitLicence, "SPDX-License-Identifier: MIT", "SPDX-License-Identifier: "+id, 1)
+// goModText is a go.mod that meets STD-44: its first line is the SPDX identifier comment.
+const goModText = `// SPDX-License-Identifier: MIT
+
+module github.com/fixture/zentra
+
+go 1.27.3
+
+require golang.org/x/sys v0.49.0
+`
+
+// goModWith is goModText with id as its SPDX identifier.
+func goModWith(id string) string {
+	return strings.Replace(goModText, "SPDX-License-Identifier: MIT", "SPDX-License-Identifier: "+id, 1)
 }
 
-// rulesRepoContent writes a repository whose three read-checked files carry the text each standard
-// names: the licence grant and its SPDX identifier (STD-1, STD-44), the covenant link (STD-2) and
-// the private channel (STD-29).
+// rulesRepoContent writes a repository whose four read-checked files carry the text each standard
+// names: the licence grant (STD-1), the covenant link (STD-2), the private channel (STD-29) and the
+// module's SPDX identifier (STD-44).
 func rulesRepoContent(t *testing.T) string {
 	t.Helper()
 	dir := rulesRepoSpec(t, rulesSpec(), nil)
 	writeRulesFile(t, dir, "LICENSE", mitLicence)
 	writeRulesFile(t, dir, "CODE_OF_CONDUCT.md", conductText)
 	writeRulesFile(t, dir, "SECURITY.md", securityText)
+	writeRulesFile(t, dir, "go.mod", goModText)
 	return dir
 }
 
@@ -377,38 +388,49 @@ func TestRulesContent(t *testing.T) {
 		}
 	})
 
-	t.Run("a licence whose SPDX identifier is not MIT is red", func(t *testing.T) {
-		// Guards STD-44: an identifier next to the grant that names another licence, or none at all,
-		// tells a consumer nothing true about what the licence text gives. A missing identifier is
-		// red: the shipped LICENSE carries none today, so a pass on absence could never turn this red.
+	t.Run("a go.mod whose SPDX identifier is not MIT is red", func(t *testing.T) {
+		// Guards STD-44: the module metadata names the licence in its first-line comment; another
+		// identifier, an empty one or none at all tells a consumer nothing true about the licence. A
+		// missing identifier is red, or a pass on absence could never turn this rule red.
 		for _, tc := range []struct{ name, body string }{
-			{"the Apache identifier", spdxLicence("Apache-2.0")},
-			{"a dual licence", spdxLicence("MIT OR Apache-2.0")},
-			{"the BSD identifier", spdxLicence("BSD-3-Clause")},
-			{"an empty identifier", spdxLicence("")},
-			{"no identifier line", strings.Replace(mitLicence, "SPDX-License-Identifier: MIT\n\n", "", 1)},
-			{"a later line names another licence", mitLicence + "SPDX-License-Identifier: GPL-3.0-only\n"},
+			{"the Apache identifier", goModWith("Apache-2.0")},
+			{"a dual licence", goModWith("MIT OR Apache-2.0")},
+			{"an empty identifier", goModWith("")},
+			{"no identifier line", strings.TrimPrefix(goModText, "// SPDX-License-Identifier: MIT\n\n")},
+			{"a later line names another licence", goModText + "// SPDX-License-Identifier: GPL-3.0-only\n"},
 		} {
 			dir := rulesRepoContent(t)
-			writeRulesFile(t, dir, "LICENSE", tc.body)
+			writeRulesFile(t, dir, "go.mod", tc.body)
 			got, err := repocheck.Rules(dir)
 			if err != nil {
 				t.Fatalf("Rules(%s): %v", tc.name, err)
 			}
-			if !hasFinding(got, "wrong_spdx_identifier", "LICENSE") {
-				t.Errorf("Rules(%s) = %+v, want a wrong_spdx_identifier finding on LICENSE", tc.name, got)
+			if !hasFinding(got, "wrong_spdx_identifier", "go.mod") {
+				t.Errorf("Rules(%s) = %+v, want a wrong_spdx_identifier finding on go.mod", tc.name, got)
 			}
 		}
 	})
 
 	t.Run("the identifier is read as written", func(t *testing.T) {
 		// Guards the other half of STD-44: a byte order mark and CRLF line ends do not hide a
-		// correct identifier, so the rule does not redden the remedy it asks for.
+		// correct identifier, so the rule does not redden the remedy it asks for. The LICENSE needs
+		// no identifier line: its MIT text is judged on its own.
 		dir := rulesRepoContent(t)
-		writeRulesFile(t, dir, "LICENSE", "\uFEFF"+strings.ReplaceAll(mitLicence, "\n", "\r\n"))
+		writeRulesFile(t, dir, "go.mod", "\xef\xbb\xbf"+strings.ReplaceAll(goModText, "\n", "\r\n"))
 		got, err := repocheck.Rules(dir)
 		if err != nil || len(got) != 0 {
-			t.Fatalf("Rules(BOM and CRLF licence) = %+v, %v; want no finding", got, err)
+			t.Fatalf("Rules(BOM and CRLF go.mod) = %+v, %v; want no finding", got, err)
+		}
+	})
+
+	t.Run("a standard file the list does not name and the repository lacks is skipped", func(t *testing.T) {
+		// Guards the file rule's ownership of absence: a file §12.1 does not require and that does
+		// not exist has no text to judge and is not an error. Only a listed one is a finding.
+		spec := rulesSpecWithout("### 12.1 Repository files", "`LICENSE` · `README.md`.")
+		skip := map[string]bool{"go.mod": true, "SECURITY.md": true, "CODE_OF_CONDUCT.md": true}
+		got, err := repocheck.Rules(rulesRepoSpec(t, spec, skip))
+		if err != nil || len(got) != 0 {
+			t.Fatalf("Rules(unlisted absent files) = %+v, %v; want no finding and no error", got, err)
 		}
 	})
 
@@ -437,7 +459,7 @@ func TestRulesContent(t *testing.T) {
 				writeRulesFile(t, dir, rel, marker+"\xff\xfe")
 			}},
 		}
-		for _, file := range []string{"LICENSE", "CODE_OF_CONDUCT.md", "SECURITY.md"} {
+		for _, file := range []string{"LICENSE", "CODE_OF_CONDUCT.md", "SECURITY.md", "go.mod"} {
 			for _, b := range breakers {
 				dir := rulesRepoContent(t)
 				b.apply(t, dir, file)
