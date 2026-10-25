@@ -39,11 +39,6 @@ func TestInstallRepairsOnlyOwnEntries(t *testing.T) {
 			foreign: map[string][]string{"Notification": {`{"type":"command","command":"notify-send done"}`}},
 		},
 		{
-			name:    "own handler with an extra field",
-			catches: "an added field such as a timeout kept, so the entry no longer matches its row",
-			before:  `{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"` + core.Product + ` hook session-start","timeout":1,"async":true}]}]}}`,
-		},
-		{
 			name:    "own handler type changed",
 			catches: "a handler turned into another type kept as install's own",
 			before:  `{"hooks":{"PostToolUse":[{"hooks":[{"type":"prompt","command":"` + core.Product + ` hook post-tool"}]}]}}`,
@@ -73,6 +68,13 @@ func TestInstallRepairsOnlyOwnEntries(t *testing.T) {
 				` hook stop done"}]}]},"permissions":{"deny":["Bash(rm:*)"]}}`,
 			foreign: map[string][]string{"Stop": {`{"type":"command","command":"echo ` + core.Product + ` hook stop done"}`}},
 			other:   []string{"permissions"},
+		},
+		{
+			name:    "foreign handler with an own command under another case",
+			catches: "a key matched without regard to case, so a foreign handler is taken for install's own and dropped",
+			before: `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"/opt/audit/log-stop.sh","Command":"` +
+				stop + `"}]}]}}`,
+			foreign: map[string][]string{"Stop": {`{"type":"command","command":"/opt/audit/log-stop.sh","Command":"` + stop + `"}`}},
 		},
 	}
 	for _, tc := range cases {
@@ -189,5 +191,75 @@ func TestMergeReportsEachChange(t *testing.T) {
 	}
 	if string(again) != string(merged) {
 		t.Errorf("merging an installed file changed its bytes:\n%s\n%s", merged, again)
+	}
+}
+
+// installed returns settings with every entry of the row exact, except PreToolUse, whose one
+// handler is handler under matcher.
+func installed(t *testing.T, matcher, handler string) string {
+	t.Helper()
+	hooks := map[string]json.RawMessage{}
+	for _, e := range claudeCode(t).Entries() {
+		h := `{"type":"command","command":"` + e.Command + `"}`
+		m := e.Matcher
+		if e.Event == "PreToolUse" {
+			h, m = handler, matcher
+		}
+		group := `{"hooks":[` + h + `]}`
+		if m != "" {
+			group = `{"matcher":` + mustJSON(t, m) + `,"hooks":[` + h + `]}`
+		}
+		hooks[e.Event] = json.RawMessage(`[` + group + `]`)
+	}
+	return `{"hooks":` + mustJSON(t, hooks) + `}`
+}
+
+// TestInstallKeepsOwnerFields proves install rewrites only what is its own in its entry, the
+// command: every field the owner added, such as onFailure or a timeout, stays, and an entry that
+// already runs the row's command is no drift (security review B2).
+func TestInstallKeepsOwnerFields(t *testing.T) {
+	t.Parallel()
+	pre := core.Product + " hook pre-tool"
+	var row Entry
+	for _, e := range claudeCode(t).Entries() {
+		if e.Event == "PreToolUse" {
+			row = e
+		}
+	}
+	cases := []struct {
+		name    string
+		catches string
+		matcher string
+		handler string
+		change  bool
+	}{
+		{"owner hardened the entry", "an owner's onFailure and timeout stripped as drift, so the hook fails open",
+			row.Matcher, `{"type":"command","command":"` + pre + `","onFailure":"block","timeout":5}`, false},
+		{"command drifted", "a repair that drops the owner's fields while it restores the command",
+			row.Matcher, `{"type":"command","command":"` + pre + ` --off","onFailure":"block","timeout":5}`, true},
+		{"entry under the old matcher", "the owner's fields lost when the entry moves to the row's matcher",
+			"Bash", `{"type":"command","command":"` + pre + `","onFailure":"block","timeout":5}`, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			home := t.TempDir()
+			h := claudeCode(t)
+			before := installed(t, tc.matcher, tc.handler)
+			seed(t, home, h, before)
+			changes, err := Apply(home, h)
+			if err != nil || (len(changes) != 0) != tc.change {
+				t.Fatalf("install = %v, %v; want a change %v; catches: %s", changes, err, tc.change, tc.catches)
+			}
+			own := ownHandlers(t, decode(t, readBytes(t, home, h)), "PreToolUse")
+			want := map[string]any{"type": "command", "command": pre, "onFailure": "block", "timeout": float64(5)}
+			if len(own) != 1 || !reflect.DeepEqual(own[0], want) {
+				t.Errorf("PreToolUse own handlers = %v, want exactly %v; catches: %s", own, want, tc.catches)
+			}
+			assertMatchers(t, decode(t, readBytes(t, home, h)), tc.catches)
+			if !tc.change && string(readBytes(t, home, h)) != before {
+				t.Errorf("install rewrote settings it reported no change for; catches: %s", tc.catches)
+			}
+		})
 	}
 }

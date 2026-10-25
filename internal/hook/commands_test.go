@@ -1,6 +1,7 @@
 package hook
 
 import (
+	"bytes"
 	"errors"
 	"strings"
 	"testing"
@@ -138,6 +139,43 @@ func TestHookRefusesBadInput(t *testing.T) {
 				t.Errorf("hook stop refusal = %v, want a *core.Error with outcome %q (SPEC §5.3)", err, core.OutcomeError)
 			}
 		})
+	}
+}
+
+// TestHookFailsClosedPerEvent proves each event turns input it cannot trust into the exit its
+// harness needs and one reason line on stderr (the reason Claude Code shows). pre-tool exits 2,
+// so Claude Code blocks the tool call, where exit 1 is a non-blocking error; every other event
+// exits 1, so a harness bug never keeps a session from stopping.
+func TestHookFailsClosedPerEvent(t *testing.T) {
+	t.Parallel()
+	inputs := []struct {
+		name    string
+		catches string
+		stdin   string
+	}{
+		{"empty stdin", "an empty stdin that lets the tool call run", ""},
+		{"over 1 MiB", "an oversized input that lets the tool call run",
+			`{"session_id":"s1","pad":"` + strings.Repeat("x", 2<<20) + `"}`},
+		{"invalid utf-8", "bytes that are not UTF-8 that let the tool call run", "{\"session_id\":\"s\xff\"}"},
+		{"missing session_id", "an event without a session that lets the tool call run", `{"cwd":"/work"}`},
+	}
+	wantCode := map[string]int{"stop": 1, "session-start": 1, "post-tool": 1, "pre-tool": 2, "return": 1}
+	for _, in := range inputs {
+		for _, verb := range hookVerbs() {
+			t.Run(in.name+"/"+verb, func(t *testing.T) {
+				t.Parallel()
+				var out, stderr bytes.Buffer
+				code := core.RunCLI(t.Context(), Commands(strings.NewReader(in.stdin)), []string{"hook", verb}, &out, &stderr)
+				if code != wantCode[verb] {
+					t.Errorf("hook %s exit = %d, want %d; catches: %s", verb, code, wantCode[verb], in.catches)
+				}
+				reason := stderr.String()
+				if strings.Count(reason, "\n") != 1 || !strings.HasSuffix(reason, "\n") || !strings.Contains(reason, "hook "+verb) {
+					t.Errorf("hook %s stderr = %q, want one line naming the event and the reason; "+
+						"catches: a refusal the harness shows without a reason", verb, reason)
+				}
+			})
+		}
 	}
 }
 

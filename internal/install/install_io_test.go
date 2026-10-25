@@ -63,6 +63,13 @@ func trustCases() []trustCase {
 			},
 		},
 		{
+			name:    "home relative",
+			catches: "a relative home that resolves against the working directory, so a project's settings get the entries",
+			setup: func(t *testing.T, _ string) (string, Harness, func(t *testing.T)) {
+				return filepath.Join("relative", "home"), claudeCode(t), func(*testing.T) {}
+			},
+		},
+		{
 			name:    "settings over 1 MiB",
 			catches: "a large settings file read as none and replaced, losing the user's settings",
 			setup: func(t *testing.T, home string) (string, Harness, func(t *testing.T)) {
@@ -201,12 +208,87 @@ func FuzzMerge(f *testing.F) {
 		if err != nil {
 			return
 		}
-		if len(changes) > 0 && !json.Valid(merged) {
+		if len(edits(changes)) > 0 && !json.Valid(merged) {
 			t.Fatalf("Merge(%q) wrote text that is no JSON: %q", settings, merged)
 		}
 		again, more, err := Merge(merged, entries)
-		if err != nil || len(more) != 0 || !bytes.Equal(again, merged) {
+		if err != nil || len(edits(more)) != 0 || !bytes.Equal(again, merged) {
 			t.Fatalf("a second merge of the output of %q changed it: %v, %v\n%s\n%s", settings, more, err, merged, again)
 		}
 	})
+}
+
+// edits returns the changes that add or repair an entry; a report that hooks are disabled is none.
+func edits(changes []Change) []Change {
+	var out []Change
+	for _, c := range changes {
+		if c.Action == actionAdd || c.Action == actionRepair {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// TestInstallReportsDisabledHooks proves settings that turn every hook off are the owner's choice:
+// install changes nothing and says the hooks are disabled, never "up to date" (security review B3).
+func TestInstallReportsDisabledHooks(t *testing.T) {
+	t.Parallel()
+	exact := installed(t, preToolMatcher(t), `{"type":"command","command":"`+core.Product+` hook pre-tool"}`)
+	cases := []struct {
+		name    string
+		catches string
+		before  string
+	}{
+		{"no entries", "the owner's switch overridden by writing entries the harness never runs",
+			`{"disableAllHooks":true,"model":"opus"}`},
+		{"entries exact", "hooks the harness never runs reported as up to date",
+			`{"disableAllHooks":true,` + strings.TrimPrefix(exact, "{")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			home := t.TempDir()
+			h := claudeCode(t)
+			seed(t, home, h, tc.before)
+			res, err := Commands(func() (string, error) { return home, nil })[0].Run(t.Context(),
+				core.Input{Params: map[string]string{}})
+			if err != nil {
+				t.Fatalf("install: %v; catches: %s", err, tc.catches)
+			}
+			if strings.Contains(res.Detail, "up to date") || !strings.Contains(res.Detail, "disableAllHooks") {
+				t.Errorf("install detail = %q, want it to name disableAllHooks; catches: %s", res.Detail, tc.catches)
+			}
+			unchanged(t, settingsPath(home, h), tc.before)
+		})
+	}
+}
+
+// preToolMatcher returns the matcher of the row's PreToolUse entry.
+func preToolMatcher(t *testing.T) string {
+	t.Helper()
+	for _, e := range claudeCode(t).Entries() {
+		if e.Event == "PreToolUse" {
+			return e.Matcher
+		}
+	}
+	t.Fatal("the row has no PreToolUse entry")
+	return ""
+}
+
+// TestPreToolCoversEveryShellTool proves the pre-tool entry matches every Claude Code tool that
+// runs a command (Bash, PowerShell, Monitor; code.claude.com/docs/en/tools-reference), so a heavy
+// or destructive command run through another shell tool still meets the hook (security review B4).
+func TestPreToolCoversEveryShellTool(t *testing.T) {
+	t.Parallel()
+	for _, e := range claudeCode(t).Entries() {
+		if e.Event != "PreToolUse" {
+			continue
+		}
+		tools := strings.Split(e.Matcher, "|")
+		for _, want := range []string{"Bash", "PowerShell", "Monitor"} {
+			if !slices.Contains(tools, want) {
+				t.Errorf("PreToolUse matcher %q misses %s, so a command run through it never meets the hook", e.Matcher, want)
+			}
+		}
+	}
 }
