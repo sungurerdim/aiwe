@@ -12,7 +12,7 @@ You give aiwe a goal. It splits the goal into small work items, hands each one t
 - **Cheap**: the lowest measured use of quota, money, disk, CPU and memory; a low-cost author and a strong reviewer where that is enough.
 - **Fast**: small items worked in parallel, each in its own leased workspace, with one queue for heavy checks.
 - **Effective orchestration**: an idle agent asks for work, and one call gives it a free item with its claim, its files and its workspace.
-- **Account-safe**: official CLI or API only, no proxy, and no reuse of subscription credentials, the pattern that the terms of Anthropic and Google forbid (SPEC §17). At most one subscription per provider (O7).
+- **Account-safe**: official CLI or API only, no proxy, and no reuse of subscription credentials, the pattern that provider terms forbid (SPEC §17). At most one subscription per provider (O7).
 - **Mechanical, not prompted**: rules are enforced by the git hook, the landing queue and the command line, so they hold for any agent, harness or provider. Reports are built from data with no model call.
 
 **Status: pre-release.** Working today: `aiwe version`, `aiwe config show`, `aiwe unit check` and `aiwe gates gate`. Everything else on this page is planned. The next milestone is M-Skeleton: the work store, the ledger, workspaces, the landing queue, the check executor, and `aiwe item take` and `return`.

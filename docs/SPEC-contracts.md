@@ -7,8 +7,8 @@ Every engine file carries `formatVersion`; parsers are fail-closed (DR-6); JSON 
 ```json
 { "formatVersion": 1,
   "sources": [
-    { "id": "sub-a", "adapter": "opencode-go", "kind": "subscription", "provider": "<provider-id>" },
-    { "id": "api-b", "adapter": "openai-chat", "kind": "api", "provider": "<provider-id>",
+    { "id": "sub-a", "adapter": "<adapter-id>", "kind": "subscription", "provider": "<provider-id>" },
+    { "id": "api-b", "adapter": "<adapter-id>", "kind": "api", "provider": "<provider-id>",
       "credentialEnv": "B_API_KEY", "baseUrlEnv": "B_BASE_URL", "spendCap": { "usd": 50, "since": "<date>" } } ],
   "overrides": { "pin": { "engineer": [ { "source": "sub-a", "model": "<model-id>", "effort": "<level>" } ] },
                  "exclude": [ { "source": "api-b", "model": "<model-id>" } ], "tier": { "auditor": "top" } } }
@@ -199,11 +199,11 @@ type Provider interface {
 }
 ```
 - Two kinds behind one interface (O14). **Model API**: aiwe's own lean agent loop calls the provider's HTTP API; the tools read, write, edit, list and shell run
-  locally, confined to the clone (O2). **Agent runtime**: the vendor's own agent runs as a process in the run clone, only as a fallback for an account whose quota offers no API access (for example Cursor; Claude and ChatGPT/Codex subscriptions; a Gemini subscription only with a paid or enterprise login, O39). API access is always the first choice for every account, subscriptions included (OpenCode Go). Each uses only the provider's official interface (DR-19).
+  locally, confined to the clone (O2). **Agent runtime**: the vendor's own agent runs as a process in the run clone, only as a fallback for an account whose quota offers no API access (for example a subscription whose terms allow only the vendor's own client; the provider data file records which, O39). API access is always the first choice for every account, subscriptions included. Each uses only the provider's official interface (DR-19).
 - One vocabulary across providers and the whole system: `RunRequest` = role, task, tool permissions, model; `RunReport` = served model, usage (prompt, cached,
   completion, reasoning tokens), cost, quota, outcome; unmeasured is `unknown`, never `0` (DR-6). The stable prefix (role prompt, tool definitions) comes first and never changes within a run, so the prompt cache hits. Prefix order: tools → `ROLE` (the system prompt) → `PACK` → `UNIT` or `FIX` (the order of §9.2). Cache-hit floor: 80 %, where a cache hit = `tokensCachedIn ÷ tokensIn` of one run.
 - `Detect` checks PATH, then the documented per-user install location: `harness_missing`, `harness_incompatible`, `harness_unreadable`. A runtime runs
-  non-interactively under a written permission policy (`permission_blocked`, never a wait). A session resumes only in its own directory (`session_directory_mismatch`). A **runtime token proof**: every runtime aiwe starts (Cursor, Claude Code, others) reports per-request tokens, or uses the run-total proof — a run whose input, cache-read and cache-write tokens together are within the request limit of §7.4 is proven under the ceiling, else it is `ceiling_unproven` and is counted in the session report.
+  non-interactively under a written permission policy (`permission_blocked`, never a wait). A session resumes only in its own directory (`session_directory_mismatch`). A **runtime token proof**: every runtime aiwe starts reports per-request tokens, or uses the run-total proof — a run whose input, cache-read and cache-write tokens together are within the request limit of §7.4 is proven under the ceiling, else it is `ceiling_unproven` and is counted in the session report.
 - Model API: sends `max_tokens` R (§7.4) and only a request that fits under the context ceiling; the language model's read tool takes a line range; one
   tool result is ≤ 32 KiB; clearing is batched (§7.4). It streams `data:` lines when allowed (each chunk resets the silence limit); sends and carries the
   provider's documented reasoning fields; a cut reply → `answer_truncated`. Edit is single exact-match, then the profile's syntax check. Retry rule (RFC 9110):
@@ -213,11 +213,10 @@ type Provider interface {
 - **Provider data** `adapters/providers/<provider>.json` (embedded, fail-closed): `id`, `adapter`, `baseUrl` (https), `models` (fallback list when discovery has none),
   `reasoning {request, carry}`, `errors [{status, code, class}]`, `keyEnv` (the API key's usual variable name), and for a runtime
   `cli {binary, flags, loginEnv, limitText}`. A new compatible API or known runtime is one file and one row (DR-3); each value cites a §17 fact or the work item that measured it.
-- **Lean run** (O13, O14): a runtime gets a run-owned `HOME`/`USERPROFILE` and config directory (Cursor: `CURSOR_CONFIG_DIR`), so no rules, `AGENTS.md`, `CLAUDE.md` or skills load; injected context is cut to what the role needs.
-- **OpenCode Go** (skeleton, O14): `POST https://opencode.ai/zen/go/v1/chat/completions` (OpenAI format: deepseek, kimi, glm; `/messages`, `/responses` later);
-  `Authorization: Bearer` from `OPENCODE_API_KEY`, read by name at run time; `x-opencode-session: <run id>` and `User-Agent` required. Only `/zen/go/v1` (Go quota), never `/zen/v1` (credit).
-  Quota shows only in a reply's error (SPEC §7.6). The reply names the served model and tokens, no cost: cost comes from a pinned price table (off-peak and peak rows, §17). Default model `deepseek-v4.1-flash`.
-- Then model APIs DeepSeek, Fireworks, Gemini; agent runtime `cursor` via its CLI (M-Usable, §13), then `claude-code`, `codex`, `gemini` (O12). Rejected (O14): Cursor SDK Bridge, Cloud Agents API, the opencode CLI.
+- **Lean run** (O13, O14): a runtime gets a run-owned `HOME`/`USERPROFILE` and config directory (the variable names come from the provider data file), so no rules, `AGENTS.md`, other host rule files or skills load; injected context is cut to what the role needs.
+- **Skeleton model API** (O14): a chat-completions HTTP API with `Authorization: Bearer` from the key variable, read by name at run time. Its endpoint path, extra headers, key variable and default model are provider specifics (O40), kept in the adapter source until its provider data file exists. Only the quota-bearing path is used, never the credit path.
+  Quota shows only in a reply's error (SPEC §7.6). The reply names the served model and tokens, no cost: cost comes from a pinned price table (off-peak and peak rows, §17).
+- Then further model-API sources; the first agent runtime through its CLI (M-Usable, §13), then further runtimes (O12). Rejected (O14): an SDK bridge, a hosted cloud-agents API, a general harness CLI as a provider.
 ### 10.3 Run and session lifecycle
 A run is `running`, `waiting_engine` or `stopping`, then `settled`; a start with no live tree is `lost` (§7.4). One owner settles
 exactly once: a bounded stop of the tree, branch and residue collected, one run and check record written, clone and claim released;

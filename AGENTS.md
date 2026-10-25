@@ -48,11 +48,11 @@ Every fact has one owner below. Link to it; copy nothing.
 | Bridge: issue writer for this repository | `aiwe-wt/issue.py` (SPEC-contracts §8.4) |
 | Bridge: batch of finished units, parked clones | clone `aiwe-wt/batch`; `aiwe-wt-parked/` |
 | General engineering rules, user and machine notes (en) | `~/.agents/AGENTS.md`; section 3 holds the project settings it asks for; lead-only part `~/.claude/dev-rules-lead.md` |
-| Extra guardrails for hosts weaker than Claude Code | `~/.agents/dev-rules-references/portable-supplement.md`, `safety.md`, `operations.md` |
+| Extra guardrails for hosts weaker than the lead host | `~/.agents/dev-rules-references/portable-supplement.md`, `safety.md`, `operations.md` |
 | Role cards | `~/.claude/agents/*.md`; the bridge reads its own copy in `aiwe-wt/roles/` |
 | Machine tools: load measurement, heavy-job queue | `~/.agents/araclar/` (the bridge still reads the old folder until #429) |
 | Unattended mode, past subagent reports, rule rationale (tr) | skill `otopilot` in `~/.claude/skills/`; `~/.claude/raporlar/`; `~/.claude/olcumler.md` |
-| Claude memory | Owner preferences and Claude working notes only (section 4) |
+| Host memory | Owner preferences and host working notes only (section 4) |
 
 ## 3. Project rules
 
@@ -97,7 +97,7 @@ gate must exit 0 before a batch lands.
 
 **Known traps.** Tool facts that cost a run, kept here until the bridge retires (R8).
 
-- Claude hooks enforce these only in Claude Code; follow them by hand elsewhere: no `--no-verify`, no
+- Host hooks enforce these only in the host that runs them (section 4); follow them by hand elsewhere: no `--no-verify`, no
   `git filter-branch`, no `git reset --hard`, no `git clean -f`; commit messages come from a file
   (`git commit -F <explicit path>`). To undo work in a tree, use `git restore --staged --worktree .`; to reword a
   local commit, use a new branch, `git cherry-pick -n` and `git commit -F <explicit path>`.
@@ -118,11 +118,11 @@ gate must exit 0 before a batch lands.
 `dsh-mcp-panel` add tools and change no rule; where one is absent, `gh` and the tracker API are the fallback. DR-13 and
 DR-20 stand: `todo_write` and `taskboard_*` are scratch state for one session, never a tracker.
 
-## 4. Claude Code only
+## 4. Lead-host only
 
-- Hooks in `~/.claude/hooks/` run only in Claude Code; the Known traps above list what they enforce.
+- Hooks in `~/.claude/hooks/` run only in the lead host; the Known traps above list what they enforce.
 - RTK (`~/.claude/RTK.md`, imported by `~/.claude/CLAUDE.md`) is a token proxy; ignore it in other hosts.
-- Memory: `~/.claude/projects/D--GitHub-aiwe/memory/` (`MEMORY.md` indexes it). It holds owner preferences and Claude
+- Memory: `~/.claude/projects/D--GitHub-aiwe/memory/` (`MEMORY.md` indexes it). It holds owner preferences and host
   working notes; a rule or decision that binds every agent lives in SPEC §16.
 
 @docs/standards.md
