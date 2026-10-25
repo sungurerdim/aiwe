@@ -169,7 +169,9 @@ func dropClaimTicket(root *os.Root, ticket string) error {
 // answers for a live process of another user (fail-closed, DR-11). An id the OS cannot open at all
 // names no process, and on Windows this failed open is the only answer a dead holder leaves, since
 // it supports no signal 0; a claim nothing would reclaim blocks its unit for good. A pid another
-// process now runs answers alive, since this probe reads no start time.
+// process now runs answers alive, since this probe reads no start time. The handle is released
+// before the probe returns: on Windows an open handle keeps the object of an exited process, so a
+// handle left to the GC would keep the OS naming a dead holder's pid and its claim refused (#380).
 func probeProcess(owner core.ProcessID) processState {
 	proc, err := os.FindProcess(owner.PID)
 	if err != nil {
@@ -184,6 +186,7 @@ func probeProcess(owner core.ProcessID) processState {
 		// An id the OS neither refused nor handed over says nothing about its process.
 		return processUnknown
 	}
+	defer func() { _ = proc.Release() }()
 	err = proc.Signal(syscall.Signal(0))
 	switch {
 	case err == nil:
