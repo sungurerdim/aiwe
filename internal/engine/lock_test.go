@@ -3,11 +3,13 @@ package engine
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/sungurerdim/aiwe/internal/core"
 )
@@ -370,4 +372,63 @@ func TestClaimFileRefused(t *testing.T) {
 	if err := claims.Take(ctx, Claim{Unit: unit, RunID: engineTestRunID, Owner: self}); err == nil {
 		t.Errorf("Take of unit %d while its claim file is no claim = nil error, want a refusal", unit)
 	}
+}
+
+// TestClaimReclaimHolderStillOpen guards DR-11, SPEC §7.3 step 2 and #380: the claim of a holder
+// that exited is reclaimed while a handle still keeps its process object open. On Windows the
+// object of an exited process lives on while any handle to it is open (the probe's own, a parent
+// that has not closed its own yet, a scanner), and the OS keeps naming its pid. It catches a probe
+// that reads a pid the OS still names as a live holder: the reclaim of a dead holder is then
+// refused for as long as any handle stays open, the flake of #380.
+func TestClaimReclaimHolderStillOpen(t *testing.T) {
+	ctx := t.Context()
+	self, err := core.CurrentProcess()
+	if err != nil {
+		t.Fatalf("CurrentProcess: %v", err)
+	}
+	const unit = 39
+	claims, err := OpenClaims(t.TempDir())
+	if err != nil {
+		t.Fatalf("OpenClaims: %v", err)
+	}
+	holder := engineTestExitedHolder(t)
+	if state := probeProcess(holder); state != processGone {
+		t.Errorf("probeProcess(pid %d) of an exited holder whose object is open = %d, want processGone (%d)",
+			holder.PID, state, processGone)
+	}
+	if err := claims.Take(ctx, Claim{Unit: unit, RunID: engineTestDeadRunID, Owner: holder}); err != nil {
+		t.Fatalf("Take unit %d for a dead holder: %v", unit, err)
+	}
+	if err := claims.Take(ctx, Claim{Unit: unit, RunID: engineTestRunID, Owner: self}); err != nil {
+		t.Fatalf("Take unit %d while its holder exited and its object is open: %v", unit, err)
+	}
+	got, ok, err := claims.Holder(ctx, unit)
+	if err != nil {
+		t.Fatalf("Holder(%d): %v", unit, err)
+	}
+	if !ok || got.RunID != engineTestRunID {
+		t.Errorf("Holder(%d) = %+v, %v; want the live claim %q", unit, got, ok, engineTestRunID)
+	}
+}
+
+// engineTestExitedHolder starts a child that exits at once, opens a second handle to it before
+// its parent waits, and returns its identity once the wait confirmed the exit. The handle stays
+// open until the test ends, so the OS keeps naming the pid of a process that no longer runs.
+func engineTestExitedHolder(t *testing.T) core.ProcessID {
+	t.Helper()
+	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^$")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start child: %v", err)
+	}
+	start := time.Now()
+	pid := cmd.Process.Pid
+	kept, err := os.FindProcess(pid)
+	if err != nil {
+		t.Fatalf("open a second handle to child %d: %v", pid, err)
+	}
+	t.Cleanup(func() { _ = kept.Release() })
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("child: %v", err)
+	}
+	return core.ProcessID{PID: pid, Start: start}
 }
