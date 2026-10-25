@@ -46,7 +46,7 @@ func Modules() []Module {
 			Responsibility: "Tracker port, the GitHub adapter (issues, CI status) and intake filtering."},
 		{Package: ledger, Serves: "M1–M7", Imports: []string{core},
 			Responsibility: "Append-only records, rotation, metrics."},
-		{Package: item, Serves: "S5",
+		{Package: item, Serves: "S5", Imports: []string{core},
 			Responsibility: "Work item record: Go type, value sets of type and status, schema version, stable id."},
 		{Package: engine, Serves: "S2", Imports: []string{core, stacks, gates, roles, adapters, tracker, ledger},
 			Responsibility: "Flows, run isolation, claims, sources, synthesis, prompt contract assembly."},

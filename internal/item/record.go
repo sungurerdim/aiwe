@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strings"
+	"unicode"
 )
 
 // SchemaVersion is the version v of the record format; work/schema.json carries the same number.
@@ -283,10 +285,14 @@ type Close struct {
 	Effect           Effect `json:"effect"`
 }
 
-// Decode reads one record from JSON. It refuses a value of type or status outside its set and any
-// key that Record does not name, so a record that carries a time field such as createdAt is refused:
-// every time is a ledger event. It checks nothing else; validation of a record is another unit.
+// Decode reads one record from JSON. It refuses a key named twice in one object, also in another
+// case, a value of type or status outside its set and any key that Record does not name, so a
+// record that carries a time field such as createdAt is refused: every time is a ledger event. It
+// checks nothing else; validation of a record is another unit.
 func Decode(data []byte) (Record, error) {
+	if err := refuseDuplicateKeys(data); err != nil {
+		return Record{}, err
+	}
 	var r Record
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
@@ -298,4 +304,71 @@ func Decode(data []byte) (Record, error) {
 		return Record{}, errors.New("item record: data after the JSON object")
 	}
 	return r, nil
+}
+
+// jsonScope is one open container of the key walk: the folded keys of an object, nil for an array.
+type jsonScope struct {
+	keys    map[string]bool
+	wantKey bool
+}
+
+// refuseDuplicateKeys reads the first JSON value of data token by token and refuses an object that
+// names a key twice, also in another case. encoding/json keeps the last of two equal keys and
+// matches a key to a field without case, so a shadowed value would stay in the file a reviewer
+// reads and never reach the validator (STD-22). Data after the value is left to Decode.
+func refuseDuplicateKeys(data []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	var open []*jsonScope
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			return fmt.Errorf("item record: %w", err)
+		}
+		if open, err = keyStep(open, tok); err != nil || len(open) == 0 {
+			return err
+		}
+	}
+}
+
+// keyStep applies one token to the open containers and returns them.
+func keyStep(open []*jsonScope, tok json.Token) ([]*jsonScope, error) {
+	if key, ok := tok.(string); ok && len(open) > 0 && open[len(open)-1].wantKey {
+		return open, open[len(open)-1].add(key)
+	}
+	switch tok {
+	case json.Delim('{'):
+		return append(open, &jsonScope{keys: map[string]bool{}, wantKey: true}), nil
+	case json.Delim('['):
+		return append(open, &jsonScope{}), nil
+	case json.Delim('}'), json.Delim(']'):
+		open = open[:len(open)-1]
+	}
+	// A value ended, so an object that holds it waits for its next key.
+	if len(open) > 0 && open[len(open)-1].keys != nil {
+		open[len(open)-1].wantKey = true
+	}
+	return open, nil
+}
+
+// add records a key of the object and refuses one it holds already.
+func (s *jsonScope) add(key string) error {
+	folded := foldKey(key)
+	if s.keys[folded] {
+		return fmt.Errorf("item record: key %q appears twice in one object", key)
+	}
+	s.keys[folded], s.wantKey = true, false
+	return nil
+}
+
+// foldKey maps every rune of key to the least rune of its case-folding orbit, so two keys that
+// strings.EqualFold matches, as encoding/json matches keys, fold to one string. It compares keys
+// and never changes a text, so the ASCII-only case rule (STD-37) does not apply.
+func foldKey(key string) string {
+	return strings.Map(func(r rune) rune {
+		least := r
+		for f := unicode.SimpleFold(r); f != r; f = unicode.SimpleFold(f) {
+			least = min(least, f)
+		}
+		return least
+	}, key)
 }

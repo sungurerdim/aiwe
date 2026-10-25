@@ -145,11 +145,12 @@ func (v *refusals) doneEntry(at string, d Done, env Env) {
 	}
 }
 
-// headRelative matches a revision that moves with HEAD, in any case because git resolves refs
-// case-insensitively on some file systems: HEAD~n, HEAD^, HEAD@{n}, @~n, @^, @{n}, @{-n}, @ alone or
-// as the base of a range, and ORIG_HEAD. An @ after a letter, a digit, _ / or -, as in an email
-// address or a branch reflog, is not HEAD.
-var headRelative = regexp.MustCompile(`(?i)head(?:[~^]|@\{)|(?:^|[^\w/-])@[~^{]|^@(?:$|\.\.)|orig_head`)
+// headRelative matches a revision relative to HEAD, in any case because git resolves refs
+// case-insensitively on some file systems: HEAD or @ followed by ~ or ^, the reflogs HEAD@{n}, @{n}
+// and @{-n}, and ORIG_HEAD. The revision must start a token: the argument, or follow a byte that
+// is no letter, digit, _ or -, such as the dots of a range or an equals sign. So TestAhead^ in a
+// -run pattern, an email address and a branch reflog are not refused, nor are bare HEAD and @.
+var headRelative = regexp.MustCompile(`(?i)(?:^|[^\w-])(?:(?:head|@)[~^]|head@\{|@\{|orig_head)`)
 
 // refuseCheck returns why a check cannot run unattended, or "" when it can. A check is split into
 // argv by shell-style quoting and runs without a shell, so a shell operator outside quotes is
