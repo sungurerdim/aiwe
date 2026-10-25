@@ -2,10 +2,13 @@ package ledger
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/sungurerdim/aiwe/internal/core"
@@ -72,10 +75,13 @@ func parseLine(line string, n int) (Record, error) {
 		return nil, fmt.Errorf("ledger line %d: %w", n, refuse("one JSON object", err.Error()))
 	}
 	rec, err := decodeRecord(head.Kind, line)
-	if err != nil {
-		return nil, fmt.Errorf("ledger line %d: %w", n, err)
+	if err == nil {
+		err = sameAsWritten(rec, line)
 	}
-	if err := validateRecord(rec); err != nil {
+	if err == nil {
+		err = validateRecord(rec)
+	}
+	if err != nil {
 		return nil, fmt.Errorf("ledger line %d: %w", n, err)
 	}
 	return rec, nil
@@ -86,23 +92,110 @@ func parseLine(line string, n int) (Record, error) {
 func decodeRecord(kind Kind, line string) (Record, error) {
 	switch kind {
 	case KindRun:
-		var run Run
-		if err := json.Unmarshal([]byte(line), &run); err != nil {
-			return nil, refuse("a run record", err.Error())
-		}
-		return run, nil
+		return decodeAs[Run](line, "a run record")
 	case KindCheck:
-		var check Check
-		if err := json.Unmarshal([]byte(line), &check); err != nil {
-			return nil, refuse("a check record", err.Error())
-		}
-		return check, nil
+		return decodeAs[Check](line, "a check record")
 	case KindEvent:
-		var event Event
-		if err := json.Unmarshal([]byte(line), &event); err != nil {
-			return nil, refuse("an event record", err.Error())
-		}
-		return event, nil
+		return decodeAs[Event](line, "an event record")
 	}
-	return nil, refuse(fmt.Sprintf("kind %q or %q", KindRun, KindCheck), fmt.Sprintf("kind %q", kind))
+	return nil, refuse(fmt.Sprintf("kind %q, %q or %q", KindRun, KindCheck, KindEvent), "a kind outside the set")
+}
+
+// decodeAs decodes line into a record of type R and refuses a key R does not hold, as the gate
+// definition does (STD-11); what names the record in the refusal.
+func decodeAs[R Record](line, what string) (Record, error) {
+	var rec R
+	dec := json.NewDecoder(strings.NewReader(line))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&rec); err != nil {
+		return nil, refuse(what, err.Error())
+	}
+	return rec, nil
+}
+
+// sameAsWritten refuses a line that is not the line Append writes for the record read from it: a key
+// twice, a key in another case, a value in another form or anything after the record. encoding/json
+// keeps the last of two equal keys and matches a key in any case, so without this check personal data
+// could sit in the line while the record read from it is clean (SPEC §4). A key the line leaves out
+// reads absent (L32, DR-6), so the line is compared with the written form of the keys it names.
+func sameAsWritten(rec Record, line string) error {
+	written, err := json.Marshal(rec)
+	if err != nil {
+		return refuse("a record that can be written", err.Error())
+	}
+	want, ok := writtenSubset(written, []byte(line))
+	if !ok || !bytes.Equal(want, []byte(line)) {
+		return refuse("a line in the form Append writes",
+			"a line with a key twice, a key in another case or a value in another form")
+	}
+	return nil
+}
+
+// member is one member of a JSON object: its key and its value as written.
+type member struct {
+	key   string
+	value json.RawMessage
+}
+
+// writtenSubset returns the members of the object written that the object line names, in the order
+// line names them and in the bytes of written; an object value is cut the same way. ok is false when
+// line is not an object or names a key written lacks, a key twice or keys out of the written order.
+func writtenSubset(written, line []byte) ([]byte, bool) {
+	writtenMembers, writtenOK := objectMembers(written)
+	lineMembers, lineOK := objectMembers(line)
+	if !writtenOK || !lineOK {
+		return nil, false
+	}
+	parts := make([][]byte, 0, len(lineMembers))
+	next := 0
+	for _, m := range lineMembers {
+		at := slices.IndexFunc(writtenMembers[next:], func(w member) bool { return w.key == m.key })
+		if at < 0 {
+			return nil, false
+		}
+		part, ok := writtenMember(writtenMembers[next+at], m)
+		if !ok {
+			return nil, false
+		}
+		parts = append(parts, part)
+		next += at + 1
+	}
+	return slices.Concat([]byte{'{'}, bytes.Join(parts, []byte{','}), []byte{'}'}), true
+}
+
+// writtenMember returns the member w as Append writes it, cut to the keys of m when both values are
+// objects.
+func writtenMember(w, m member) ([]byte, bool) {
+	value := []byte(w.value)
+	if isObject(w.value) && isObject(m.value) {
+		var ok bool
+		if value, ok = writtenSubset(w.value, m.value); !ok {
+			return nil, false
+		}
+	}
+	return slices.Concat([]byte(strconv.Quote(w.key)), []byte{':'}, value), true
+}
+
+// isObject reports whether a JSON value is an object.
+func isObject(value []byte) bool { return len(value) > 0 && value[0] == '{' }
+
+// objectMembers returns the members of the JSON object obj in written order; ok is false when obj is
+// not an object. A key is read unescaped, so a key written with an escape differs from the written
+// form only in bytes, which sameAsWritten compares.
+func objectMembers(obj []byte) ([]member, bool) {
+	dec := json.NewDecoder(bytes.NewReader(obj))
+	if open, err := dec.Token(); err != nil || open != json.Delim('{') {
+		return nil, false
+	}
+	var out []member
+	for dec.More() {
+		tok, err := dec.Token()
+		key, isKey := tok.(string)
+		var value json.RawMessage
+		if err != nil || !isKey || dec.Decode(&value) != nil {
+			return nil, false
+		}
+		out = append(out, member{key: key, value: value})
+	}
+	return out, true
 }

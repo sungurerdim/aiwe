@@ -1,11 +1,13 @@
 package ledger
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"regexp"
 	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/sungurerdim/aiwe/internal/core"
 )
@@ -93,23 +95,28 @@ func (a Actor) MarshalJSON() ([]byte, error) {
 
 // genAIAttributes is the one mapping from the camelCase keys of the ledger to the OpenTelemetry GenAI
 // attribute names (SPEC §8.5, §17). The attributes have status Development and may be renamed, so an
-// export renames only here. role and durationMs have no attribute and keep their aiwe names.
-var genAIAttributes = map[string]string{
-	"provider":       "gen_ai.provider.name",
-	"model":          "gen_ai.request.model",
-	"modelReported":  "gen_ai.response.model",
-	"harness":        "gen_ai.agent.name",
-	"sessionId":      "gen_ai.conversation.id",
-	"tokensIn":       "gen_ai.usage.input_tokens",
-	"tokensOut":      "gen_ai.usage.output_tokens",
-	"tokensCachedIn": "gen_ai.usage.cache_read.input_tokens",
+// export renames only here. role and durationMs have no attribute and keep their aiwe names. Each
+// row is an aiwe key and its attribute name, in that order.
+var genAIAttributes = []struct{ key, attribute string }{
+	{"provider", "gen_ai.provider.name"},
+	{"model", "gen_ai.request.model"},
+	{"modelReported", "gen_ai.response.model"},
+	{"harness", "gen_ai.agent.name"},
+	{"sessionId", "gen_ai.conversation.id"},
+	{"tokensIn", "gen_ai.usage.input_tokens"},
+	{"tokensOut", "gen_ai.usage.output_tokens"},
+	{"tokensCachedIn", "gen_ai.usage.cache_read.input_tokens"},
 }
 
 // GenAIAttribute returns the OpenTelemetry GenAI attribute name of an aiwe key, and false for a key
 // that has none (SPEC §8.5).
 func GenAIAttribute(key string) (string, bool) {
-	name, ok := genAIAttributes[key]
-	return name, ok
+	for _, row := range genAIAttributes {
+		if row.key == key {
+			return row.attribute, true
+		}
+	}
+	return "", false
 }
 
 // Event is one lifecycle event of an item: the unit is the item id and At its time, in UTC (K45,
@@ -144,7 +151,11 @@ func (Event) isRecord() {}
 func (e *Event) UnmarshalJSON(data []byte) error {
 	type plain Event
 	var p plain
-	if err := json.Unmarshal(data, &p); err != nil {
+	// A key the event does not hold is refused, here as well as in the reader: encoding/json hands
+	// this method the raw object, so the reader's own decoder setting does not reach it (STD-11).
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&p); err != nil {
 		return err
 	}
 	p.Actor = p.Actor.named()
@@ -210,12 +221,19 @@ const absentID = "none"
 // verdict that binds to no run.
 func (e Event) validateBinding() error {
 	switch {
-	case e.Unit == absentID:
-		return refuse("the id of the item the event belongs to", "unit none")
-	case e.Name == EventVerdict && e.RunID == absentID:
-		return refuse("the runId of the run the verdict judges", "runId none")
+	case namesNothing(e.Unit):
+		return refuse("the id of the item the event belongs to", "a unit that names no item")
+	case e.Name == EventVerdict && namesNothing(e.RunID):
+		return refuse("the runId of the run the verdict judges", "a runId that names no run")
 	}
 	return nil
+}
+
+// namesNothing reports whether an id names nothing: blank once trimmed, or none or unknown in any
+// case.
+func namesNothing(id string) bool {
+	id = strings.TrimSpace(id)
+	return id == "" || strings.EqualFold(id, absentID) || strings.EqualFold(id, unknownName)
 }
 
 // eventFields returns the per-event fields of the event name, or the refusal of a name outside the
@@ -228,7 +246,7 @@ func eventFields(name EventName) ([]string, error) {
 		}
 		names = append(names, string(spec.name))
 	}
-	return nil, refuse("one of "+strings.Join(names, ", "), fmt.Sprintf("event %q", name))
+	return nil, refuse("one of "+strings.Join(names, ", "), "an event name outside the set")
 }
 
 // validateFields refuses an event that lacks a field its name requires, carries one it does not, or
@@ -245,20 +263,53 @@ func (e Event) validateFields(fields []string) error {
 		case !needed && value != "":
 			return refuse(fmt.Sprintf("no %s on a %s event", key, e.Name), fmt.Sprintf("a %s", key))
 		case value != "" && fieldValues[key] != nil && !slices.Contains(fieldValues[key], value):
-			return refuse("a "+key+" of "+strings.Join(fieldValues[key], ", "), fmt.Sprintf("%s %q", key, value))
+			return refuse("a "+key+" of "+strings.Join(fieldValues[key], ", "), "a "+key+" outside the set")
 		}
 	}
 	return nil
 }
 
-// absolutePath finds an absolute path in a text: POSIX, a Windows drive or UNC, at the start of the
-// text, after a space, a delimiter or a shell redirect, or after file:/ in any case, so a URL and a
-// relative path pass.
-var absolutePath = regexp.MustCompile(`(^|[\s"'(\[=:,;<>|]|(?i:file):/+)(/[A-Za-z0-9_.~-]+|[A-Za-z]:[\\/]|\\\\)`)
+// pathChar is a character that continues a path or a URL. A slash, a drive or a UNC prefix after one
+// of them is part of the longer path or URL; after any other character, or at the start, it opens an
+// absolute path.
+const pathChar = `\p{L}\p{N}\p{M}_.~%/\\-`
+
+// absolutePath finds an absolute path in a text: a POSIX path, a Windows drive, a UNC path written
+// with backslashes or slashes, or a file URL in any case, wherever it is not preceded by a path
+// character. A colon opens a POSIX path or a drive (key:/home/x) but not //, so a URL such as
+// https://example.com/x and a relative path such as a/b pass.
+var absolutePath = regexp.MustCompile(`(?:^|[^` + pathChar + `])(?:/[\p{L}\p{N}_.~-]|[A-Za-z]:[\\/]|\\\\)` +
+	`|(?:^|[^:` + pathChar + `])//[\p{L}\p{N}_.~-]` +
+	`|(?:^|[^\p{L}\p{N}])(?i:file):/`)
 
 // emailAddress finds an e-mail address in a text, also one whose local part or domain holds letters
-// outside ASCII; the top-level label is letters, so a package version such as tools@v0.30.1 passes.
-var emailAddress = regexp.MustCompile(`[\p{L}\p{N}._%+-]+@[\p{L}0-9-]+(\.[\p{L}0-9-]+)*\.\p{L}{2,}`)
+// or combining marks outside ASCII; the top-level label opens with a letter, so a package version
+// such as tools@v0.30.1 passes. It matches the text as mailText reads it.
+var emailAddress = regexp.MustCompile(`[\p{L}\p{M}\p{N}._%+-]+@[\p{L}\p{M}0-9-]+(\.[\p{L}\p{M}0-9-]+)*\.\p{L}[\p{L}\p{M}]+`)
+
+// mailLookalikes maps the characters that read as an at sign or a label dot of an address to their
+// ASCII form: the fullwidth and small at signs (U+FF20, U+FE6B), and the fullwidth, ideographic
+// and halfwidth ideographic full stops (U+FF0E, U+3002, U+FF61) that IDNA reads as a dot.
+var mailLookalikes = map[rune]rune{
+	0xFF20: '@', 0xFE6B: '@',
+	0xFF0E: '.', 0x3002: '.', 0xFF61: '.',
+}
+
+// mailText returns text as the e-mail pattern reads it: without the invisible format characters
+// (\p{Cf}), such as a zero-width space or a soft hyphen, and with the lookalikes of mailLookalikes in
+// their ASCII form. NFKC would need golang.org/x/text, which the module does not require, so the
+// mapping is explicit.
+func mailText(text string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.Is(unicode.Cf, r) {
+			return -1
+		}
+		if ascii, ok := mailLookalikes[r]; ok {
+			return ascii
+		}
+		return r
+	}, text)
+}
 
 // validatePersonalData refuses an event that holds an absolute path or an e-mail address in any text
 // field (SPEC §8.5). The refusal names the kind of data and never repeats it.
@@ -272,7 +323,7 @@ func (e Event) validatePersonalData() error {
 		switch {
 		case absolutePath.MatchString(text):
 			return refuse("a record with no personal data", "an absolute path")
-		case emailAddress.MatchString(text):
+		case emailAddress.MatchString(mailText(text)):
 			return refuse("a record with no personal data", "an e-mail address")
 		}
 	}

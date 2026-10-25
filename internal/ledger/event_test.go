@@ -31,6 +31,8 @@ func ledgerTestEvent(name EventName) Event {
 	e := Event{Header: ledgerTestHeader(KindEvent), Name: name, Actor: ledgerTestActor()}
 	e.Unit = "503"
 	switch name {
+	case EventCreated, EventReady, EventTaken, EventReturned, EventClosed, EventReopened:
+		// These events carry no field of their own (SPEC §8.5).
 	case EventCheckQueued, EventCheckStarted:
 		e.CheckKind = "verify"
 		e.Key = "verify:2f7c1a9b4e6d"
