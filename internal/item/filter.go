@@ -1,12 +1,9 @@
 package item
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 	"unicode/utf8"
-
-	"github.com/sungurerdim/aiwe/internal/core"
 )
 
 const (
@@ -17,9 +14,19 @@ const (
 	openerLen = len("<!")
 )
 
-// ErrBidiControl is wrapped by the refusal of a text that holds a bidirectional control (UAX #9;
-// Trojan Source, CVE-2021-42574; STD-22).
-var ErrBidiControl = errors.New("text holds a bidirectional control")
+// textError is a refusal of the intake filter. It is a constant type, not an outcome of the CLI
+// table: the caller that reports the refusal chooses the outcome.
+type textError string
+
+func (e textError) Error() string { return string(e) }
+
+const (
+	// ErrBidiControl is wrapped by the refusal of a text that holds a bidirectional control (UAX #9;
+	// Trojan Source, CVE-2021-42574; STD-22).
+	ErrBidiControl textError = "text holds a bidirectional control"
+	// ErrInvalidUTF8 is the refusal of a text that is not UTF-8.
+	ErrInvalidUTF8 textError = "text is not valid UTF-8"
+)
 
 // isBidiControl reports whether r is one of the twelve bidirectional controls.
 func isBidiControl(r rune) bool { return strings.ContainsRune(bidiControls, r) }
@@ -35,7 +42,7 @@ func firstBidi(s string) (rune, bool) {
 }
 
 // FilterText is the intake filter of SPEC §8.4 (DR-20) for one untrusted text. It refuses a text
-// that is not UTF-8 with core.ErrInvalidUTF8 before it removes anything, since removing a comment
+// that is not UTF-8 with ErrInvalidUTF8 before it removes anything, since removing a comment
 // could join bytes into a rune that no scan saw. It removes every comment an HTML5 reader hides, and
 // refuses a text that holds a bidirectional control. The control is looked for in the input,
 // comments included, because a comment is removed here but not by every reader, and again in the
@@ -43,7 +50,7 @@ func firstBidi(s string) (rune, bool) {
 // caller names the field in its own refusal.
 func FilterText(s string) (string, error) {
 	if !utf8.ValidString(s) {
-		return "", core.ErrInvalidUTF8
+		return "", ErrInvalidUTF8
 	}
 	out := stripComments(s)
 	for _, text := range []string{s, out} {
