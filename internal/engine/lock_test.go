@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -431,4 +432,58 @@ func engineTestExitedHolder(t *testing.T) core.ProcessID {
 		t.Fatalf("child: %v", err)
 	}
 	return core.ProcessID{PID: pid, Start: start}
+}
+
+// TestClaimWithoutStart guards DR-11 and SPEC §7.3 step 2: a holder whose start time is not
+// recorded keeps its unit, since the probe judges a holder by the start its claim recorded and a
+// zero start proves nothing about the process. It catches a zero start read as a pid another
+// process now runs, which reclaims the unit of a live holder and puts two runs on one unit.
+func TestClaimWithoutStart(t *testing.T) {
+	ctx := t.Context()
+	self, err := core.CurrentProcess()
+	if err != nil {
+		t.Fatalf("CurrentProcess: %v", err)
+	}
+	unstarted := core.ProcessID{PID: os.Getpid()}
+
+	t.Run("the probe never reads a zero start as gone", func(t *testing.T) {
+		if state := probeProcess(unstarted); state == processGone {
+			t.Errorf("probeProcess(pid %d, zero start) of a live process = processGone, want not gone", unstarted.PID)
+		}
+	})
+
+	t.Run("a claim without a start time is refused", func(t *testing.T) {
+		// The repro of the round 2 audit: two runs claim one unit for a live pid with no start.
+		const unit = 46
+		claims, err := OpenClaims(t.TempDir())
+		if err != nil {
+			t.Fatalf("OpenClaims: %v", err)
+		}
+		if err := claims.Take(ctx, Claim{Unit: unit, RunID: engineTestRunID, Owner: unstarted}); err == nil {
+			t.Errorf("Take unit %d for a holder without a start time = nil error, want a refusal", unit)
+		}
+		if err := claims.Take(ctx, Claim{Unit: unit, RunID: engineTestSecondRunID, Owner: unstarted}); err == nil {
+			t.Errorf("a second Take of unit %d for a live holder without a start time = nil error, want a refusal", unit)
+		}
+	})
+
+	t.Run("a recorded claim without a start time keeps its unit", func(t *testing.T) {
+		const unit = 47
+		dir := t.TempDir()
+		b, err := json.Marshal(claimRecord{FormatVersion: claimVersion, Unit: unit,
+			RunID: engineTestDeadRunID, PID: unstarted.PID})
+		if err != nil {
+			t.Fatalf("encode the claim of unit %d: %v", unit, err)
+		}
+		engineTestWrite(t, filepath.Join(dir, claimName(unit)), string(b)+"\n")
+		claims, err := OpenClaims(dir)
+		if err != nil {
+			t.Fatalf("OpenClaims: %v", err)
+		}
+		err = claims.Take(ctx, Claim{Unit: unit, RunID: engineTestRunID, Owner: self})
+		var held *UnitClaimedError
+		if !errors.As(err, &held) {
+			t.Fatalf("Take unit %d while a live holder without a start time holds it = %v, want a refusal", unit, err)
+		}
+	})
 }
