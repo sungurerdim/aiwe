@@ -187,6 +187,9 @@ func (e Event) validate() error {
 	if err := e.Header.validate(KindEvent); err != nil {
 		return err
 	}
+	if err := e.validateBinding(); err != nil {
+		return err
+	}
 	if _, offset := e.At.Zone(); offset != 0 {
 		return refuse("an at in UTC (RFC 3339, STD-36)", "an at with a UTC offset")
 	}
@@ -198,6 +201,21 @@ func (e Event) validate() error {
 		return err
 	}
 	return e.validatePersonalData()
+}
+
+// absentID is how the ledger writes an identity that is absent (SPEC §8.5).
+const absentID = "none"
+
+// validateBinding refuses an event of no item, since the ledger writes an absent unit as none, and a
+// verdict that binds to no run.
+func (e Event) validateBinding() error {
+	switch {
+	case e.Unit == absentID:
+		return refuse("the id of the item the event belongs to", "unit none")
+	case e.Name == EventVerdict && e.RunID == absentID:
+		return refuse("the runId of the run the verdict judges", "runId none")
+	}
+	return nil
 }
 
 // eventFields returns the per-event fields of the event name, or the refusal of a name outside the
@@ -234,12 +252,13 @@ func (e Event) validateFields(fields []string) error {
 }
 
 // absolutePath finds an absolute path in a text: POSIX, a Windows drive or UNC, at the start of the
-// text or after a space or a delimiter, so a URL and a relative path pass.
-var absolutePath = regexp.MustCompile(`(^|[\s"'(=:,;])(/[A-Za-z0-9_.~-]+|[A-Za-z]:[\\/]|\\\\)`)
+// text, after a space, a delimiter or a shell redirect, or after file:/, so a URL and a relative
+// path pass.
+var absolutePath = regexp.MustCompile(`(^|[\s"'(\[=:,;<>|]|file:/+)(/[A-Za-z0-9_.~-]+|[A-Za-z]:[\\/]|\\\\)`)
 
-// emailAddress finds an e-mail address in a text; the top-level label is alphabetic, so a package
-// version such as tools@v0.30.1 passes.
-var emailAddress = regexp.MustCompile(`[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}`)
+// emailAddress finds an e-mail address in a text, also one whose domain holds letters outside ASCII;
+// the top-level label is letters, so a package version such as tools@v0.30.1 passes.
+var emailAddress = regexp.MustCompile(`[A-Za-z0-9._%+-]+@[\p{L}0-9-]+(\.[\p{L}0-9-]+)*\.\p{L}{2,}`)
 
 // validatePersonalData refuses an event that holds an absolute path or an e-mail address in any text
 // field (SPEC §8.5). The refusal names the kind of data and never repeats it.
