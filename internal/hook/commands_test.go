@@ -1,0 +1,141 @@
+package hook
+
+import (
+	"errors"
+	"strings"
+	"testing"
+
+	"github.com/sungurerdim/aiwe/internal/core"
+)
+
+// hookVerbs are the five events the harness installation wires (SPEC §10.4): the stop hook, the
+// session-start handoff, the heartbeat, the direct-heavy-command refusal and the return check.
+func hookVerbs() []string {
+	return []string{"stop", "session-start", "post-tool", "pre-tool", "return"}
+}
+
+// runHook runs the registered `hook <verb>` command with stdin as the harness input.
+func runHook(t *testing.T, verb, stdin string) (core.Result[any], error) {
+	t.Helper()
+	for _, c := range Commands(strings.NewReader(stdin)) {
+		if c.Object == "hook" && c.Verb == verb {
+			return c.Run(t.Context(), core.Input{Params: map[string]string{}})
+		}
+	}
+	t.Fatalf("no registered command %q %q", "hook", verb)
+	return core.Result[any]{}, nil
+}
+
+// TestHookRegistersEveryEvent proves each hook event is one command of the one registry (DR-16),
+// with a purpose for --help and parameters the dictionary defines.
+func TestHookRegistersEveryEvent(t *testing.T) {
+	t.Parallel()
+	cmds := Commands(strings.NewReader(""))
+	if err := core.CheckParams(core.Dictionary(), cmds); err != nil {
+		t.Fatalf("the hook commands use a parameter the dictionary does not define: %v", err)
+	}
+	for _, verb := range hookVerbs() {
+		found := false
+		for _, c := range cmds {
+			if c.Object != "hook" || c.Verb != verb {
+				continue
+			}
+			found = true
+			if c.Purpose == "" || c.Run == nil {
+				t.Errorf("hook %s has purpose %q and a nil Run = %v; want both set", verb, c.Purpose, c.Run == nil)
+			}
+		}
+		if !found {
+			t.Errorf("hook %s is not registered: a harness entry that calls it would fail with an unknown command", verb)
+		}
+	}
+	if len(cmds) != len(hookVerbs()) {
+		t.Errorf("Commands returns %d commands, want %d: an event without an installed entry is dead code", len(cmds), len(hookVerbs()))
+	}
+}
+
+// TestHookReadsHarnessInput proves every event reads the session identity from the harness's JSON
+// on stdin and passes the loop-guard and tool fields on, so the later decision reads one shape.
+func TestHookReadsHarnessInput(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name    string
+		catches string
+		stdin   string
+		want    Input
+	}{
+		{
+			name:    "session id only",
+			catches: "a hook that needs more than the session id to accept the input",
+			stdin:   `{"session_id":"s1"}`,
+			want:    Input{SessionID: "s1"},
+		},
+		{
+			name:    "stop hook already active",
+			catches: "the loop-guard field dropped, so a stop hook cannot tell it already blocked once",
+			stdin:   `{"session_id":"s2","stop_hook_active":true,"cwd":"/work"}`,
+			want:    Input{SessionID: "s2", StopHookActive: true, Cwd: "/work"},
+		},
+		{
+			name:    "tool call with unknown extra fields",
+			catches: "an unknown harness field refused, so a harness update breaks every hook",
+			stdin:   `{"session_id":"s3","tool_name":"Bash","tool_input":{"command":"ls"},"future":[1,2]}`,
+			want:    Input{SessionID: "s3", ToolName: "Bash"},
+		},
+	}
+	for _, tc := range cases {
+		for _, verb := range hookVerbs() {
+			t.Run(tc.name+"/"+verb, func(t *testing.T) {
+				t.Parallel()
+				res, err := runHook(t, verb, tc.stdin)
+				if err != nil {
+					t.Fatalf("hook %s on %s returned %v; catches: %s", verb, tc.stdin, err, tc.catches)
+				}
+				if res.Status != core.StatusOK || res.Outcome != core.OutcomeOK {
+					t.Errorf("hook %s status = %q outcome = %q, want ok; catches: %s", verb, res.Status, res.Outcome, tc.catches)
+				}
+				got, ok := res.Data.(Input)
+				if !ok || got != tc.want {
+					t.Errorf("hook %s data = %#v, want %#v; catches: %s", verb, res.Data, tc.want, tc.catches)
+				}
+			})
+		}
+	}
+}
+
+// TestHookRefusesBadInput proves the hook fails closed: input it cannot trust is an error, never an
+// allow (DR-6), so a broken harness cannot turn the stop hook into a silent pass.
+func TestHookRefusesBadInput(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name    string
+		catches string
+		stdin   string
+	}{
+		{"empty input", "an empty stdin read as an allow", ""},
+		{"blank input", "whitespace read as an allow", " \n\t "},
+		{"not json", "text input accepted as an event", "stop now"},
+		{"json array", "an array accepted as the event object", `[{"session_id":"s1"}]`},
+		{"json null", "null accepted as the event object", `null`},
+		{"missing session id", "an event without a session accepted, so its record has no owner", `{"cwd":"/work"}`},
+		{"empty session id", "an empty session id accepted as an identity", `{"session_id":""}`},
+		{"session id not a string", "a number accepted as the session identity", `{"session_id":7}`},
+		{"stop flag not a bool", "a string accepted as the loop-guard flag", `{"session_id":"s1","stop_hook_active":"yes"}`},
+		{"invalid utf-8", "bytes that are not UTF-8 accepted (DR-18)", "{\"session_id\":\"s\xff\"}"},
+		{"oversized input", "an unbounded stdin read whole", `{"session_id":"s1","pad":"` + strings.Repeat("x", 2<<20) + `"}`},
+		{"trailing second object", "two objects read as one event", `{"session_id":"s1"}{"session_id":"s2"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			res, err := runHook(t, "stop", tc.stdin)
+			if err == nil {
+				t.Fatalf("hook stop accepted %.40q with result %#v; catches: %s", tc.stdin, res, tc.catches)
+			}
+			var ce *core.Error
+			if !errors.As(err, &ce) || ce.Outcome != core.OutcomeError {
+				t.Errorf("hook stop refusal = %v, want a *core.Error with outcome %q (SPEC §5.3)", err, core.OutcomeError)
+			}
+		})
+	}
+}

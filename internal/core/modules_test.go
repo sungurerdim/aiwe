@@ -25,3 +25,28 @@ func TestModuleMapNamesOneOwnerOfPromptContractAssembly(t *testing.T) {
 			owners, promptContractOwner)
 	}
 }
+
+// TestModuleMapHasHookAndInstall proves the module table declares the hook and install packages and
+// lets the binary import them; an undeclared edge would fail check repo/boundaries (DR-17).
+func TestModuleMapHasHookAndInstall(t *testing.T) {
+	t.Parallel()
+	rows := map[string]Module{}
+	for _, m := range Modules() {
+		rows[m.Package] = m
+	}
+	for _, pkg := range []string{"internal/hook", "internal/install"} {
+		m, ok := rows[pkg]
+		if !ok || m.Responsibility == "" || m.Serves == "" {
+			t.Errorf("the module table has no complete row for %s: %+v", pkg, m)
+			continue
+		}
+		front := rows["cmd/"+Product]
+		found := false
+		for _, imp := range front.Imports {
+			found = found || imp == pkg
+		}
+		if !found {
+			t.Errorf("the row of cmd/%s does not import %s, so the binary cannot wire it", Product, pkg)
+		}
+	}
+}

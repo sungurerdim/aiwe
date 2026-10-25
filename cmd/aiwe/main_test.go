@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/sungurerdim/aiwe/internal/core"
+	"github.com/sungurerdim/aiwe/internal/install"
 )
 
 // TestVersion builds the real binary the way GoReleaser does: its default
@@ -100,6 +101,27 @@ func TestRegistryServesUnitCheck(t *testing.T) {
 	}
 	if !strings.Contains(env.Detail, "pass the unit body") {
 		t.Errorf("unit check detail = %q, want the engine's refusal that asks for the unit body", env.Detail)
+	}
+}
+
+// TestRegistryServesEveryInstalledHook proves each hook command that `aiwe install` writes into a
+// harness is a command of this binary's registry, and that `install` itself is registered
+// (DR-16). An entry that calls an unregistered command would make the harness fail on every event.
+func TestRegistryServesEveryInstalledHook(t *testing.T) {
+	registered := map[string]bool{}
+	for _, c := range registry() {
+		registered[strings.TrimSpace(c.Object+" "+c.Verb)] = true
+	}
+	if !registered["install"] {
+		t.Errorf("the registry has no %q command: no harness could be wired", "install")
+	}
+	for _, h := range install.Harnesses() {
+		for _, e := range h.Entries() {
+			name := strings.TrimPrefix(e.Command, core.Product+" ")
+			if !registered[name] {
+				t.Errorf("harness %s event %s calls %q, which the registry does not serve", h.Name, e.Event, e.Command)
+			}
+		}
 	}
 }
 
