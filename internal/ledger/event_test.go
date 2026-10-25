@@ -188,6 +188,11 @@ func TestEventRefusesMissingUnit(t *testing.T) {
 	e.Unit = ""
 	mustRefuse(t, e)
 	mustRefuseLine(t, replaceOnce(t, eventLine(t, ledgerTestEvent(EventTaken)), `"unit":"503"`, `"unit":""`))
+	// The ledger writes an absent unit as none; an event of none names no item either.
+	noneUnit := ledgerTestEvent(EventTaken)
+	noneUnit.Unit = "none"
+	mustRefuse(t, noneUnit)
+	mustRefuseLine(t, replaceOnce(t, eventLine(t, ledgerTestEvent(EventTaken)), `"unit":"503"`, `"unit":"none"`))
 }
 
 // TestEventRefusesNonUTCTime guards against a time that is not RFC 3339 in UTC (STD-36): an offset

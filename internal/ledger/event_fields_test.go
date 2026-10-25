@@ -39,6 +39,10 @@ func TestVerdictEventFields(t *testing.T) {
 		noRun := ledgerTestEvent(EventVerdict)
 		noRun.RunID = ""
 		mustRefuse(t, noRun)
+		// The ledger writes an absent run as none; a verdict must bind to a run.
+		noneRun := ledgerTestEvent(EventVerdict)
+		noneRun.RunID = "none"
+		mustRefuse(t, noneRun)
 	})
 	t.Run("a line with a verdict word outside the two is refused on read", func(t *testing.T) {
 		line := eventLine(t, ledgerTestEvent(EventVerdict))
@@ -201,6 +205,13 @@ func TestEventRefusesPersonalData(t *testing.T) {
 		{"an e-mail address in the evidence", func(e *Event) { e.Evidence = "reviewed by sungur@example.com, exit 0" }},
 		{"an e-mail address in the session id", func(e *Event) { e.Actor.SessionID = "sungur@example.com" }},
 		{"an e-mail address in the model", func(e *Event) { e.Actor.Model = "ops@example.org" }},
+		{"a file URL in the evidence", func(e *Event) { e.Evidence = "opened file:///home/u/x, exit 0" }},
+		{"a path in brackets in the evidence", func(e *Event) { e.Evidence = "exit 0 [/home/u/x]" }},
+		{"a path after a redirect in the evidence", func(e *Event) { e.Evidence = "exit 0 log>/home/u/x" }},
+		{"a path after a less-than in the evidence", func(e *Event) { e.Evidence = "exit 0 log</home/u/x" }},
+		{"a path after a pipe in the evidence", func(e *Event) { e.Evidence = "exit 0 log|/home/u/x" }},
+		{"a Windows path in brackets in the evidence", func(e *Event) { e.Evidence = `exit 0 [C:\Users\x]` }},
+		{"an e-mail address with a non-ASCII domain", func(e *Event) { e.Evidence = "reviewed by ali@örnek.com.tr" }},
 		{"an absolute path in the goal", func(e *Event) { e.Goal = "/home/sungur/goals/sk-06" }},
 		{"an absolute path in a landed file", func(e *Event) {
 			e.Files = []string{"internal/ledger/event.go", "/home/sungur/aiwe/internal/ledger/record.go"}
