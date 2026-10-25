@@ -265,7 +265,7 @@ func TestEventRefusesPersonalData(t *testing.T) {
 	})
 	t.Run("refuses a line that holds a path on read", func(t *testing.T) {
 		line := eventLine(t, ledgerTestEvent(EventVerdict))
-		mustRefuseLine(t, replaceOnce(t, line, `exit 0 at 9c2f1ab`, "exit 0 in " + homePath("sungur") + "/" + core.Product))
+		mustRefuseLine(t, replaceOnce(t, line, `exit 0 at 9c2f1ab`, "exit 0 in "+homePath("sungur")+"/"+core.Product))
 	})
 	t.Run("refusal does not echo the personal data", func(t *testing.T) {
 		e := ledgerTestEvent(EventVerdict)
