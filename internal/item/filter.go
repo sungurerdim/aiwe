@@ -163,8 +163,8 @@ func literalLen(s string, i int, spans *spanIndex) int {
 		}
 	}
 	switch {
-	case s[i] == '\' && i+1 < len(s) && (s[i+1] == '`' || s[i+1] == '\'):
-		return len(`\`)
+	case s[i] == '\\' && i+1 < len(s) && (s[i+1] == '`' || s[i+1] == '\\'):
+		return 2 // the backslash and the character it escapes, one byte each
 	case s[i] == '`':
 		return spans.spanLen(s, i)
 	}
