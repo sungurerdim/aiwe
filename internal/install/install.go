@@ -134,23 +134,9 @@ func Merge(settings []byte, entries []Entry) ([]byte, []Change, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	var changes []Change
-	for _, e := range entries {
-		list, err := parseList(hooks[e.Event], "hooks."+e.Event)
-		if err != nil {
-			return nil, nil, err
-		}
-		out, action, err := wireEvent(list, e)
-		if err != nil {
-			return nil, nil, err
-		}
-		if action == "" {
-			continue
-		}
-		if hooks[e.Event], err = encode(out, ""); err != nil {
-			return nil, nil, err
-		}
-		changes = append(changes, Change{Event: e.Event, Action: action, Command: e.Command})
+	changes, err := mergeEvents(hooks, entries)
+	if err != nil {
+		return nil, nil, err
 	}
 	if len(changes) == 0 {
 		return settings, nil, nil
@@ -160,6 +146,29 @@ func Merge(settings []byte, entries []Entry) ([]byte, []Change, error) {
 	}
 	merged, err := encode(top, "  ")
 	return append(merged, '\n'), changes, err
+}
+
+// mergeEvents wires each entry into its event of hooks, in place, and returns what changed.
+func mergeEvents(hooks map[string]json.RawMessage, entries []Entry) ([]Change, error) {
+	var changes []Change
+	for _, e := range entries {
+		list, err := parseList(hooks[e.Event], "hooks."+e.Event)
+		if err != nil {
+			return nil, err
+		}
+		out, action, err := wireEvent(list, e)
+		if err != nil {
+			return nil, err
+		}
+		if action == "" {
+			continue
+		}
+		if hooks[e.Event], err = encode(out, ""); err != nil {
+			return nil, err
+		}
+		changes = append(changes, Change{Event: e.Event, Action: action, Command: e.Command})
+	}
+	return changes, nil
 }
 
 // slot is the state of one event while its groups are scanned for aiwe's handlers.
