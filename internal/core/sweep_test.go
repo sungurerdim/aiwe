@@ -108,8 +108,8 @@ func TestSweepLiveChild(t *testing.T) {
 // sweepTestLiveChild starts a child that runs until the test ends and returns its pid.
 func sweepTestLiveChild(t *testing.T) int {
 	t.Helper()
-	// The test context is done before the cleanup runs, which kills the child; Wait reaps it.
-	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestSweepLiveChild$")
+	// The child runs until its stdin closes in the cleanup, after the test context is done.
+	cmd := exec.CommandContext(context.WithoutCancel(t.Context()), os.Args[0], "-test.run=^TestSweepLiveChild$")
 	cmd.Env = append(os.Environ(), sweepTestChildEnv+"=1")
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -119,8 +119,10 @@ func sweepTestLiveChild(t *testing.T) int {
 		t.Fatalf("start live child: %v", err)
 	}
 	t.Cleanup(func() {
-		var exit *exec.ExitError
-		if err := errors.Join(stdin.Close(), cmd.Wait()); err != nil && !errors.As(err, &exit) {
+		if err := stdin.Close(); err != nil {
+			t.Errorf("live child stdin: %v", err)
+		}
+		if err := cmd.Wait(); err != nil {
 			t.Errorf("live child: %v", err)
 		}
 	})
