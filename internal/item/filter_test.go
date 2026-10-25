@@ -180,7 +180,7 @@ func opensHidden(rest string) bool {
 	case '!', '?':
 		return true
 	case '/':
-		return len(rest) == 1 || !(rest[1] >= 'a' && rest[1] <= 'z' || rest[1] >= 'A' && rest[1] <= 'Z')
+		return len(rest) == 1 || (rest[1] < 'a' || rest[1] > 'z') && (rest[1] < 'A' || rest[1] > 'Z')
 	}
 	return false
 }
