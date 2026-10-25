@@ -1,6 +1,7 @@
 package item_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -65,6 +66,18 @@ func wantRefused(t *testing.T, got []item.Refusal, field string) {
 	t.Errorf("no refusal names %q, got %v", field, got)
 }
 
+// wantRefusedFor fails unless got holds a refusal that names field and whose reason holds reason,
+// so another refusal of the same field cannot pass for it.
+func wantRefusedFor(t *testing.T, got []item.Refusal, field, reason string) {
+	t.Helper()
+	for _, r := range got {
+		if r.Field == field && strings.Contains(r.Reason, reason) {
+			return
+		}
+	}
+	t.Errorf("no refusal names %q with %q, got %v", field, reason, got)
+}
+
 func TestValidatorAcceptsValidRecord(t *testing.T) {
 	if got := item.Validate(validItem(), testEnv()); len(got) != 0 {
 		t.Fatalf("a record that breaks no rule is refused: %v", got)
@@ -103,10 +116,50 @@ func TestValidatorRefusesMissingField(t *testing.T) {
 }
 
 func TestValidatorRefusesUnknownVersion(t *testing.T) {
-	for _, v := range []int{0, 2, -1, 99} {
-		r := validItem()
-		r.V = v
-		wantRefused(t, item.Validate(r, testEnv()), "v")
+	rows := []struct {
+		name string
+		v    int
+	}{
+		{"v is missing, so it decodes as 0", 0},
+		{"the next version, not yet known", 2},
+		{"a negative version", -1},
+		{"a far future version", 99},
+	}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			r := validItem()
+			r.V = row.v
+			wantRefused(t, item.Validate(r, testEnv()), "v")
+		})
+	}
+}
+
+// TestValidatorRefusesUnitWithoutScope pins DR-7: a unit is dispatched with its file set, so a
+// story, task, bug, spike or chore without scope.in is refused.
+func TestValidatorRefusesUnitWithoutScope(t *testing.T) {
+	for _, typ := range []item.Type{item.TypeStory, item.TypeTask, item.TypeBug, item.TypeSpike, item.TypeChore} {
+		t.Run(string(typ)+" with no scope", func(t *testing.T) {
+			r := validItem()
+			r.Type, r.Scope = typ, nil
+			wantRefused(t, item.Validate(r, testEnv()), "scope.in")
+		})
+		t.Run(string(typ)+" with an empty scope.in", func(t *testing.T) {
+			r := validItem()
+			r.Type, r.Scope.In = typ, nil
+			wantRefused(t, item.Validate(r, testEnv()), "scope.in")
+		})
+	}
+}
+
+func TestValidatorAcceptsGroupWithoutScope(t *testing.T) {
+	for _, typ := range []item.Type{item.TypeGoal, item.TypeEpic, item.TypeOwnerAction} {
+		t.Run(string(typ)+" is no unit, so it needs no scope.in", func(t *testing.T) {
+			r := validItem()
+			r.Type, r.Scope = typ, nil
+			if got := item.Validate(r, testEnv()); len(got) != 0 {
+				t.Fatalf("a %s without scope is refused: %v", typ, got)
+			}
+		})
 	}
 }
 
@@ -136,6 +189,19 @@ func textRows(word string) []struct {
 			r.Done = append(r.Done, item.Done{ID: "audit", Judgement: "auditor", Text: "judge " + word})
 		}},
 		{"in the context", "context", func(r *item.Record) { r.Context = "Seen " + word }},
+		{"in a distinct reason", "distinct[0].reason", func(r *item.Record) {
+			r.Distinct = []item.Distinct{{ID: "W-ABCDEF", Reason: "differs " + word}}
+		}},
+		{"in a risk not added", "need.risksNotAdded[0].risk", func(r *item.Record) {
+			r.Need = &item.Need{RisksNotAdded: []item.RiskNotAdded{{Risk: "slow " + word}}}
+		}},
+		{"in a waiting option", "waiting.options[1]", func(r *item.Record) {
+			r.Waiting = &item.Waiting{Options: []string{"wait", "go on " + word}}
+		}},
+		{"in a done expect", "done[0].expect", func(r *item.Record) { r.Done[0].Expect = "exit 0, " + word }},
+		{"in the effect of a close", "close.effect.what", func(r *item.Record) {
+			r.Close = &item.Close{Effect: item.Effect{What: "refusals " + word}}
+		}},
 	}
 }
 
@@ -195,18 +261,37 @@ func TestValidatorRefusesShellOperator(t *testing.T) {
 	}
 }
 
+// wantAccepted fails when the record with this check is refused.
+func wantAccepted(t *testing.T, check string) {
+	t.Helper()
+	r := validItem()
+	r.Done[0].Check = check
+	if got := item.Validate(r, testEnv()); len(got) != 0 {
+		t.Errorf("check %q is refused: %v", check, got)
+	}
+}
+
 func TestValidatorKeepsOperatorInsideQuotes(t *testing.T) {
-	for _, check := range []string{
-		`go test ./internal/item/ -run "A && B"`,
-		`go test ./internal/item/ -run 'a|b;c>d'`,
-		`git diff --name-only 100f8ea...HEAD`,
-		`go test -run Name\;Escaped`,
-	} {
-		r := validItem()
-		r.Done[0].Check = check
-		if got := item.Validate(r, testEnv()); len(got) != 0 {
-			t.Errorf("check %q is refused: %v", check, got)
-		}
+	rows := []struct{ name, check string }{
+		{"and inside double quotes", `go test ./internal/item/ -run "A && B"`},
+		{"pipe, semicolon and redirect inside single quotes", `go test ./internal/item/ -run 'a|b;c>d'`},
+		{"a fixed range that ends at HEAD", `git diff --name-only 100f8ea...HEAD`},
+		{"an escaped semicolon", `go test -run Name\;Escaped`},
+	}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) { wantAccepted(t, row.check) })
+	}
+}
+
+func TestValidatorKeepsFixedBase(t *testing.T) {
+	rows := []struct{ name, check string }{
+		{"a sha as the base", "git diff --name-only 100f8ea"},
+		{"an email address holds an at sign", "git log --author=dev@example.com"},
+		{"a test name that holds head", "go test -run TestHeadline"},
+		{"an at sign inside a word", "git log --grep=x@y"},
+	}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) { wantAccepted(t, row.check) })
 	}
 }
 
@@ -219,6 +304,18 @@ func TestValidatorRefusesHeadRelativeBase(t *testing.T) {
 		{"caret with a number", "git diff HEAD^2"},
 		{"merge base range", "git diff origin/main...HEAD^"},
 		{"inside quotes", `git diff "HEAD~2"`},
+		{"at sign with a tilde", "git diff --name-only @~1"},
+		{"at sign with a caret", "git diff @^"},
+		{"at sign alone", "git diff @"},
+		{"at sign as the base of a range", "git diff @..main"},
+		{"at sign with a tilde after a range", "git diff origin/main...@~1"},
+		{"reflog of HEAD", "git diff HEAD@{1}"},
+		{"previous branch", "git diff @{-1}"},
+		{"reflog of the current branch", "git diff @{1}"},
+		{"lower case", "git diff head~1"},
+		{"mixed case caret", "git diff Head^"},
+		{"ORIG_HEAD", "git diff ORIG_HEAD"},
+		{"orig_head in lower case", "git diff orig_head"},
 	}
 	for _, row := range rows {
 		t.Run(row.name, func(t *testing.T) {
@@ -235,6 +332,7 @@ func TestValidatorRefusesUnresolvedCheck(t *testing.T) {
 		{"the first token is quoted and unknown", `"nosuchtool" --flag`},
 		{"the first token is an empty string", `"" test`},
 		{"a quote never closes", `go test -run "A`},
+		{"a backslash ends the check", `go test x\`},
 	}
 	for _, row := range rows {
 		t.Run(row.name, func(t *testing.T) {
@@ -286,6 +384,74 @@ func TestValidatorRefusesDoneWithoutCheckOrRole(t *testing.T) {
 			r := validItem()
 			r.Done = append(r.Done, row.done)
 			wantRefused(t, item.Validate(r, testEnv()), "done[1]")
+		})
+	}
+}
+
+// TestValidatorRefusesBidiControl pins STD-22 for the item file, which is never trusted: a
+// bidirectional control in any text field is refused, a check and a path included.
+func TestValidatorRefusesBidiControl(t *testing.T) {
+	for _, c := range bidiControls() {
+		t.Run(fmt.Sprintf("U+%04X in the title", c), func(t *testing.T) {
+			r := validItem()
+			r.Title = "Fix " + string(c) + "evil thing"
+			wantRefusedFor(t, item.Validate(r, testEnv()), "title", "bidirectional")
+		})
+	}
+	const rlo = "‮"
+	rows := []struct {
+		name   string
+		field  string
+		mutate func(*item.Record)
+	}{
+		{"in the outcome", "outcome", func(r *item.Record) { r.Outcome = "Less " + rlo + "work" }},
+		{"in a check", "done[0].check", func(r *item.Record) { r.Done[0].Check = "go test " + rlo + "./x" }},
+		{"in a done id", "done[0].id", func(r *item.Record) { r.Done[0].ID = "it " + rlo + "works" }},
+		{"in a scope.in path", "scope.in[0]", func(r *item.Record) { r.Scope.In[0] += rlo }},
+		{"in a step path", "steps[0].at", func(r *item.Record) { r.Steps = []item.Step{{Do: "write", At: "a" + rlo + ".go"}} }},
+		{"in a distinct reason", "distinct[0].reason", func(r *item.Record) {
+			r.Distinct = []item.Distinct{{ID: "W-ABCDEF", Reason: rlo}}
+		}},
+		{"in a risk not added", "need.risksNotAdded[0].risk", func(r *item.Record) {
+			r.Need = &item.Need{RisksNotAdded: []item.RiskNotAdded{{Risk: rlo}}}
+		}},
+		{"in a waiting option", "waiting.options[0]", func(r *item.Record) { r.Waiting = &item.Waiting{Options: []string{rlo}} }},
+		{"in the problem cause", "problem.cause.text", func(r *item.Record) { r.Problem = &item.Problem{Cause: item.Cause{Text: rlo}} }},
+	}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			r := validItem()
+			row.mutate(&r)
+			wantRefusedFor(t, item.Validate(r, testEnv()), row.field, "bidirectional")
+		})
+	}
+}
+
+// TestValidatorRefusalHidesValue pins that a refusal names the field and never repeats the refused
+// value, which is untrusted text.
+func TestValidatorRefusalHidesValue(t *testing.T) {
+	rows := []struct {
+		name   string
+		field  string
+		value  string
+		mutate func(*item.Record, string)
+	}{
+		{"a missing path", "scope.in[2]", "internal/item/nothere.go", func(r *item.Record, v string) { r.Scope.In = append(r.Scope.In, v) }},
+		{"an existing new path", "scope.new[1]", "internal/item/record.go", func(r *item.Record, v string) { r.Scope.New = append(r.Scope.New, v) }},
+		{"a first token that does not resolve", "done[0].check", "nosuchtool", func(r *item.Record, v string) { r.Done[0].Check = v + " --flag" }},
+		{"a base relative to HEAD", "done[0].check", "HEAD~7", func(r *item.Record, v string) { r.Done[0].Check = "git diff " + v }},
+	}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			r := validItem()
+			row.mutate(&r, row.value)
+			got := item.Validate(r, testEnv())
+			wantRefused(t, got, row.field)
+			for _, ref := range got {
+				if strings.Contains(ref.Error(), row.value) {
+					t.Errorf("the refusal %q repeats the value %q", ref.Error(), row.value)
+				}
+			}
 		})
 	}
 }
