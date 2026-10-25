@@ -44,6 +44,14 @@ func TestVerdictEventFields(t *testing.T) {
 		noneRun.RunID = "none"
 		mustRefuse(t, noneRun)
 	})
+	// validateBinding compared only the exact string none.
+	for _, runID := range []string{" ", "None", "NONE", " none", "unknown", "Unknown"} {
+		t.Run("refuses runId "+runID, func(t *testing.T) {
+			e := ledgerTestEvent(EventVerdict)
+			e.RunID = runID
+			mustRefuse(t, e)
+		})
+	}
 	t.Run("a line with a verdict word outside the two is refused on read", func(t *testing.T) {
 		line := eventLine(t, ledgerTestEvent(EventVerdict))
 		mustRefuseLine(t, replaceOnce(t, line, `"verdict":"GREEN"`, `"verdict":"PASS"`))
@@ -215,6 +223,18 @@ func TestEventRefusesPersonalData(t *testing.T) {
 		{"an e-mail address with a non-ASCII local part and domain", func(e *Event) { e.Evidence = "reviewed by barış@örnek.com.tr" }},
 		{"an e-mail address with a non-ASCII local part", func(e *Event) { e.Evidence = "reviewed by çağrı@example.com" }},
 		{"an upper-case file URL in the evidence", func(e *Event) { e.Evidence = "opened FILE:///home/u/x, exit 0" }},
+		{"a path in backticks (path regex: prefix allow-list)", func(e *Event) { e.Evidence = "see `/home/alice/aiwe`" }},
+		{"a Windows path in backticks (path regex: prefix allow-list)", func(e *Event) { e.Evidence = "see `C:\\Users\\alice`" }},
+		{"a path in braces (path regex: prefix allow-list)", func(e *Event) { e.Evidence = "see {/home/alice}" }},
+		{"a path after a no-break space (path regex: ASCII-only space)", func(e *Event) { e.Evidence = "in\u00a0/home/alice" }},
+		{"a UNC path written with slashes (path regex: no // branch)", func(e *Event) { e.Evidence = "//host/share/alice" }},
+		{"a path after a key and a colon", func(e *Event) { e.Evidence = "cwd:/home/alice" }},
+		{"a drive path after a key and a colon", func(e *Event) { e.Evidence = `cwd:C:\Users\alice` }},
+		{"an e-mail address in NFD (mail regex: no \\p{M})", func(e *Event) { e.Evidence = "jose\u0301@example.com" }},
+		{"an e-mail address in Devanagari (mail regex: no \\p{M})", func(e *Event) { e.Evidence = "user@उदाहरण.भारत" }},
+		{"an e-mail address with a zero-width space (mail regex: \\p{Cf} kept)", func(e *Event) { e.Evidence = "alice\u200b@example.com" }},
+		{"an e-mail address with a fullwidth at sign (mail regex: no at-sign mapping)", func(e *Event) { e.Evidence = "alice\uff20example.com" }},
+		{"an e-mail address with a small at sign (mail regex: no at-sign mapping)", func(e *Event) { e.Evidence = "alice\ufe6bexample.com" }},
 		{"an absolute path in the goal", func(e *Event) { e.Goal = "/home/sungur/goals/sk-06" }},
 		{"an absolute path in a landed file", func(e *Event) {
 			e.Files = []string{"internal/ledger/event.go", "/home/sungur/aiwe/internal/ledger/record.go"}
@@ -250,6 +270,18 @@ func TestEventRefusesPersonalData(t *testing.T) {
 			t.Errorf("refusal %q repeats the e-mail address it refuses", err)
 		}
 	})
+	t.Run("a refusal of a value outside a set does not echo the value", func(t *testing.T) {
+		verdict := ledgerTestEvent(EventVerdict)
+		verdict.Verdict = "alice@example.com"
+		name := ledgerTestEvent(EventCreated)
+		name.Name = "alice@example.com"
+		for _, e := range []Event{verdict, name} {
+			err := Append(&bytes.Buffer{}, e)
+			if err == nil || strings.Contains(err.Error(), "alice@example.com") {
+				t.Errorf("Append(%s event) error = %v, want a refusal that names the field, not the value", e.Name, err)
+			}
+		}
+	})
 	accepted := []struct {
 		name  string
 		build func(*Event)
@@ -258,6 +290,10 @@ func TestEventRefusesPersonalData(t *testing.T) {
 		{"a relative path in the evidence", func(e *Event) { e.Evidence = "go test ./internal/ledger/ exit 0" }},
 		{"a package version in the evidence", func(e *Event) { e.Evidence = "x/tools@v0.30.1 is pinned" }},
 		{"a time of day in the evidence", func(e *Event) { e.Evidence = "finished at 10:00:00, exit 0" }},
+		{"a URL with a path in the evidence", func(e *Event) { e.Evidence = "see https://example.com/x" }},
+		{"a URL in backticks in the evidence", func(e *Event) { e.Evidence = "see `https://example.com/x`" }},
+		{"a short relative path in the evidence", func(e *Event) { e.Evidence = "a/b is green" }},
+		{"a relative path in backticks in the evidence", func(e *Event) { e.Evidence = "see `internal/ledger/event.go`" }},
 	}
 	for _, tc := range accepted {
 		t.Run("accepts "+tc.name, func(t *testing.T) {

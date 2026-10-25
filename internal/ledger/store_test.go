@@ -99,3 +99,46 @@ func TestReadTornLastLine(t *testing.T) {
 		}
 	})
 }
+
+// TestReadRefusesLineNotAsWritten guards against a line that Append would never write: encoding/json
+// skips an unknown key, keeps the last of two equal keys and matches a key in any case, so personal
+// data could sit in the line while the record read from it is clean (SPEC §4, §8.5).
+func TestReadRefusesLineNotAsWritten(t *testing.T) {
+	verdict := eventLine(t, ledgerTestEvent(EventVerdict))
+	run, _ := appendLine(t, ledgerTestRun())
+	check, _ := appendLine(t, ledgerTestCheck())
+	cases := []struct {
+		name, line, old, repl string
+	}{
+		{"an unknown key in an event (Read: unknown key skipped)", verdict,
+			`"event":"verdict"`, `"event":"verdict","email":"alice@example.com"`},
+		{"an unknown key in the actor (Read: unknown key skipped)", verdict,
+			`"actor":{`, `"actor":{"email":"alice@example.com",`},
+		{"an unknown object in an event (Read: unknown key skipped)", verdict,
+			`"event":"verdict"`, `"event":"verdict","host":{"home":"C:\Users\alice"}`},
+		{"a duplicate evidence key (Read: last key wins)", verdict,
+			`"evidence":"`, `"evidence":"in /home/alice/aiwe","evidence":"`},
+		{"a duplicate unit key (Read: last key wins)", verdict,
+			`"unit":"503"`, `"unit":"/home/alice","unit":"503"`},
+		{"an upper-case evidence key next to the real one (Read: key in any case)", verdict,
+			`"evidence":"`, `"EVIDENCE":"by alice@example.com","evidence":"`},
+		{"an evidence key in another case (Read: key in any case)", verdict,
+			`"evidence":"`, `"Evidence":"`},
+		{"an unknown key in a run (Read: unknown key skipped)", strings.TrimSuffix(run, "\n"),
+			`"kind":"run"`, `"kind":"run","email":"alice@example.com"`},
+		{"an unknown key in a check (Read: unknown key skipped)", strings.TrimSuffix(check, "\n"),
+			`"kind":"check"`, `"kind":"check","cwd":"/home/alice/aiwe"`},
+	}
+	for _, tc := range cases {
+		t.Run("refuses "+tc.name, func(t *testing.T) {
+			mustRefuseLine(t, replaceOnce(t, tc.line, tc.old, tc.repl))
+		})
+	}
+	t.Run("the line Append writes reads back for every kind", func(t *testing.T) {
+		for _, line := range []string{verdict, run, check} {
+			if _, err := Read(strings.NewReader(strings.TrimSuffix(line, "\n") + "\n")); err != nil {
+				t.Errorf("Read(%s) error = %v, want nil", line, err)
+			}
+		}
+	})
+}

@@ -193,6 +193,13 @@ func TestEventRefusesMissingUnit(t *testing.T) {
 	noneUnit.Unit = "none"
 	mustRefuse(t, noneUnit)
 	mustRefuseLine(t, replaceOnce(t, eventLine(t, ledgerTestEvent(EventTaken)), `"unit":"503"`, `"unit":"none"`))
+	// validateBinding compared only the exact string none: a blank unit, or none or unknown in
+	// another case, names no item either.
+	for _, unit := range []string{" ", "None", "NONE", "none ", "unknown", "Unknown"} {
+		blank := ledgerTestEvent(EventTaken)
+		blank.Unit = unit
+		mustRefuse(t, blank)
+	}
 }
 
 // TestEventRefusesNonUTCTime guards against a time that is not RFC 3339 in UTC (STD-36): an offset
