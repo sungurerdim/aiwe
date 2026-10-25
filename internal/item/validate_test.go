@@ -34,7 +34,7 @@ func validItem() item.Record {
 		Title:   "The validator refuses a broken record",
 		Type:    item.TypeTask,
 		Status:  item.StatusOpen,
-		Repo:    "github.com/sungurerdim/aiwe",
+		Repo:    "github.com/example/project",
 		Outcome: "A broken work item is stopped before anyone relies on it.",
 		Flow:    "feature",
 		Quality: "reliability",

@@ -246,9 +246,11 @@ type wordRule struct {
 }
 
 // wordRules are the placeholders and the relative references of SPEC §8.4, in lower case.
-var wordRules = []wordRule{
-	{"placeholder", []string{"tbd", "tba", "tbc", "etc", "fixme", "lorem ipsum", "to be determined", "to be decided"}},
-	{"relative reference", []string{"above", "below", "ditto", "same as", "as before", "as mentioned", "the latter", "the former"}},
+func wordRules() []wordRule {
+	return []wordRule{
+		{"placeholder", []string{"tbd", "tba", "tbc", "etc", "fixme", "lorem ipsum", "to be determined", "to be decided"}},
+		{"relative reference", []string{"above", "below", "ditto", "same as", "as before", "as mentioned", "the latter", "the former"}},
+	}
 }
 
 // words returns the words of s in lower case, each with a space before and after it. A word is a
@@ -274,7 +276,7 @@ type namedText struct{ field, value string }
 func (v *refusals) texts(r Record) {
 	for _, t := range textFields(r) {
 		padded := words(t.value)
-		for _, rule := range wordRules {
+		for _, rule := range wordRules() {
 			for _, p := range rule.phrases {
 				if strings.Contains(padded, " "+p+" ") {
 					v.add(t.field, "holds the %s %q", rule.kind, p)

@@ -11,16 +11,18 @@ import (
 )
 
 // bidiControls are the nine controls of UAX #9 that embed, override or isolate text.
-var bidiControls = []rune{
-	'\u202A', // left-to-right embedding
-	'\u202B', // right-to-left embedding
-	'\u202C', // pop directional formatting
-	'\u202D', // left-to-right override
-	'\u202E', // right-to-left override
-	'\u2066', // left-to-right isolate
-	'\u2067', // right-to-left isolate
-	'\u2068', // first strong isolate
-	'\u2069', // pop directional isolate
+func bidiControls() []rune {
+	return []rune{
+		'\u202A', // left-to-right embedding
+		'\u202B', // right-to-left embedding
+		'\u202C', // pop directional formatting
+		'\u202D', // left-to-right override
+		'\u202E', // right-to-left override
+		'\u2066', // left-to-right isolate
+		'\u2067', // right-to-left isolate
+		'\u2068', // first strong isolate
+		'\u2069', // pop directional isolate
+	}
 }
 
 func TestFilterRemovesHTMLComments(t *testing.T) {
@@ -49,7 +51,7 @@ func TestFilterRemovesHTMLComments(t *testing.T) {
 }
 
 func TestFilterRefusesBidiControls(t *testing.T) {
-	for _, c := range bidiControls {
+	for _, c := range bidiControls() {
 		code := fmt.Sprintf("U+%04X", c)
 		rows := []struct{ name, in string }{
 			{"alone", string(c)},
@@ -103,7 +105,7 @@ func FuzzFilterText(f *testing.F) {
 			t.Fatalf("FilterText(%q) = %q still holds a comment opener", in, got)
 		}
 		for _, r := range got {
-			if slices.Contains(bidiControls, r) {
+			if slices.Contains(bidiControls(), r) {
 				t.Fatalf("FilterText(%q) = %q holds the control %U", in, got, r)
 			}
 		}
