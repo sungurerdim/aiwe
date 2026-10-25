@@ -10,9 +10,11 @@ import (
 )
 
 // allEventNames lists the 13 lifecycle events of SPEC §8.5, in the order the SPEC names them.
-var allEventNames = []EventName{
-	EventCreated, EventReady, EventTaken, EventReturned, EventCheckQueued, EventCheckStarted,
-	EventVerdict, EventLanded, EventPushed, EventMerged, EventDeployed, EventClosed, EventReopened,
+func allEventNames() []EventName {
+	return []EventName{
+		EventCreated, EventReady, EventTaken, EventReturned, EventCheckQueued, EventCheckStarted,
+		EventVerdict, EventLanded, EventPushed, EventMerged, EventDeployed, EventClosed, EventReopened,
+	}
 }
 
 // ledgerTestActor returns a fully named actor with realistic values (SPEC §8.5).
@@ -146,7 +148,7 @@ func TestAppendReadEvent(t *testing.T) {
 			t.Errorf("ledger %s does not carry kind event and event verdict", raw)
 		}
 	})
-	for _, name := range allEventNames {
+	for _, name := range allEventNames() {
 		t.Run(string(name)+" reads back unchanged", func(t *testing.T) {
 			want := ledgerTestEvent(name)
 			got := readEvent(t, want)
@@ -161,7 +163,7 @@ func TestAppendReadEvent(t *testing.T) {
 // TestEventNamesClosed guards against a name outside the 13 of SPEC §8.5 entering the ledger, and
 // against one of the 13 being refused.
 func TestEventNamesClosed(t *testing.T) {
-	for _, name := range allEventNames {
+	for _, name := range allEventNames() {
 		t.Run("accepts "+string(name), func(t *testing.T) {
 			var buf bytes.Buffer
 			if err := Append(&buf, ledgerTestEvent(name)); err != nil {
@@ -178,8 +180,8 @@ func TestEventNamesClosed(t *testing.T) {
 				`"event":"created"`, `"event":"`+string(name)+`"`))
 		})
 	}
-	if len(allEventNames) != 13 {
-		t.Fatalf("the test lists %d events, want the 13 of SPEC §8.5", len(allEventNames))
+	if len(allEventNames()) != 13 {
+		t.Fatalf("the test lists %d events, want the 13 of SPEC §8.5", len(allEventNames()))
 	}
 }
 
