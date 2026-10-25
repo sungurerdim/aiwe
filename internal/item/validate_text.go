@@ -134,33 +134,34 @@ func statusTexts(r Record) []namedText {
 	return ts
 }
 
-// bidi refuses a bidirectional control in any string of val, a record or a part of one, and names
-// the field by its JSON keys (STD-22). The item file is never trusted, so a check, a path or an id
-// that a reader sees in another order is refused like a free text.
-func (v *refusals) bidi(val reflect.Value, field string) {
+// hidden applies the intake filter FilterText to every string of val, a record or a part of one,
+// and refuses one that can hide content, naming the field by its JSON keys (SPEC-contracts §8.4,
+// STD-22). The item file is never trusted, so a check, a path or an id is filtered like a free
+// text. The reason is the filter's refusal, which never repeats the text.
+func (v *refusals) hidden(val reflect.Value, field string) {
 	switch k := val.Kind(); {
 	case k == reflect.String:
-		if r, ok := firstBidi(val.String()); ok {
-			v.add(field, "holds the bidirectional control U+%04X", r)
+		if _, err := FilterText(val.String()); err != nil {
+			v.add(field, "%v", err)
 		}
 	case k == reflect.Pointer && !val.IsNil():
-		v.bidi(val.Elem(), field)
+		v.hidden(val.Elem(), field)
 	case k == reflect.Slice:
 		for i := range val.Len() {
-			v.bidi(val.Index(i), fmt.Sprintf("%s[%d]", field, i))
+			v.hidden(val.Index(i), fmt.Sprintf("%s[%d]", field, i))
 		}
 	case k == reflect.Struct:
-		v.bidiFields(val, field)
+		v.hiddenFields(val, field)
 	}
 }
 
-// bidiFields applies bidi to each field of the struct val, named by its JSON key.
-func (v *refusals) bidiFields(val reflect.Value, field string) {
+// hiddenFields applies hidden to each field of the struct val, named by its JSON key.
+func (v *refusals) hiddenFields(val reflect.Value, field string) {
 	for i := range val.NumField() {
 		name, _, _ := strings.Cut(val.Type().Field(i).Tag.Get("json"), ",")
 		if field != "" {
 			name = field + "." + name
 		}
-		v.bidi(val.Field(i), name)
+		v.hidden(val.Field(i), name)
 	}
 }

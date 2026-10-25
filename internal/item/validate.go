@@ -46,8 +46,8 @@ func (v *refusals) add(field, format string, args ...any) {
 
 // Validate applies the validator refusals of SPEC §8.4 to a record that already passed Decode and
 // returns every defect it finds, none for a record that breaks no rule. It refuses a version v other
-// than SchemaVersion, a missing field, a unit without scope.in (DR-7), a bidirectional control in
-// any field (STD-22), a placeholder or a relative reference in a free text, a shell operator outside
+// than SchemaVersion, a missing field, a unit without scope.in (DR-7), text that FilterText refuses
+// in any field (STD-22), a placeholder or a relative reference in a free text, a shell operator outside
 // quotes or a revision that moves with HEAD in a check, a check whose first token does not resolve,
 // a scope.in path that does not exist and is not in scope.new, a scope.new path that exists, and a
 // done entry with neither a check nor a judgement role. Decode does not check v, so this is the
@@ -58,7 +58,7 @@ func Validate(r Record, env Env) []Refusal {
 	}
 	var v refusals
 	v.required(r)
-	v.bidi(reflect.ValueOf(r), "")
+	v.hidden(reflect.ValueOf(r), "")
 	v.texts(r)
 	v.scope(r, env)
 	v.done(r.Done, env)
