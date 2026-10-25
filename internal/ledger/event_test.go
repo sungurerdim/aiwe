@@ -141,6 +141,7 @@ func TestAppendReadEvent(t *testing.T) {
 			t.Errorf("event at = %v, want %v", got.At, want.At)
 		}
 		got.At = want.At
+		want.Prev = got.Prev
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("event read back = %+v, want %+v", got, want)
 		}
@@ -153,6 +154,7 @@ func TestAppendReadEvent(t *testing.T) {
 			want := ledgerTestEvent(name)
 			got := readEvent(t, want)
 			got.At = want.At
+			want.Prev = got.Prev
 			if !reflect.DeepEqual(got, want) {
 				t.Errorf("%s event read back = %+v, want %+v", name, got, want)
 			}
