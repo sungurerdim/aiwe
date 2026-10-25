@@ -21,7 +21,7 @@ const (
 	covenantMarker        = "contributor-covenant.org/version/3/0"
 	privateReportingText  = "report a vulnerability"
 	spdxIdentifierPrefix  = "SPDX-License-Identifier:"
-	licenceGrantMarker    = "Permission is hereby granted, free of charge"
+	licenceGrantMarker    = "Permission is hereby granted, free of charge, to any person obtaining a copy"
 	licenceDisclaimerLine = "THE SOFTWARE IS PROVIDED \"AS IS\""
 )
 
@@ -59,27 +59,43 @@ func Rules(repo string) ([]Finding, error) {
 	return found, nil
 }
 
-// contentFindings returns the text findings of the four standards' files that are present. absent
-// names the files the existence rule already reported.
+// contentFindings returns the text findings of the standards' files that are present. absent names
+// the files the existence rule already reported. A file that is present but cannot be read as text
+// is an error, never a pass or a skip: its text was not judged (DR-6).
 func contentFindings(repo string, absent []Finding) ([]Finding, error) {
 	var found []Finding
+	bodies := map[string]string{}
 	for _, c := range textChecks() {
 		if reported(absent, c.path) {
 			continue
 		}
-		text, err := readRepoFile(repo, c.path)
-		if err != nil {
-			continue // a file the list does not require, or an unreadable one: absent is the finding
-		}
-		body, err := core.ReadText(text)
-		if err != nil {
-			return nil, fmt.Errorf("rules: %s: %w", c.path, err)
+		body, read := bodies[c.path]
+		if !read {
+			var err error
+			if body, err = readStandardText(repo, c.path); err != nil {
+				return nil, err
+			}
+			bodies[c.path] = body
 		}
 		if !c.stated(body) {
 			found = append(found, Finding{Rule: c.rule, Path: c.path})
 		}
 	}
 	return found, nil
+}
+
+// readStandardText reads the file rel of repo as text. The errors name rel and give the reason (an
+// oversized or non-regular file, invalid UTF-8); none carries the file's content.
+func readStandardText(repo, rel string) (string, error) {
+	raw, err := readRepoFile(repo, rel)
+	if err != nil {
+		return "", fmt.Errorf("rules: %w", err)
+	}
+	text, err := core.ReadText(raw)
+	if err != nil {
+		return "", fmt.Errorf("rules: %s: %w", rel, err)
+	}
+	return text, nil
 }
 
 // textCheck is one standard's file and the statement that meets it.
@@ -117,21 +133,27 @@ func statesPrivateReporting(body string) bool {
 	return strings.Contains(strings.ToLower(body), privateReportingText)
 }
 
-// statesSPDXIdentifier reports the licence identifier STD-44 wants next to the licence: an
-// `SPDX-License-Identifier: MIT` line naming the same licence the LICENSE carries. STD-44 places it
-// "next to the licence", so the LICENSE is read, not the module metadata. Another identifier tells a
-// consumer a permission the licence text does not give. A licence that carries no identifier at all
-// is not this rule's finding: STD-44 asks the identifier to agree with the licence when it is
-// present, and adding one is a separate change to LICENSE.
+// statesSPDXIdentifier reports the licence identifier STD-44 wants next to the licence: at least
+// one `SPDX-License-Identifier:` line, and every such line naming MIT, the licence the LICENSE
+// carries. STD-44 places it "next to the licence", so the LICENSE is read, not the module metadata.
+// A missing identifier is not a pass: the shipped LICENSE carries none, and a rule that passes on
+// absence can never be red there. Another identifier, an empty one or a compound one such as
+// "MIT OR Apache-2.0" tells a consumer a permission the licence text does not give. The line is read
+// as internal/core/tools.go spdxLicence reads it (line start after a byte order mark and spaces,
+// same prefix); unlike it, the whole remainder must be the identifier, not its first word.
 func statesSPDXIdentifier(body string) bool {
-	for _, line := range strings.Split(strings.ReplaceAll(body, "\r\n", "\n"), "\n") {
-		i := strings.Index(line, spdxIdentifierPrefix)
-		if i < 0 {
+	found := false
+	for _, line := range strings.Split(body, "\n") {
+		line = strings.TrimSpace(strings.TrimPrefix(line, "\uFEFF"))
+		if !strings.HasPrefix(line, spdxIdentifierPrefix) {
 			continue
 		}
-		return strings.TrimSpace(line[i+len(spdxIdentifierPrefix):]) == licenceIdentifier
+		if strings.TrimSpace(strings.TrimPrefix(line, spdxIdentifierPrefix)) != licenceIdentifier {
+			return false
+		}
+		found = true
 	}
-	return true
+	return found
 }
 
 // reported reports whether the existence rule already named path.
