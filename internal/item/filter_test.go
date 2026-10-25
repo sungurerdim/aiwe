@@ -8,6 +8,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/sungurerdim/aiwe/internal/core"
 	"github.com/sungurerdim/aiwe/internal/item"
 )
 
@@ -72,6 +73,39 @@ func TestFilterRemovesHTMLComments(t *testing.T) {
 	}
 }
 
+// TestFilterKeepsCommentsInMarkdownCode pins that a comment delimiter inside a Markdown code span
+// or fenced code block is text a reader sees (CommonMark 0.31), so it is not removed; whichever of
+// a comment and a code span starts first wins, as in CommonMark.
+func TestFilterKeepsCommentsInMarkdownCode(t *testing.T) {
+	rows := []struct{ name, in, want string }{
+		{"an opener and a closer in two code spans", "Use `<!--` and keep tests `-->` intact", "Use `<!--` and keep tests `-->` intact"},
+		{"the text between two code spans is shown", "Do `<!--`not`-->` delete the tests", "Do `<!--`not`-->` delete the tests"},
+		{"a fenced code block keeps its comments", "```\nDo <!--->not<!-- --> delete\n```", "```\nDo <!--->not<!-- --> delete\n```"},
+		{"a tilde fence that never closes keeps the rest as code", "~~~\n<!-- shown as code", "~~~\n<!-- shown as code"},
+		{"a comment after a closed fence is removed", "```\n<!-- a -->\n```\n<!-- b -->ok", "```\n<!-- a -->\n```\nok"},
+		{"a tilde line does not close a backtick fence", "```\n~~~\n<!-- a -->", "```\n~~~\n<!-- a -->"},
+		{"a fence indented by four spaces is no fence", "    ```\n<!-- x -->", "    ```\n"},
+		{"a backtick in the info string makes no fence", "``` a`b\n<!-- x -->", "``` a`b\n"},
+		{"a comment that starts first hides the code span in it", "<!-- `x` -->ok", "ok"},
+		{"a backtick run without a closer is text", "`a <!-- x --> b", "`a  b"},
+		{"a code span ends at the line end", "`<!--\n-->`", "``"},
+		{"an escaped backtick opens no code span", "\\`<!--` x `-->`", "\\``"},
+		{"a code span closes only at a run of its own length", "``<!--`-->``", "``<!--`-->``"},
+		{"an escaped backslash lets the backtick open", "\\\\`<!--`", "\\\\`<!--`"},
+	}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			got, err := item.FilterText(row.in)
+			if err != nil {
+				t.Fatalf("FilterText(%q) refused: %v", row.in, err)
+			}
+			if got != row.want {
+				t.Errorf("FilterText(%q) = %q, want %q", row.in, got, row.want)
+			}
+		})
+	}
+}
+
 func TestFilterRefusesBidiControls(t *testing.T) {
 	for _, c := range bidiControls() {
 		code := fmt.Sprintf("U+%04X", c)
@@ -112,8 +146,8 @@ func TestFilterRefusesInvalidUTF8(t *testing.T) {
 	for _, row := range rows {
 		t.Run(row.name, func(t *testing.T) {
 			got, err := item.FilterText(row.in)
-			if err == nil {
-				t.Fatalf("FilterText(%q) = %q, want a refusal", row.in, got)
+			if !errors.Is(err, core.ErrInvalidUTF8) {
+				t.Fatalf("FilterText(%q) = %q, %v; want core.ErrInvalidUTF8", row.in, got, err)
 			}
 			if got != "" {
 				t.Errorf("a refused text returns %q, want nothing", got)
@@ -153,12 +187,14 @@ func openerLeft(got string) string {
 }
 
 // FuzzFilterText feeds untrusted text to the filter: it must not panic, a text that is not UTF-8 is
-// refused, and a text it accepts holds neither a comment opener nor a bidirectional control.
+// refused, and a text it accepts holds no bidirectional control and, outside Markdown code, no
+// comment opener.
 func FuzzFilterText(f *testing.F) {
 	for _, seed := range []string{
 		"", "plain", "a <!-- b --> c", "<!<!-- x -->-- y -->", "<!--", "<!-->", "<!--->", "-->",
 		"adm\u202Ein", "\u2066x\u2069", "<!-- \u202E -->", "\xff\xfe<!--", "<!--<!---->-->",
 		"A\xe2\x80<!-- x -->\xaeB", "a --!> b", "<?x?>", "</ x>", "</>", "<![CDATA[x]]>",
+		"Do `<!--`not`-->` delete", "```\n<!-- x -->\n```", "~~~\n<!--", "\\`<!--`", "`` ` ``` `",
 		"<<!-- x -->!-- y -->z", "<</<!---->x>", "\u200F", "<!-- a --!-->b",
 	} {
 		f.Add(seed)
@@ -174,7 +210,9 @@ func FuzzFilterText(f *testing.F) {
 		if !utf8.ValidString(in) {
 			t.Fatalf("FilterText(%q) accepted a text that is not UTF-8", in)
 		}
-		if o := openerLeft(got); o != "" {
+		// Markdown code keeps its delimiters literally, so the opener check holds for a text with no
+		// code span and no code fence.
+		if o := openerLeft(got); o != "" && !strings.ContainsAny(in, "`~") {
 			t.Fatalf("FilterText(%q) = %q still holds the comment opener %q", in, got, o)
 		}
 		for _, r := range got {

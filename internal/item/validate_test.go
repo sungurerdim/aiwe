@@ -289,6 +289,11 @@ func TestValidatorKeepsFixedBase(t *testing.T) {
 		{"an email address holds an at sign", "git log --author=dev@example.com"},
 		{"a test name that holds head", "go test -run TestHeadline"},
 		{"an at sign inside a word", "git log --grep=x@y"},
+		{"bare at sign, the same revision as HEAD", "git diff @"},
+		{"bare HEAD", "git diff HEAD"},
+		{"at sign as the base of a range", "git diff @..main"},
+		{"at sign at the end of a range", "git diff main..@"},
+		{"a -run pattern whose word ends in head and a caret", "go test -run TestAhead^"},
 	}
 	for _, row := range rows {
 		t.Run(row.name, func(t *testing.T) { wantAccepted(t, row.check) })
@@ -306,9 +311,9 @@ func TestValidatorRefusesHeadRelativeBase(t *testing.T) {
 		{"inside quotes", `git diff "HEAD~2"`},
 		{"at sign with a tilde", "git diff --name-only @~1"},
 		{"at sign with a caret", "git diff @^"},
-		{"at sign alone", "git diff @"},
-		{"at sign as the base of a range", "git diff @..main"},
 		{"at sign with a tilde after a range", "git diff origin/main...@~1"},
+		{"at sign with a tilde at the end of a two-dot range", "git diff main..@~1"},
+		{"at sign with a tilde after an equals sign", "git diff --base=@~1"},
 		{"reflog of HEAD", "git diff HEAD@{1}"},
 		{"previous branch", "git diff @{-1}"},
 		{"reflog of the current branch", "git diff @{1}"},

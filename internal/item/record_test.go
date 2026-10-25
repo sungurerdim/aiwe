@@ -382,3 +382,32 @@ func TestRecordRefusesTrailingData(t *testing.T) {
 		})
 	}
 }
+
+// TestRecordRefusesDuplicateKey pins that Decode refuses an object that names one key twice, also
+// in another case. encoding/json keeps the last of two equal keys and matches keys without case, so
+// a shadowed value would stay in the file a reviewer reads and never reach the validator (STD-22).
+func TestRecordRefusesDuplicateKey(t *testing.T) {
+	t.Parallel()
+	whole := string(recordJSON(t, fullRecord()))
+	escaped := "\\" + "u202e"
+	raw := string(rune(0x202E))
+	rows := []struct{ name, data string }{
+		{"a shadowed title with a JSON-escaped control", `{"title":"Fix ` + escaped + `evil",` + whole[1:]},
+		{"a shadowed title with the control as UTF-8", `{"title":"Fix ` + raw + `evil",` + whole[1:]},
+		{"a key that differs only in case", `{"TITLE":"Fix ` + escaped + `evil",` + whole[1:]},
+		{"a duplicate key in a nested object", strings.Replace(whole, `"problem":{`, `"problem":{"symptom":"x",`, 1)},
+		{"a duplicate key in an object of a list", strings.Replace(whole, `"done":[{`, `"done":[{"id":"x",`, 1)},
+		{"a record cut inside an object", `{"title":`},
+	}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			if row.data == whole {
+				t.Fatal("the row changed nothing; the JSON of fullRecord has another shape")
+			}
+			if got, err := item.Decode([]byte(row.data)); err == nil {
+				t.Fatalf("Decode accepted a record with a duplicate key, title %q", got.Title)
+			}
+		})
+	}
+}
