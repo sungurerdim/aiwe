@@ -78,7 +78,7 @@ func rulesRepoFiles() []string {
 }
 
 // rulesRepoSpec writes a repository with spec as docs/SPEC.md and every §12.1 file except those
-// in skip. The four files a standard reads carry the text that standard asks for, so a case that
+// in skip. The three files a standard reads carry the text that standard asks for, so a case that
 // tests the file list is not answered by the text rules; the rest carry a one-line body.
 func rulesRepoSpec(t *testing.T, spec string, skip map[string]bool) string {
 	t.Helper()
@@ -92,7 +92,7 @@ func rulesRepoSpec(t *testing.T, spec string, skip map[string]bool) string {
 	return dir
 }
 
-// rulesFileBody is the body the fixture writes for rel: the statement a standard names for the four
+// rulesFileBody is the body the fixture writes for rel: the statement a standard names for the three
 // files one reads, and a one-line body for the rest.
 func rulesFileBody(rel string) string {
 	switch rel {
@@ -102,8 +102,6 @@ func rulesFileBody(rel string) string {
 		return conductText
 	case "SECURITY.md":
 		return securityText
-	case "go.mod":
-		return goModText
 	}
 	return "fixture\n"
 }
@@ -226,6 +224,23 @@ func TestRules(t *testing.T) {
 		}
 	})
 
+	t.Run("a spec that is not text is an error", func(t *testing.T) {
+		// Guards DR-6: a spec that is not valid UTF-8 was not parsed, so no rule was checked.
+		got, err := repocheck.Rules(rulesRepoSpec(t, rulesSpec()+"\xff", nil))
+		if err == nil {
+			t.Fatalf("Rules(invalid UTF-8 spec) = %+v, nil error; want an error", got)
+		}
+	})
+
+	t.Run("a listed path that leaves the repository is an error", func(t *testing.T) {
+		// Guards DR-6: a path outside the repository is neither present nor absent, so it is refused.
+		spec := rulesSpecWithout("### 12.1 Repository files", "`LICENSE` · `../outside.txt`.")
+		got, err := repocheck.Rules(rulesRepoSpec(t, spec, nil))
+		if err == nil {
+			t.Fatalf("Rules(escaping path) = %+v, nil error; want an error", got)
+		}
+	})
+
 	t.Run("a repository without docs/SPEC.md is an error", func(t *testing.T) {
 		// Guards against absence read as evidence (DR-6): no spec means no rule was checked.
 		got, err := repocheck.Rules(t.TempDir())
@@ -235,9 +250,11 @@ func TestRules(t *testing.T) {
 	})
 }
 
-// mitLicence is the licence text this repository ships (Q1, §12.1): the MIT grant, so a file that
-// only exists is not enough.
+// mitLicence is the licence text this repository ships (Q1, §12.1): the MIT grant with the SPDX
+// identifier next to it (STD-44), so a file that only exists is not enough.
 const mitLicence = `MIT License
+
+SPDX-License-Identifier: MIT
 
 Copyright (c) 2026 Fixture Owner
 
@@ -276,26 +293,20 @@ Report a vulnerability privately through this repository's **Security** tab →
 **Report a vulnerability**. Do not open a public issue.
 `
 
-// goModText is a go.mod that meets STD-44: its module metadata carries the licence identifier.
-const goModText = `// SPDX-License-Identifier: MIT
+// spdxLicence is mitLicence with id as its SPDX identifier.
+func spdxLicence(id string) string {
+	return strings.Replace(mitLicence, "SPDX-License-Identifier: MIT", "SPDX-License-Identifier: "+id, 1)
+}
 
-module github.com/fixture/zentra
-
-go 1.27.3
-
-require golang.org/x/sys v0.49.0
-`
-
-// rulesRepoContent writes a repository whose four read-checked files carry the text each standard
-// names: the licence grant (STD-1), the covenant link (STD-2), the private channel (STD-29) and the
-// module's SPDX identifier (STD-44).
+// rulesRepoContent writes a repository whose three read-checked files carry the text each standard
+// names: the licence grant and its SPDX identifier (STD-1, STD-44), the covenant link (STD-2) and
+// the private channel (STD-29).
 func rulesRepoContent(t *testing.T) string {
 	t.Helper()
 	dir := rulesRepoSpec(t, rulesSpec(), nil)
 	writeRulesFile(t, dir, "LICENSE", mitLicence)
 	writeRulesFile(t, dir, "CODE_OF_CONDUCT.md", conductText)
 	writeRulesFile(t, dir, "SECURITY.md", securityText)
-	writeRulesFile(t, dir, "go.mod", goModText)
 	return dir
 }
 
@@ -366,13 +377,17 @@ func TestRulesContent(t *testing.T) {
 		}
 	})
 
-	t.Run("a licence that names another SPDX identifier is red", func(t *testing.T) {
-		// Guards STD-44: an identifier next to the grant that names another licence tells a consumer
-		// a permission the licence text does not give.
+	t.Run("a licence whose SPDX identifier is not MIT is red", func(t *testing.T) {
+		// Guards STD-44: an identifier next to the grant that names another licence, or none at all,
+		// tells a consumer nothing true about what the licence text gives. A missing identifier is
+		// red: the shipped LICENSE carries none today, so a pass on absence could never turn this red.
 		for _, tc := range []struct{ name, body string }{
-			{"the Apache identifier", strings.Replace(mitLicence, "MIT License\n", "MIT License\n\nSPDX-License-Identifier: Apache-2.0\n", 1)},
-			{"a dual licence", strings.Replace(mitLicence, "MIT License\n", "MIT License\n\nSPDX-License-Identifier: MIT OR Apache-2.0\n", 1)},
-			{"the BSD identifier", strings.Replace(mitLicence, "MIT License\n", "MIT License\n\nSPDX-License-Identifier: BSD-3-Clause\n", 1)},
+			{"the Apache identifier", spdxLicence("Apache-2.0")},
+			{"a dual licence", spdxLicence("MIT OR Apache-2.0")},
+			{"the BSD identifier", spdxLicence("BSD-3-Clause")},
+			{"an empty identifier", spdxLicence("")},
+			{"no identifier line", strings.Replace(mitLicence, "SPDX-License-Identifier: MIT\n\n", "", 1)},
+			{"a later line names another licence", mitLicence + "SPDX-License-Identifier: GPL-3.0-only\n"},
 		} {
 			dir := rulesRepoContent(t)
 			writeRulesFile(t, dir, "LICENSE", tc.body)
@@ -386,15 +401,58 @@ func TestRulesContent(t *testing.T) {
 		}
 	})
 
-	t.Run("the identifier matching the licence passes", func(t *testing.T) {
-		// Guards the other half of STD-44: the line this repository will carry is accepted, so the
-		// rule does not redden the remedy it asks for.
+	t.Run("the identifier is read as written", func(t *testing.T) {
+		// Guards the other half of STD-44: a byte order mark and CRLF line ends do not hide a
+		// correct identifier, so the rule does not redden the remedy it asks for.
 		dir := rulesRepoContent(t)
-		writeRulesFile(t, dir, "LICENSE",
-			strings.Replace(mitLicence, "MIT License\n", "MIT License\n\nSPDX-License-Identifier: MIT\n", 1))
+		writeRulesFile(t, dir, "LICENSE", "\uFEFF"+strings.ReplaceAll(mitLicence, "\n", "\r\n"))
 		got, err := repocheck.Rules(dir)
 		if err != nil || len(got) != 0 {
-			t.Fatalf("Rules(SPDX-License-Identifier: MIT) = %+v, %v; want no finding", got, err)
+			t.Fatalf("Rules(BOM and CRLF licence) = %+v, %v; want no finding", got, err)
+		}
+	})
+
+	t.Run("a file that cannot be read is an error, not a pass", func(t *testing.T) {
+		// Guards DR-6: a present file whose text was not judged is no evidence that it is right. An
+		// oversized, non-regular or non-UTF-8 file is an error that names the file and never echoes
+		// its content.
+		const marker = "body-marker"
+		breakers := []struct {
+			name  string
+			apply func(t *testing.T, dir, rel string)
+		}{
+			{"oversized", func(t *testing.T, dir, rel string) {
+				writeRulesFile(t, dir, rel, marker+strings.Repeat("x", 5<<20))
+			}},
+			{"a directory", func(t *testing.T, dir, rel string) {
+				p := filepath.Join(dir, filepath.FromSlash(rel))
+				if err := os.Remove(p); err != nil {
+					t.Fatalf("remove %s: %v", rel, err)
+				}
+				if err := os.Mkdir(p, 0o700); err != nil {
+					t.Fatalf("mkdir %s: %v", rel, err)
+				}
+			}},
+			{"not UTF-8", func(t *testing.T, dir, rel string) {
+				writeRulesFile(t, dir, rel, marker+"\xff\xfe")
+			}},
+		}
+		for _, file := range []string{"LICENSE", "CODE_OF_CONDUCT.md", "SECURITY.md"} {
+			for _, b := range breakers {
+				dir := rulesRepoContent(t)
+				b.apply(t, dir, file)
+				got, err := repocheck.Rules(dir)
+				if err == nil {
+					t.Errorf("Rules(%s, %s) = %+v, nil error; want an error", file, b.name, got)
+					continue
+				}
+				if !strings.Contains(err.Error(), file) {
+					t.Errorf("Rules(%s, %s) error = %q, want it to name the file", file, b.name, err)
+				}
+				if strings.Contains(err.Error(), marker) {
+					t.Errorf("Rules(%s, %s) error = %q echoes the file content", file, b.name, err)
+				}
+			}
 		}
 	})
 
