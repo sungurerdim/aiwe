@@ -199,8 +199,7 @@ func FuzzCanonical(f *testing.F) {
 	f.Fuzz(func(t *testing.T, data []byte) {
 		out, err := canonicalBytes(data)
 		if err != nil {
-			var refusal *core.Error
-			if !errors.As(err, &refusal) {
+			if _, ok := errors.AsType[*core.Error](err); !ok {
 				t.Fatalf("canonicalBytes(%q) error = %v, want a core.Error", data, err)
 			}
 			return
