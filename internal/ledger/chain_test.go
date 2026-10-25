@@ -21,20 +21,20 @@ func TestCanonicalBytesRFC8785(t *testing.T) {
 		name, in, want string
 	}{
 		{"keys sorted by UTF-16 code units, not by UTF-8 bytes (RFC 8785 §3.2.3)",
-			`{"€":"Euro Sign","\r":"Carriage Return","דּ":"Hebrew Letter Dalet With Dagesh","1":"One",` +
-				`"😀":"Emoji: Grinning Face","\u0080":"Control","ö":"Latin Small Letter O With Diaeresis"}`,
-			`{"\r":"Carriage Return","1":"One","` + "\u0080" + `":"Control","` + "ö" +
-				`":"Latin Small Letter O With Diaeresis","` + "€" + `":"Euro Sign","` + "\U0001F600" +
-				`":"Emoji: Grinning Face","` + "דּ" + `":"Hebrew Letter Dalet With Dagesh"}`},
+			`{"\u20ac":"Euro Sign","\r":"Carriage Return","\ufb33":"Hebrew Letter Dalet With Dagesh","1":"One",` +
+				`"\ud83d\ude00":"Emoji: Grinning Face","\u0080":"Control","\u00f6":"Latin Small Letter O With Diaeresis"}`,
+			`{"\r":"Carriage Return","1":"One","` + "\u0080" + `":"Control","` + "\u00f6" +
+				`":"Latin Small Letter O With Diaeresis","` + "\u20ac" + `":"Euro Sign","` + "\U0001F600" +
+				`":"Emoji: Grinning Face","` + "\ufb33" + `":"Hebrew Letter Dalet With Dagesh"}`},
 		{"whitespace between tokens left in, keys of a nested object left unsorted",
 			"{ \"b\" : [ 1 , { \"z\" : null , \"a\" : true } ] ,\n\t\"a\" : { } }",
 			`{"a":{},"b":[1,{"a":true,"z":null}]}`},
 		{"a literal or an empty array written in another form", `[ true , false , null , [ ] ]`, `[true,false,null,[]]`},
 		{"string escapes other than JSON.stringify's: upper-case hex, an escaped slash, an escaped U+2028",
-			`"A\/é\u001F\b\f\n\r\t\"\\ \u007f\u0000"`,
-			`"A/` + "é" + `\u001f\b\f\n\r\t\"\\` + " \u007f" + `\u0000"`},
-		{"a raw non-ASCII character or U+FFFD escaped", "\"ö�\"", "\"ö�\""},
-		{"a surrogate pair not joined into one character", `"😀"`, "\"\U0001F600\""},
+			`"\u0041\/\u00e9\u001F\b\f\n\r\t\"\\\u2028\u007f\u0000"`,
+			`"A/` + "\u00e9" + `\u001f\b\f\n\r\t\"\\` + "\u2028\u007f" + `\u0000"`},
+		{"a raw non-ASCII character or U+FFFD escaped", "\"\u00f6\ufffd\"", "\"\u00f6\ufffd\""},
+		{"a surrogate pair not joined into one character", `"\ud83d\ude00"`, "\"\U0001F600\""},
 		{"1e21 not in exponent form with a plus sign", `1e21`, `1e+21`},
 		{"1e-7 with Go's two-digit exponent 1e-07", `1e-7`, `1e-7`},
 		{"negative zero written as -0", `-0`, `0`},
@@ -150,10 +150,10 @@ func TestCanonicalRefuses(t *testing.T) {
 		{`a \u escape with a digit that is not hex`, `"\u12zz"`},
 		{"a lone low surrogate (replaced by U+FFFD)", `"\udc00"`},
 		{"a lone high surrogate at the end of a string", `"\ud800"`},
-		{"a high surrogate before an escape that is no low one", `"\ud800A"`},
+		{"a high surrogate before an escape that is no low one", `"\ud800\u0041"`},
 		{"a high surrogate before a short escape", `"\ud800\u12"`},
 		{"a key twice (I-JSON; encoding/json keeps the last)", `{"a":1,"a":2}`},
-		{"a key twice, once escaped", `{"a":1,"a":2}`},
+		{"a key twice, once escaped", `{"a":1,"\u0061":2}`},
 		{"a key that is not a string", `{1:2}`},
 		{"a member with no colon", `{"a" 1}`},
 		{"a member with no value", `{"a":`},
@@ -192,8 +192,8 @@ func TestCanonicalRefuses(t *testing.T) {
 // panics, it accepts nothing encoding/json refuses, and what it writes is valid JSON that it reads
 // back to the same bytes, so a link recomputed from canonical bytes never changes (L59).
 func FuzzCanonical(f *testing.F) {
-	for _, seed := range []string{`{"b":[1,{"a":"é"}],"a":null}`, `1e21`, `-0`, `9007199254740993`,
-		`"😀"`, `"\ud800"`, `{"a":1,"a":2}`, `[`, `{"a":1,}`, "\"\xff\"", `1.2345678901234568e20`} {
+	for _, seed := range []string{`{"b":[1,{"a":"\u00e9"}],"a":null}`, `1e21`, `-0`, `9007199254740993`,
+		`"\ud83d\ude00"`, `"\ud800"`, `{"a":1,"a":2}`, `[`, `{"a":1,}`, "\"\xff\"", `1.2345678901234568e20`} {
 		f.Add([]byte(seed))
 	}
 	f.Fuzz(func(t *testing.T, data []byte) {
