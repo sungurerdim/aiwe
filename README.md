@@ -1,36 +1,37 @@
 # aiwe
 
-aiwe turns a goal issue into verified, merged code, using the AI subscriptions and API keys you already have. It runs
-on Windows, macOS and Linux with zero configuration, through each provider's own CLI or API, never through a proxy.
-Its primary interface is an MCP server that the user's harness session starts. It is a public open-source product.
+Verified, merged code from the AI subscriptions and API keys you already have.
 
-**Status: pre-release.** The design is [docs/SPEC.md](docs/SPEC.md). The milestones are in its §13; the tracker
-holds the units.
+## Why aiwe
 
-## Features
+<!-- SPEC §1.1, §1.4, §6.5, §7.8, §8.5, §13 -->
+You give aiwe a goal. It splits the goal into small work items, hands each one to an agent in its own clean workspace, checks the result with mechanical gates and an independent reviewer, and lands only what passed. Every step is recorded, so the speed and the cost of your agents are measured and not guessed. These are the design points; the status line below says what works today.
 
-- Each agent starts with a small, clean context.
-- Nothing is left behind on disk.
-- Every run is measured for time, cost and quality.
-- Every unit is validated mechanically before work starts.
+- **Trustworthy**: only the engine runs checks, an independent reviewer judges every item, and only reviewed work lands. A tamper-evident audit trail records who did what, when, with which agent, model and provider.
+- **Measured**: every run is recorded, and lead time and flow come as p50 and p85, not averages.
+- **Cheap**: the lowest measured use of quota, money, disk, CPU and memory; a low-cost author and a strong reviewer where that is enough.
+- **Fast**: small items worked in parallel, each in its own leased workspace, with one queue for heavy checks.
+- **Effective orchestration**: an idle agent asks for work, and one call gives it a free item with its claim, its files and its workspace.
+- **Mechanical, not prompted**: rules are enforced by the git hook, the landing queue and the command line, so they hold for any agent, harness or provider. Reports are built from data with no model call.
 
-## Supported providers
+**Status: pre-release.** Working today: `aiwe version`, `aiwe config show`, `aiwe unit check` and `aiwe gates gate`. Everything else on this page is planned. The next milestone is M-Skeleton: the work store, the ledger, workspaces, the landing queue, the check executor, and `aiwe item take` and `return`.
 
-`aiwe adapters list` prints the compiled adapter list. aiwe reaches a provider only through its official interface:
-the provider's own CLI, logged in by you, or an API key in an environment variable. aiwe holds no credential. It never
-stores, caches, prompts for or proxies a credential, and never alters subscription traffic (SPEC DR-19).
+aiwe reaches a provider only through its official CLI or API and never alters subscription traffic. Subscriptions and API keys are both supported, and aiwe holds no credential (SPEC DR-19).
+
+The design is [docs/SPEC.md](docs/SPEC.md); the milestones are in its §13. Until the work store lands, the work items are GitHub issues.
 
 ## Risk
 
 The first releases run agents at sandbox level `env-scrub`. A run gets no secret and no git credential helper, and
-only aiwe pushes. The agent still runs with your rights, as in other coding agent tools. Stronger sandbox levels come
+only aiwe pushes. The agent still runs with your rights, as in other coding agent tools, so it can read and change
+what you can, the audit trail included; the trail shows a change and does not prevent it. Stronger sandbox levels come
 later (SPEC §6.7).
 
 ## Install and first run
 
-Not released yet. `v0.1.0` ships when the M-Release milestone closes (SPEC §12.3, L9). Until then, build from source
-with `go build ./cmd/aiwe`. Register the MCP server in your harness with the entry that `aiwe mcp snippet` prints
-(SPEC §6.3).
+Not released yet. `v0.1.0` ships when the M-Release milestone closes (SPEC §12.3). Until then, build from source
+with `go build ./cmd/aiwe`. Registering the MCP server in your harness with the entry that `aiwe mcp snippet` prints is
+planned (SPEC §6.3).
 
 ## License
 
