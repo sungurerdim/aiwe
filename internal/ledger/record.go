@@ -33,7 +33,8 @@ const (
 const KindEvent Kind = "event"
 
 // Header holds the fields every ledger record carries: the schema version, the kind of the record,
-// its instant, and the repository, goal, unit and run it belongs to (SPEC §8.5).
+// its instant, the repository, goal, unit and run it belongs to, and prev, the link to the record
+// before it in the hash chain (L59, SPEC §8.5).
 type Header struct {
 	FormatVersion int       `json:"formatVersion"`
 	Kind          Kind      `json:"kind"`
@@ -42,11 +43,13 @@ type Header struct {
 	Goal          string    `json:"goal"`
 	Unit          string    `json:"unit"`
 	RunID         string    `json:"runId"`
+	Prev          string    `json:"prev"`
 }
 
 // validate refuses a header that is not the header of the record kind it sits in: a version this
-// package does not read, a kind that differs from the record, a missing instant, or an empty
-// identity, which the schema writes as a value such as none, never as nothing (SPEC §8.5).
+// package does not read, a kind that differs from the record, a missing instant, an empty identity,
+// which the schema writes as a value such as none, never as nothing, or a prev that is not a link of
+// the hash chain (SPEC §8.5).
 func (h Header) validate(kind Kind) error {
 	switch {
 	case h.FormatVersion != formatVersion:
@@ -59,7 +62,20 @@ func (h Header) validate(kind Kind) error {
 	case h.RepoID == "" || h.Goal == "" || h.Unit == "" || h.RunID == "":
 		return refuse("a repoId, goal, unit and runId, each written as none when absent",
 			fmt.Sprintf("repoId %q, goal %q, unit %q, runId %q", h.RepoID, h.Goal, h.Unit, h.RunID))
+	case !isHash(h.Prev):
+		return refuse("a prev of 64 lowercase hex digits, the hash of the record before",
+			"a prev in another form")
 	}
+	return nil
+}
+
+// link sets prev, the link of the record to the one before it. Only Append sets it, so a record that
+// arrives with a prev of its own is refused (L59, SPEC §8.5); the refusal does not repeat the value.
+func (h *Header) link(prev string) error {
+	if h.Prev != "" {
+		return refuse("a record whose prev Append sets", "a record that arrives with a prev of its own")
+	}
+	h.Prev = prev
 	return nil
 }
 
@@ -169,5 +185,23 @@ func validateRecord(rec Record) error {
 	case Event:
 		return r.validate()
 	}
-	return refuse("a run or a check record", fmt.Sprintf("%T", rec))
+	return refuse("a run, check or event record", fmt.Sprintf("%T", rec))
+}
+
+// linked returns rec with its prev set to prev, the link to the record before it (L59, SPEC §8.5).
+// A type outside the closed set of records is refused, and so is a record that arrives with a prev of
+// its own.
+func linked(rec Record, prev string) (Record, error) {
+	switch r := rec.(type) {
+	case Run:
+		err := r.link(prev)
+		return r, err
+	case Check:
+		err := r.link(prev)
+		return r, err
+	case Event:
+		err := r.link(prev)
+		return r, err
+	}
+	return nil, refuse("a run, check or event record", fmt.Sprintf("%T", rec))
 }

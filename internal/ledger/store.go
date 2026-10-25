@@ -3,6 +3,7 @@ package ledger
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,10 +22,47 @@ import (
 // decide, which is the error-class outcome of the table.
 var ErrTornLine = errors.New(string(core.OutcomeError))
 
-// Append writes rec as one line of the JSONL ledger in w, after every line written before it; it
-// never rewrites or removes an earlier line (SPEC §4, §8.5). A record that breaks the schema is
-// refused, and then nothing is written.
+// Append writes rec as one line of the JSONL ledger in w, after every line written before it, and
+// links it to the last of them: prev is the hash of the last record in w, or the genesis value when w
+// holds none (L59, SPEC §8.5). It never rewrites or removes an earlier line (SPEC §4). w is the ledger
+// itself, so Append reads its last record back: a file opened for reading and appending, or a buffer.
+// The caller holds the ledger lock (SPEC §6.6) across the call, which reads the head and writes the
+// line, so no other append comes between the two. A record that breaks the schema, that arrives with
+// a prev of its own or that has no canonical form is refused, and then nothing is written.
 func Append(w io.Writer, rec Record) error {
+	head, _, err := headOf(w)
+	if err != nil {
+		return err
+	}
+	return appendAfter(w, head, rec)
+}
+
+// Continue writes rec as the first record of the empty ledger in w and links it to head, the hash of
+// the last record of the ledger before it, as a rotation does (SPEC §8.5); each later record is
+// written with Append. A head that is not 64 lowercase hex digits is refused, and so is a ledger that
+// already holds a record, whose own last record is its head. The caller holds the ledger lock.
+func Continue(w io.Writer, head string, rec Record) error {
+	if !isHash(head) {
+		return refuse("a head of 64 lowercase hex digits", "a head in another form")
+	}
+	_, held, err := headOf(w)
+	switch {
+	case err != nil:
+		return err
+	case held:
+		return refuse("an empty ledger to continue the chain in", "a ledger that already holds a record")
+	}
+	return appendAfter(w, head, rec)
+}
+
+// appendAfter writes rec to the ledger in w, linked to prev. The line is hashed before it is written,
+// so a record whose line has no canonical form is refused rather than written as a head no later
+// append could hash (fail closed).
+func appendAfter(w io.Writer, prev string, rec Record) error {
+	rec, err := linked(rec, prev)
+	if err != nil {
+		return err
+	}
 	if err := validateRecord(rec); err != nil {
 		return err
 	}
@@ -32,10 +70,92 @@ func Append(w io.Writer, rec Record) error {
 	if err != nil {
 		return fmt.Errorf("ledger record: %w", err)
 	}
+	if _, err := hashLine(line); err != nil {
+		return err
+	}
 	if _, err := w.Write(append(line, '\n')); err != nil {
 		return fmt.Errorf("ledger append: %w", err)
 	}
 	return nil
+}
+
+// bufferLedger is a ledger held in memory that shows its bytes, as a bytes.Buffer does.
+type bufferLedger interface{ Bytes() []byte }
+
+// fileLedger is a ledger file opened for reading, as an *os.File is.
+type fileLedger interface {
+	io.ReaderAt
+	io.Seeker
+}
+
+// tailChunk is how many bytes fileTail reads at a time from the end of a ledger file.
+const tailChunk = 4096
+
+// headOf returns the head of the ledger in w, the hash of its last record, and whether it holds a
+// record; the head of an empty ledger is the genesis value (L59, SPEC §8.5). A ledger Append cannot
+// read back, a torn last line and a last line that is not a record are refused: a record is never
+// linked to a head that was not read (fail closed).
+func headOf(w io.Writer) (string, bool, error) {
+	var tail []byte
+	var err error
+	switch l := w.(type) {
+	case bufferLedger:
+		tail = l.Bytes()
+	case fileLedger:
+		tail, err = fileTail(l)
+	default:
+		return "", false, refuse("a ledger Append can read back: a file opened for reading or a buffer",
+			fmt.Sprintf("%T", w))
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return headOfTail(tail)
+}
+
+// headOfTail returns the head of a ledger whose last bytes are tail, which hold its whole last line,
+// and whether the ledger holds a record. The last line is read as a record, so a line Read refuses is
+// never a head, and its RFC 8785 bytes are hashed.
+func headOfTail(tail []byte) (string, bool, error) {
+	if len(tail) == 0 {
+		return genesis, false, nil
+	}
+	body, complete := bytes.CutSuffix(tail, []byte{'\n'})
+	if !complete {
+		return "", true, fmt.Errorf("ledger last line: %w", tornLine())
+	}
+	line := body[bytes.LastIndexByte(body, '\n')+1:]
+	if _, err := parseRecord(string(line)); err != nil {
+		return "", true, fmt.Errorf("ledger last line: %w", err)
+	}
+	head, err := hashLine(line)
+	return head, true, err
+}
+
+// fileTail returns the last bytes of the ledger file f, enough to hold its whole last line. It reads
+// back from the end, so an append reads about one line, never the whole file.
+func fileTail(f fileLedger) ([]byte, error) {
+	end, err := f.Seek(0, io.SeekEnd)
+	if err != nil {
+		return nil, fmt.Errorf("ledger head: %w", err)
+	}
+	var tail []byte
+	for end > 0 && !holdsLastLine(tail) {
+		chunk := make([]byte, min(end, tailChunk))
+		end -= int64(len(chunk))
+		if n, err := f.ReadAt(chunk, end); n < len(chunk) {
+			return nil, fmt.Errorf("ledger head: %w", cmp.Or(err, io.ErrUnexpectedEOF))
+		}
+		tail = append(chunk, tail...)
+	}
+	return tail, nil
+}
+
+// holdsLastLine reports whether tail holds the whole last line of a ledger: a newline before the one
+// that ends it, or no newline at its end, which is a torn line headOfTail refuses.
+func holdsLastLine(tail []byte) bool {
+	body, complete := bytes.CutSuffix(tail, []byte{'\n'})
+	return len(tail) > 0 && (!complete || bytes.IndexByte(body, '\n') >= 0)
 }
 
 // Read returns the records of the JSONL ledger in r, oldest first; an empty ledger holds no record
@@ -70,9 +190,19 @@ func tornLine() error {
 
 // parseLine decodes one complete ledger line, which is line n of the ledger (SPEC §8.5).
 func parseLine(line string, n int) (Record, error) {
+	rec, err := parseRecord(line)
+	if err != nil {
+		return nil, fmt.Errorf("ledger line %d: %w", n, err)
+	}
+	return rec, nil
+}
+
+// parseRecord decodes one complete ledger line and refuses a line that is not a record of the schema
+// in the form Append writes (SPEC §4, §8.5).
+func parseRecord(line string) (Record, error) {
 	var head Header
 	if err := json.Unmarshal([]byte(line), &head); err != nil {
-		return nil, fmt.Errorf("ledger line %d: %w", n, refuse("one JSON object", err.Error()))
+		return nil, refuse("one JSON object", err.Error())
 	}
 	rec, err := decodeRecord(head.Kind, line)
 	if err == nil {
@@ -82,7 +212,7 @@ func parseLine(line string, n int) (Record, error) {
 		err = validateRecord(rec)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("ledger line %d: %w", n, err)
+		return nil, err
 	}
 	return rec, nil
 }
