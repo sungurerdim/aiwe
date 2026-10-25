@@ -58,9 +58,10 @@ Every fact has one owner below. Link to it; copy nothing.
 
 **Checks.** An agent never runs the gate, a unit verify, or a test, lint or build command itself (DR-8, SPEC-contracts §9.4). It
 asks for its unit verify through `aiwe verify`; the engine runs it and records the result. Until `aiwe verify`
-exists, the lead session runs each verify once and records it. Until a release exists, the gate is
-`go run ./cmd/aiwe gates gate --repo .` (SPEC §12.2); the engine or the lead session runs it, and it must exit 0
-before a unit is done.
+exists, the lead session runs each verify once and records it. The full gate runs only in CI, once per batch
+pull request (SPEC §7.8, §12.2). Locally run only the step a change touches,
+`go run ./cmd/aiwe gates gate --repo . --step <id>`; the full gate runs locally only as a release rehearsal. The CI
+gate must exit 0 before a batch lands.
 
 **Red lines.** Each line names the rule; the rule text is in `docs/standards.md`.
 
