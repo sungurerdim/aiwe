@@ -75,7 +75,7 @@ func Harnesses() []Harness {
 			{Event: "PreToolUse", Matcher: "Bash|PowerShell|Monitor", Verb: "pre-tool"},
 			{Event: "SubagentStop", Verb: "return"},
 		},
-		Keep: []string{"timeout", "statusMessage"},
+		Keep: []string{"statusMessage"},
 	}}
 }
 
