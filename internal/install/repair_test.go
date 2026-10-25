@@ -45,7 +45,7 @@ func TestInstallRepairsOnlyOwnEntries(t *testing.T) {
 		},
 		{
 			name:    "own handler type changed",
-			catches: "a handler turned into another type kept as aiwe's",
+			catches: "a handler turned into another type kept as install's own",
 			before:  `{"hooks":{"PostToolUse":[{"hooks":[{"type":"prompt","command":"` + core.Product + ` hook post-tool"}]}]}}`,
 		},
 		{
@@ -68,7 +68,7 @@ func TestInstallRepairsOnlyOwnEntries(t *testing.T) {
 		},
 		{
 			name:    "foreign handler that only mentions the product",
-			catches: "a foreign command that merely contains the product name taken for aiwe's and rewritten",
+			catches: "a foreign command that merely contains the product name taken for install's own and rewritten",
 			before: `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"echo ` + core.Product +
 				` hook stop done"}]}]},"permissions":{"deny":["Bash(rm:*)"]}}`,
 			foreign: map[string][]string{"Stop": {`{"type":"command","command":"echo ` + core.Product + ` hook stop done"}`}},
@@ -101,7 +101,7 @@ func TestInstallRepairsOnlyOwnEntries(t *testing.T) {
 			assertForeign(t, top, tc.foreign)
 			for _, key := range tc.other {
 				if mustJSON(t, top[key]) != mustJSON(t, prior[key]) {
-					t.Errorf("setting %q changed to %s from %s: repair touched what is not aiwe's",
+					t.Errorf("setting %q changed to %s from %s: repair touched what is not its own",
 						key, mustJSON(t, top[key]), mustJSON(t, prior[key]))
 				}
 			}

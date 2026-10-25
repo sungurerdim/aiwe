@@ -203,7 +203,7 @@ func TestInstallKeepsOtherSettings(t *testing.T) {
 	prior := decode(t, []byte(before))
 	for _, key := range []string{"model", "env", "count"} {
 		if got, want := mustJSON(t, top[key]), mustJSON(t, prior[key]); got != want {
-			t.Errorf("top-level %q = %s, want %s: install rewrote a setting that is not aiwe's", key, got, want)
+			t.Errorf("top-level %q = %s, want %s: install rewrote a setting that is not its own", key, got, want)
 		}
 	}
 	got := mustJSON(t, groupsOf(t, top, "Notification")[0].handlers)
