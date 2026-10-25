@@ -69,14 +69,14 @@ func engineStep(c Card) (string, bool) {
 	return "", false
 }
 
-// specMethodBodies reads the SPEC §9.1 method sentences. The oracle is that
+// specMethodBodies reads the SPEC-contracts §9.1 method sentences. The oracle is that
 // paragraph, so a second copy cannot keep a drifted body green.
 func specMethodBodies(t *testing.T) map[string]string {
 	t.Helper()
-	path := filepath.Join("..", "..", "docs", "SPEC.md")
+	path := filepath.Join("..", "..", "docs", "SPEC-contracts.md")
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("expected to read %s; got %v. Run the test from the roles package so the path reaches docs/SPEC.md.", path, err)
+		t.Fatalf("expected to read %s; got %v. Run the test from the roles package so the path reaches docs/SPEC-contracts.md.", path, err)
 	}
 	bodies, err := methodBodies(string(raw))
 	if err != nil {

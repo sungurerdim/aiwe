@@ -122,8 +122,13 @@ func dirLink(t *testing.T, target, link string) {
 	}
 }
 
-// repoIOTestWithin runs read and fails when it still blocks after 1 s; a writer opened on path
-// then releases a blocked FIFO open.
+// repoIOReadWait is how long a repository read may run before it counts as blocked. The test only
+// proves the read does not block forever, so the wait is generous: a 4 MiB read took over 1 s on a
+// 2-core windows-latest runner while the whole package ran in parallel.
+const repoIOReadWait = 10 * time.Second
+
+// repoIOTestWithin runs read and fails when it still blocks after repoIOReadWait; a writer opened
+// on path then releases a blocked FIFO open.
 func repoIOTestWithin(t *testing.T, path string, read func() error) error {
 	t.Helper()
 	done := make(chan error, 1)
@@ -131,12 +136,12 @@ func repoIOTestWithin(t *testing.T, path string, read func() error) error {
 	select {
 	case err := <-done:
 		return err
-	case <-time.After(time.Second):
+	case <-time.After(repoIOReadWait):
 		if w, err := os.OpenFile(path, os.O_WRONLY, 0); err == nil {
 			_ = w.Close()
 		}
 		<-done
-		t.Fatalf("read of %s still blocked after 1 s; want a named error", path)
+		t.Fatalf("read of %s still blocked after %s; want a named error", path, repoIOReadWait)
 		return nil
 	}
 }
