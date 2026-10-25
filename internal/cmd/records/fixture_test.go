@@ -17,15 +17,6 @@ import (
 
 var issueNumber = regexp.MustCompile(`issues/([0-9]+)/`)
 
-// issue is one tracker issue of the fake world.
-type issue struct {
-	Number      int    `json:"number"`
-	Title       string `json:"title"`
-	Body        string `json:"body"`
-	ClosedAt    string `json:"closedAt"`
-	StateReason string `json:"stateReason"`
-}
-
 // withLinks returns an issue body that carries the JSON record block with links.blockedBy.
 func withLinks(blockedBy ...int) string {
 	rec, _ := json.Marshal(map[string]any{"v": 1, "kind": "unit", "links": map[string]any{"blockedBy": blockedBy}})
