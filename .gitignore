@@ -3,3 +3,7 @@
 # custom-gcl built by go tool -modfile=tools/go.mod golangci-lint custom (.custom-gcl.yml)
 /custom-gcl
 /custom-gcl.exe
+# Generated project records (L41); STATUS.md is committed. go run ./internal/cmd/records --write all
+/TODO.md
+/ARCHIVE.md
+/DECISIONS.md

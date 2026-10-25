@@ -7,9 +7,15 @@ committed to this repository in English (DR-18).
 ## 1. At session start
 
 1. Read [docs/standards.md](docs/standards.md), the rule registry (DSH does not resolve `@`, so open it by path).
-2. Run `python ../aiwe-wt/runs/order.py --limit 20 --why`: the derived work order.
-3. Run `python ../aiwe-wt/runs/status.py --needs-lead`: the unit states.
-4. An external agent then reads `../aiwe-wt/HANDOFF.md`, the contract of the bridge.
+2. Read the four project records at the repository root, in this order: `TODO.md` (every open work item, in order),
+   `STATUS.md` (current state; its hand-kept "Broken" and "Live configuration" stay), `DECISIONS.md` (index of
+   SPEC §16, only when a choice is involved) and `ARCHIVE.md` (closed items). `TODO.md`, `ARCHIVE.md` and
+   `DECISIONS.md` are generated and not committed (L41); regenerate all four with
+   `go run ./internal/cmd/records --write all` before reading, and after closing an issue. This interim tool is
+   deleted when `aiwe item list`, `ready`, `archive` and `aiwe status` land (L41, K32).
+3. Run `python ../aiwe-wt/runs/order.py --limit 20 --why`: the derived work order.
+4. Run `python ../aiwe-wt/runs/status.py --needs-lead`: the unit states.
+5. An external agent then reads `../aiwe-wt/HANDOFF.md`, the contract of the bridge.
 
 ## 2. Where each fact lives
 
