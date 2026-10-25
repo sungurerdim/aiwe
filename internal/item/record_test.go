@@ -397,7 +397,7 @@ func TestRecordRefusesDuplicateKey(t *testing.T) {
 		{"a key that differs only in case", `{"TITLE":"Fix ` + escaped + `evil",` + whole[1:]},
 		{"a duplicate key in a nested object", strings.Replace(whole, `"problem":{`, `"problem":{"symptom":"x",`, 1)},
 		{"a duplicate key in an object of a list", strings.Replace(whole, `"done":[{`, `"done":[{"id":"x",`, 1)},
-		{"a record cut inside an object", `{"title":`},
+		{"the same key twice in a record that is valid otherwise", `{"v":1,"v":1}`},
 	}
 	for _, row := range rows {
 		t.Run(row.name, func(t *testing.T) {
@@ -407,6 +407,24 @@ func TestRecordRefusesDuplicateKey(t *testing.T) {
 			}
 			if got, err := item.Decode([]byte(row.data)); err == nil {
 				t.Fatalf("Decode accepted a record with a duplicate key, title %q", got.Title)
+			}
+		})
+	}
+}
+
+// TestRecordRefusesCutRecord pins the refusal of data that is no JSON object, which the key walk
+// meets before encoding/json does.
+func TestRecordRefusesCutRecord(t *testing.T) {
+	t.Parallel()
+	rows := []struct{ name, data string }{
+		{"a record cut inside an object", `{"title":`},
+		{"an empty file", ""},
+	}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			if _, err := item.Decode([]byte(row.data)); err == nil {
+				t.Fatalf("Decode accepted %q, want an error", row.data)
 			}
 		})
 	}
