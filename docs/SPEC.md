@@ -344,7 +344,7 @@ against the goal's `problem` and `done` entries and the file-set overlaps, and a
 `plan_invalid` and an `owner-action` item · `[M]` valid records become child items with `blockedBy` links (L8);
 an unchanged rerun is `no_change`. **Session path**: the user's session writes each unit as a record and runs
 `aiwe unit check`; the store write waits for `aiwe item` (stage work store; the bridge `issue.py` until then, #314 K43). Intake reads the record again.
-### 7.3 Unit lifecycle — `aiwe work --repo R [--unit ID | --goal ID]`, skeleton path (M-Skeleton)
+### 7.3 Unit lifecycle — `aiwe work --repo R [--unit ID | --goal ID]` (G7 rest; the M-Skeleton slice stops at `aiwe item take` and `aiwe item return`)
 | Step | Kind | What happens |
 |---|---|---|
 | 1 intake | M | Read the item through the tracker port (§10.1); read the record (§8.4) and run the intake gates (R3). Skip `owner-action` and blocked items. |
