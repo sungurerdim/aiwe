@@ -21,8 +21,14 @@ const newSettingsMode fs.FileMode = 0o600
 
 // ErrSettingsLink is the cause of a refused settings file that is a symbolic link: the rename would
 // replace the link with a plain file, so the file it names, a dotfiles copy say, would stop getting
-// the entries.
-var ErrSettingsLink = errors.New("the settings file is a symbolic link")
+// the entries. It is a constant of its own error type, not an outcome sentinel: the refusal's
+// outcome stays error, and errors.Is still finds it.
+const ErrSettingsLink settingsError = "the settings file is a symbolic link"
+
+// settingsError is an error that is a constant string.
+type settingsError string
+
+func (e settingsError) Error() string { return string(e) }
 
 // Apply wires the row's hook entries into the settings of one harness under home and returns what
 // it changed. Every file access goes through an *os.Root at home, so no link inside it leads out.
