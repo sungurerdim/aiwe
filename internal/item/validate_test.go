@@ -398,7 +398,7 @@ func TestValidatorRefusesBidiControl(t *testing.T) {
 			wantRefusedFor(t, item.Validate(r, testEnv()), "title", "bidirectional")
 		})
 	}
-	const rlo = "‮"
+	const rlo = "\u202e"
 	rows := []struct {
 		name   string
 		field  string
