@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/sungurerdim/aiwe/internal/core"
@@ -33,20 +34,24 @@ type Wire struct {
 }
 
 // Harness is the one adapter data row of a harness (DR-3): the directory and file its settings
-// live in, relative to the user's home, and the events it wires. A harness without a hook is served
-// by the work loop and has no row.
+// live in, relative to the user's home, the events it wires, and the fields of a handler the owner
+// may add to aiwe's that cannot change whether or how it runs. Any other field is drift. A harness
+// without a hook is served by the work loop and has no row.
 type Harness struct {
 	Name  string
 	Dir   string
 	File  string
 	Wires []Wire
+	Keep  []string
 }
 
-// Entry is one hook entry the row asks for: the event, the group matcher and the exact command.
+// Entry is one hook entry the row asks for: the event, the group matcher, the exact command and
+// the owner's fields a repair keeps.
 type Entry struct {
 	Event   string
 	Matcher string
 	Command string
+	Keep    []string
 }
 
 // Change is one thing install did or would do to a harness's settings.
@@ -70,6 +75,7 @@ func Harnesses() []Harness {
 			{Event: "PreToolUse", Matcher: "Bash|PowerShell|Monitor", Verb: "pre-tool"},
 			{Event: "SubagentStop", Verb: "return"},
 		},
+		Keep: []string{"timeout", "statusMessage"},
 	}}
 }
 
@@ -77,7 +83,8 @@ func Harnesses() []Harness {
 func (h Harness) Entries() []Entry {
 	out := make([]Entry, 0, len(h.Wires))
 	for _, w := range h.Wires {
-		out = append(out, Entry{Event: w.Event, Matcher: w.Matcher, Command: core.Product + " hook " + w.Verb})
+		out = append(out, Entry{Event: w.Event, Matcher: w.Matcher, Command: core.Product + " hook " + w.Verb,
+			Keep: h.Keep})
 	}
 	return out
 }
@@ -190,6 +197,7 @@ type slot struct {
 	kept    bool
 	found   bool
 	changed bool
+	keep    []string
 	// carry holds the fields of the first own handler that had to go, for the fresh handler.
 	carry map[string]json.RawMessage
 }
@@ -199,7 +207,7 @@ type slot struct {
 // fresh group is added when none stayed. The action is "add" when no own handler existed,
 // "repair" when one was dropped or changed, and "" when the event was already exact.
 func wireEvent(list []json.RawMessage, e Entry) ([]json.RawMessage, string, error) {
-	s := &slot{matcher: e.Matcher, command: e.Command}
+	s := &slot{matcher: e.Matcher, command: e.Command, keep: e.Keep}
 	out := make([]json.RawMessage, 0, len(list)+1)
 	for _, raw := range list {
 		g, keep, err := s.scan(raw)
@@ -265,8 +273,8 @@ func (s *slot) scan(raw json.RawMessage) (json.RawMessage, bool, error) {
 }
 
 // handler decides one handler of a group, under the right matcher or not. A foreign handler stays
-// as it is. The first own handler under the right matcher stays with every field the owner added;
-// only its type and command are set to the row's. Any other own handler goes; the fields of the
+// as it is. The first own handler under the right matcher stays with the owner's fields the row
+// keeps; its type and command are set to the row's and every other field goes. Any other own handler goes; the fields of the
 // first one that goes are carried to the fresh handler, so moving an entry keeps them too.
 func (s *slot) handler(h json.RawMessage, right bool) (json.RawMessage, bool, error) {
 	fields, own := ownFields(h)
@@ -282,18 +290,18 @@ func (s *slot) handler(h json.RawMessage, right bool) (json.RawMessage, bool, er
 		return nil, false, nil
 	}
 	s.kept = true
-	if isExact(fields, s.command) {
+	if isExact(fields, s.command, s.keep) {
 		return h, true, nil
 	}
 	s.changed = true
-	out, err := withCommand(fields, s.command)
+	out, err := withCommand(fields, s.command, s.keep)
 	return out, true, err
 }
 
 // fresh returns a new group of the row's matcher with one handler: the row's command and the
 // fields carried from an own handler that went.
 func (s *slot) fresh() (json.RawMessage, error) {
-	h, err := withCommand(s.carry, s.command)
+	h, err := withCommand(s.carry, s.command, s.keep)
 	if err != nil {
 		return nil, err
 	}
@@ -304,12 +312,14 @@ func (s *slot) fresh() (json.RawMessage, error) {
 	return encode(group, "")
 }
 
-// withCommand returns a handler with the owner's fields of an own handler, its type command and
-// its command the row's.
-func withCommand(fields map[string]json.RawMessage, command string) (json.RawMessage, error) {
-	out := make(map[string]any, len(fields)+2)
-	for k, v := range fields {
-		out[k] = v
+// withCommand returns a handler with the fields of an own handler that keep names, its type
+// command and its command the row's.
+func withCommand(fields map[string]json.RawMessage, command string, keep []string) (json.RawMessage, error) {
+	out := make(map[string]any, len(keep)+2)
+	for _, k := range keep {
+		if v, ok := fields[k]; ok {
+			out[k] = v
+		}
 	}
 	out["type"], out["command"] = "command", command
 	return encode(out, "")
@@ -341,9 +351,14 @@ func ownFields(h json.RawMessage) (map[string]json.RawMessage, bool) {
 	return fields, len(f) >= 2 && f[0] == core.Product && f[1] == "hook"
 }
 
-// isExact reports whether an own handler runs the row's command as a command; every other field
-// is the owner's and is no drift.
-func isExact(fields map[string]json.RawMessage, command string) bool {
+// isExact reports whether an own handler runs the row's command as a command and holds no field
+// but those and the ones keep names; a field such as async, if or args disarms it, so it is drift.
+func isExact(fields map[string]json.RawMessage, command string, keep []string) bool {
+	for k := range fields {
+		if k != "type" && k != "command" && !slices.Contains(keep, k) {
+			return false
+		}
+	}
 	var typ, cmd string
 	return json.Unmarshal(fields["type"], &typ) == nil && json.Unmarshal(fields["command"], &cmd) == nil &&
 		typ == "command" && cmd == command
@@ -374,26 +389,4 @@ func parseList(raw []byte, what string) ([]json.RawMessage, error) {
 		return nil, refuse(what+" as a JSON list", err.Error(), err)
 	}
 	return l, nil
-}
-
-// encode renders v as JSON without HTML escaping, so a foreign value keeps its bytes; indent is
-// the indent of the whole text, or "" for one line.
-func encode(v any, indent string) (json.RawMessage, error) {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	if indent != "" {
-		enc.SetIndent("", indent)
-	}
-	if err := enc.Encode(v); err != nil {
-		return nil, refuse("settings that encode", err.Error(), err)
-	}
-	return bytes.TrimRight(buf.Bytes(), "\n"), nil
-}
-
-// refuse builds the error of settings install will not touch: it fails closed, and the file stays
-// as it was.
-func refuse(expected, found string, cause error) error {
-	return &core.Error{Outcome: core.OutcomeError, Expected: expected, Found: found, Err: cause,
-		Next: "fix the settings file by hand, or move it aside, then run install again"}
 }

@@ -3,6 +3,7 @@ package install
 import (
 	"bytes"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -102,4 +103,26 @@ func replace(root *os.Root, h Harness, name string, b []byte) error {
 		return errors.Join(err, root.Remove(tmp))
 	}
 	return nil
+}
+
+// encode renders v as JSON without HTML escaping, so a foreign value keeps its bytes; indent is
+// the indent of the whole text, or "" for one line.
+func encode(v any, indent string) (json.RawMessage, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if indent != "" {
+		enc.SetIndent("", indent)
+	}
+	if err := enc.Encode(v); err != nil {
+		return nil, refuse("settings that encode", err.Error(), err)
+	}
+	return bytes.TrimRight(buf.Bytes(), "\n"), nil
+}
+
+// refuse builds the error of settings install will not touch: it fails closed, and the file stays
+// as it was.
+func refuse(expected, found string, cause error) error {
+	return &core.Error{Outcome: core.OutcomeError, Expected: expected, Found: found, Err: cause,
+		Next: "fix the settings file by hand, or move it aside, then run install again"}
 }
