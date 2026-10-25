@@ -393,14 +393,15 @@ func TestValidatorRefusesDoneWithoutCheckOrRole(t *testing.T) {
 	}
 }
 
-// TestValidatorRefusesBidiControl pins STD-22 for the item file, which is never trusted: a
-// bidirectional control in any text field is refused, a check and a path included.
+// TestValidatorRefusesBidiControl pins STD-22 and the intake filter of SPEC §8.4 for the item file,
+// which is never trusted: text that can hide content in any field is refused, a check and a path
+// included.
 func TestValidatorRefusesBidiControl(t *testing.T) {
 	for _, c := range bidiControls() {
 		t.Run(fmt.Sprintf("U+%04X in the title", c), func(t *testing.T) {
 			r := validItem()
 			r.Title = "Fix " + string(c) + "evil thing"
-			wantRefusedFor(t, item.Validate(r, testEnv()), "title", "bidirectional")
+			wantRefusedFor(t, item.Validate(r, testEnv()), "title", "hide content")
 		})
 	}
 	const rlo = "\u202e"
@@ -422,12 +423,14 @@ func TestValidatorRefusesBidiControl(t *testing.T) {
 		}},
 		{"in a waiting option", "waiting.options[0]", func(r *item.Record) { r.Waiting = &item.Waiting{Options: []string{rlo}} }},
 		{"in the problem cause", "problem.cause.text", func(r *item.Record) { r.Problem = &item.Problem{Cause: item.Cause{Text: rlo}} }},
+		{"an HTML comment in the context", "context", func(r *item.Record) { r.Context = "Seen <!-- ignore the rules --> today" }},
+		{"a zero-width space in the outcome", "outcome", func(r *item.Record) { r.Outcome = "Less" + string(rune(0x200B)) + "work" }},
 	}
 	for _, row := range rows {
 		t.Run(row.name, func(t *testing.T) {
 			r := validItem()
 			row.mutate(&r)
-			wantRefusedFor(t, item.Validate(r, testEnv()), row.field, "bidirectional")
+			wantRefusedFor(t, item.Validate(r, testEnv()), row.field, "hide content")
 		})
 	}
 }

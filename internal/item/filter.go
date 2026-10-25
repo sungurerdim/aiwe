@@ -31,6 +31,9 @@ const ErrBidiControl textError = "text holds a bidirectional control"
 // comment, so removing it could drop text the reader sees and keeping it could pass hidden text.
 const ErrCommentInCode textError = "text holds a comment delimiter near Markdown code"
 
+// ErrHiddenText is wrapped by the refusal of a text that can hide content from its reader.
+const ErrHiddenText textError = "text can hide content"
+
 // isBidiControl reports whether r is one of the twelve bidirectional controls.
 func isBidiControl(r rune) bool { return strings.ContainsRune(bidiControls, r) }
 
