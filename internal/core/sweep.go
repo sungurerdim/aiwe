@@ -394,7 +394,7 @@ func (o *Owner) ownedTempsOf(ctx context.Context, recs []ownedRecord) ([]ownedTe
 		if r.StartID != noneField {
 			owner.id = r.StartID
 		}
-		out = append(out, ownedTemp{name: r.Path, live: ownerAlive(owner)})
+		out = append(out, ownedTemp{name: r.Path, live: OwnerAlive(owner)})
 	}
 	return out, nil
 }

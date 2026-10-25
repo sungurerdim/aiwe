@@ -62,10 +62,6 @@ func OwnerAlive(p ProcessID) bool {
 	return d <= startTolerance()
 }
 
-// ownerAlive is OwnerAlive under the name sweep.go calls; it stays only until sweep.go, outside
-// this unit's file set, calls OwnerAlive.
-var ownerAlive = OwnerAlive
-
 // startTolerance is how far the OS start time of a p without an exact start identity may lie from
 // p.Start. On Windows and macOS the start is a stored value, read the same way at every call, so the
 // tolerance absorbs rounding only. Elsewhere it is read from /proc and moves with the wall clock, so

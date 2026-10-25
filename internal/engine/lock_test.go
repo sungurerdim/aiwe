@@ -302,10 +302,6 @@ func engineTestProbe(state processState) processProbe {
 	return func(core.ProcessID) processState { return state }
 }
 
-// engineTestUninspected is the probe of an OS that refuses to give a holder's start, which it does
-// for a live process of another user: core.OwnerAlive then answers alive, so the probe does too.
-var engineTestUninspected = engineTestProbe(processAlive)
-
 // TestClaimHolderUninspected guards DR-11 and SPEC §7.3 step 2: a holder the run cannot inspect
 // keeps its unit, and a holder the OS confirms is gone frees it. It catches a lock reclaimed on an
 // answer that is no proof the holder is gone, which would put two runs on one unit.
@@ -328,7 +324,7 @@ func TestClaimHolderUninspected(t *testing.T) {
 	t.Run("a holder the OS refuses to inspect keeps its unit", func(t *testing.T) {
 		// Catches a second run that takes the unit because the probe could not inspect the holder,
 		// which an OS answers for a live process of another user (access denied).
-		claims.probe = engineTestUninspected
+		claims.probe = engineTestProbe(processAlive)
 		err := claims.Take(ctx, Claim{Unit: unit, RunID: engineTestSecondRunID, Owner: self})
 		var held *UnitClaimedError
 		if !errors.As(err, &held) {
