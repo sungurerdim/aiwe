@@ -34,34 +34,47 @@ const (
 
 // eventFieldKeys lists, in a fixed order, the keys of the fields an event carries beyond the common
 // ones; a refusal names the first that breaks the schema.
-var eventFieldKeys = []string{"checkKind", "key", "role", "verdict", "evidence", "commit", "files", "branch", "env", "result"}
+func eventFieldKeys() []string {
+	return []string{"checkKind", "key", "role", "verdict", "evidence", "commit", "files", "branch", "env", "result"}
+}
+
+// eventSpec is one row of eventSpecs: an event name and the fields that event carries.
+type eventSpec struct {
+	name   EventName
+	fields []string
+}
 
 // eventSpecs is the one table of the closed set of events: each name with the fields that event
 // carries and requires (SPEC §8.5). A field outside its row is refused, so an event never carries
 // the field of another.
-var eventSpecs = []struct {
-	name   EventName
-	fields []string
-}{
-	{EventCreated, nil},
-	{EventReady, nil},
-	{EventTaken, nil},
-	{EventReturned, nil},
-	{EventCheckQueued, []string{"checkKind", "key"}},
-	{EventCheckStarted, []string{"checkKind", "key"}},
-	{EventVerdict, []string{"role", "verdict", "evidence"}},
-	{EventLanded, []string{"commit", "files"}},
-	{EventPushed, []string{"branch"}},
-	{EventMerged, []string{"commit"}},
-	{EventDeployed, []string{"env", "result"}},
-	{EventClosed, nil},
-	{EventReopened, nil},
+func eventSpecs() []eventSpec {
+	return []eventSpec{
+		{EventCreated, nil},
+		{EventReady, nil},
+		{EventTaken, nil},
+		{EventReturned, nil},
+		{EventCheckQueued, []string{"checkKind", "key"}},
+		{EventCheckStarted, []string{"checkKind", "key"}},
+		{EventVerdict, []string{"role", "verdict", "evidence"}},
+		{EventLanded, []string{"commit", "files"}},
+		{EventPushed, []string{"branch"}},
+		{EventMerged, []string{"commit"}},
+		{EventDeployed, []string{"env", "result"}},
+		{EventClosed, nil},
+		{EventReopened, nil},
+	}
 }
 
-// fieldValues holds the closed value set of the fields that have one (SPEC §8.5).
-var fieldValues = map[string][]string{
-	"verdict": {"GREEN", "RED"},
-	"result":  {"green", "red", "rolled_back"},
+// fieldValues returns the closed value set of the field key, and nil for a field that has none
+// (SPEC §8.5).
+func fieldValues(key string) []string {
+	switch key {
+	case "verdict":
+		return []string{"GREEN", "RED"}
+	case "result":
+		return []string{"green", "red", "rolled_back"}
+	}
+	return nil
 }
 
 // unknownName is how an actor part that cannot be named reads (DR-6, SPEC §8.5).
@@ -97,21 +110,23 @@ func (a Actor) MarshalJSON() ([]byte, error) {
 // attribute names (SPEC §8.5, §17). The attributes have status Development and may be renamed, so an
 // export renames only here. role and durationMs have no attribute and keep their aiwe names. Each
 // row is an aiwe key and its attribute name, in that order.
-var genAIAttributes = []struct{ key, attribute string }{
-	{"provider", "gen_ai.provider.name"},
-	{"model", "gen_ai.request.model"},
-	{"modelReported", "gen_ai.response.model"},
-	{"harness", "gen_ai.agent.name"},
-	{"sessionId", "gen_ai.conversation.id"},
-	{"tokensIn", "gen_ai.usage.input_tokens"},
-	{"tokensOut", "gen_ai.usage.output_tokens"},
-	{"tokensCachedIn", "gen_ai.usage.cache_read.input_tokens"},
+func genAIAttributes() []struct{ key, attribute string } {
+	return []struct{ key, attribute string }{
+		{"provider", "gen_ai.provider.name"},
+		{"model", "gen_ai.request.model"},
+		{"modelReported", "gen_ai.response.model"},
+		{"harness", "gen_ai.agent.name"},
+		{"sessionId", "gen_ai.conversation.id"},
+		{"tokensIn", "gen_ai.usage.input_tokens"},
+		{"tokensOut", "gen_ai.usage.output_tokens"},
+		{"tokensCachedIn", "gen_ai.usage.cache_read.input_tokens"},
+	}
 }
 
 // GenAIAttribute returns the OpenTelemetry GenAI attribute name of an aiwe key, and false for a key
 // that has none (SPEC §8.5).
 func GenAIAttribute(key string) (string, bool) {
-	for _, row := range genAIAttributes {
+	for _, row := range genAIAttributes() {
 		if row.key == key {
 			return row.attribute, true
 		}
@@ -239,8 +254,9 @@ func namesNothing(id string) bool {
 // eventFields returns the per-event fields of the event name, or the refusal of a name outside the
 // closed set.
 func eventFields(name EventName) ([]string, error) {
-	names := make([]string, 0, len(eventSpecs))
-	for _, spec := range eventSpecs {
+	specs := eventSpecs()
+	names := make([]string, 0, len(specs))
+	for _, spec := range specs {
 		if spec.name == name {
 			return spec.fields, nil
 		}
@@ -255,15 +271,15 @@ func (e Event) validateFields(fields []string) error {
 	if slices.Contains(e.Files, "") {
 		return refuse("a file path in every entry of files", "an empty entry")
 	}
-	for _, key := range eventFieldKeys {
-		value, needed := e.field(key), slices.Contains(fields, key)
+	for _, key := range eventFieldKeys() {
+		value, needed, allowed := e.field(key), slices.Contains(fields, key), fieldValues(key)
 		switch {
 		case needed && value == "":
 			return refuse(fmt.Sprintf("a %s on a %s event", key, e.Name), "none")
 		case !needed && value != "":
 			return refuse(fmt.Sprintf("no %s on a %s event", key, e.Name), fmt.Sprintf("a %s", key))
-		case value != "" && fieldValues[key] != nil && !slices.Contains(fieldValues[key], value):
-			return refuse("a "+key+" of "+strings.Join(fieldValues[key], ", "), "a "+key+" outside the set")
+		case value != "" && allowed != nil && !slices.Contains(allowed, value):
+			return refuse("a "+key+" of "+strings.Join(allowed, ", "), "a "+key+" outside the set")
 		}
 	}
 	return nil
@@ -287,16 +303,22 @@ var absolutePath = regexp.MustCompile(`(?:^|[^` + pathChar + `])(?:/[\p{L}\p{N}_
 // such as tools@v0.30.1 passes. It matches the text as mailText reads it.
 var emailAddress = regexp.MustCompile(`[\p{L}\p{M}\p{N}._%+-]+@[\p{L}\p{M}0-9-]+(\.[\p{L}\p{M}0-9-]+)*\.\p{L}[\p{L}\p{M}]+`)
 
-// mailLookalikes maps the characters that read as an at sign or a label dot of an address to their
-// ASCII form: the fullwidth and small at signs (U+FF20, U+FE6B), and the fullwidth, ideographic
-// and halfwidth ideographic full stops (U+FF0E, U+3002, U+FF61) that IDNA reads as a dot.
-var mailLookalikes = map[rune]rune{
-	0xFF20: '@', 0xFE6B: '@',
-	0xFF0E: '.', 0x3002: '.', 0xFF61: '.',
+// mailLookalike returns the ASCII form of a character that reads as an at sign or a label dot of an
+// address: the fullwidth and small at signs (U+FF20, U+FE6B), and the fullwidth, ideographic and
+// halfwidth ideographic full stops (U+FF0E, U+3002, U+FF61) that IDNA reads as a dot. Any other
+// character is returned as it is.
+func mailLookalike(r rune) rune {
+	switch r {
+	case 0xFF20, 0xFE6B:
+		return '@'
+	case 0xFF0E, 0x3002, 0xFF61:
+		return '.'
+	}
+	return r
 }
 
 // mailText returns text as the e-mail pattern reads it: without the invisible format characters
-// (\p{Cf}), such as a zero-width space or a soft hyphen, and with the lookalikes of mailLookalikes in
+// (\p{Cf}), such as a zero-width space or a soft hyphen, and with the lookalikes of mailLookalike in
 // their ASCII form. NFKC would need golang.org/x/text, which the module does not require, so the
 // mapping is explicit.
 func mailText(text string) string {
@@ -304,10 +326,7 @@ func mailText(text string) string {
 		if unicode.Is(unicode.Cf, r) {
 			return -1
 		}
-		if ascii, ok := mailLookalikes[r]; ok {
-			return ascii
-		}
-		return r
+		return mailLookalike(r)
 	}, text)
 }
 
@@ -316,7 +335,7 @@ func mailText(text string) string {
 func (e Event) validatePersonalData() error {
 	texts := []string{e.RepoID, e.Goal, e.Unit, e.RunID,
 		e.Actor.Role, e.Actor.Harness, e.Actor.Provider, e.Actor.Model, e.Actor.SessionID}
-	for _, key := range eventFieldKeys {
+	for _, key := range eventFieldKeys() {
 		texts = append(texts, e.field(key))
 	}
 	for _, text := range texts {

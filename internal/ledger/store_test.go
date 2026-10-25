@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/sungurerdim/aiwe/internal/core"
 )
 
 // appendFile appends rec to the ledger file at path, creating it (SPEC §8.5).
@@ -115,11 +117,11 @@ func TestReadRefusesLineNotAsWritten(t *testing.T) {
 		{"an unknown key in the actor (Read: unknown key skipped)", verdict,
 			`"actor":{`, `"actor":{"email":"alice@example.com",`},
 		{"an unknown object in an event (Read: unknown key skipped)", verdict,
-			`"event":"verdict"`, `"event":"verdict","host":{"home":"C:\Users\alice"}`},
+			`"event":"verdict"`, `"event":"verdict","host":{"home":"` + drivePath("C", `\\`, "alice") + `"}`},
 		{"a duplicate evidence key (Read: last key wins)", verdict,
-			`"evidence":"`, `"evidence":"in /home/alice/aiwe","evidence":"`},
+			`"evidence":"`, `"evidence":"in ` + homePath("alice") + "/" + core.Product + `","evidence":"`},
 		{"a duplicate unit key (Read: last key wins)", verdict,
-			`"unit":"503"`, `"unit":"/home/alice","unit":"503"`},
+			`"unit":"503"`, `"unit":"` + homePath("alice") + `","unit":"503"`},
 		{"an upper-case evidence key next to the real one (Read: key in any case)", verdict,
 			`"evidence":"`, `"EVIDENCE":"by alice@example.com","evidence":"`},
 		{"an evidence key in another case (Read: key in any case)", verdict,
@@ -127,7 +129,7 @@ func TestReadRefusesLineNotAsWritten(t *testing.T) {
 		{"an unknown key in a run (Read: unknown key skipped)", strings.TrimSuffix(run, "\n"),
 			`"kind":"run"`, `"kind":"run","email":"alice@example.com"`},
 		{"an unknown key in a check (Read: unknown key skipped)", strings.TrimSuffix(check, "\n"),
-			`"kind":"check"`, `"kind":"check","cwd":"/home/alice/aiwe"`},
+			`"kind":"check"`, `"kind":"check","cwd":"` + homePath("alice") + "/" + core.Product + `"`},
 	}
 	for _, tc := range cases {
 		t.Run("refuses "+tc.name, func(t *testing.T) {

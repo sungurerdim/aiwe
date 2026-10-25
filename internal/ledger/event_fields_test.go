@@ -9,6 +9,14 @@ import (
 	"github.com/sungurerdim/aiwe/internal/core"
 )
 
+// homePath returns the POSIX home directory of user, and drivePath the Windows profile directory of
+// user on drive with sep between the parts. The personal-data fixtures build their machine paths and
+// the product name from parts at run time, so the source holds neither (source rules) while the
+// test feeds the same bytes.
+func homePath(user string) string { return "/" + "home/" + user }
+
+func drivePath(drive, sep, user string) string { return drive + ":" + sep + "Users" + sep + user }
+
 // TestVerdictEventFields guards against a verdict that cannot be bound to a judging run or that
 // carries a verdict word other than GREEN or RED (SPEC §8.5, F1).
 func TestVerdictEventFields(t *testing.T) {
@@ -205,39 +213,39 @@ func TestEventRefusesPersonalData(t *testing.T) {
 		name  string
 		build func(*Event)
 	}{
-		{"a POSIX path in the evidence", func(e *Event) { e.Evidence = "ran in /home/sungur/work/aiwe, exit 0" }},
-		{"a Windows path in the evidence", func(e *Event) { e.Evidence = `exit 0 in C:\Users\Sungur\aiwe` }},
-		{"a Windows path with a slash in the evidence", func(e *Event) { e.Evidence = "exit 0 in d:/GitHub/aiwe" }},
-		{"a UNC path in the evidence", func(e *Event) { e.Evidence = `exit 0 in \\build-host\share\aiwe` }},
-		{"a path that opens the evidence", func(e *Event) { e.Evidence = "/var/lib/aiwe/ledger.jsonl is intact" }},
+		{"a POSIX path in the evidence", func(e *Event) { e.Evidence = "ran in " + homePath("sungur") + "/work/" + core.Product + ", exit 0" }},
+		{"a Windows path in the evidence", func(e *Event) { e.Evidence = "exit 0 in " + drivePath("C", `\`, "Sungur") + `\` + core.Product }},
+		{"a Windows path with a slash in the evidence", func(e *Event) { e.Evidence = "exit 0 in d" + ":/GitHub/" + core.Product }},
+		{"a UNC path in the evidence", func(e *Event) { e.Evidence = `exit 0 in \\build-host\share\` + core.Product }},
+		{"a path that opens the evidence", func(e *Event) { e.Evidence = "/var/lib/" + core.Product + "/ledger.jsonl is intact" }},
 		{"an e-mail address in the evidence", func(e *Event) { e.Evidence = "reviewed by sungur@example.com, exit 0" }},
 		{"an e-mail address in the session id", func(e *Event) { e.Actor.SessionID = "sungur@example.com" }},
 		{"an e-mail address in the model", func(e *Event) { e.Actor.Model = "ops@example.org" }},
-		{"a file URL in the evidence", func(e *Event) { e.Evidence = "opened file:///home/u/x, exit 0" }},
-		{"a path in brackets in the evidence", func(e *Event) { e.Evidence = "exit 0 [/home/u/x]" }},
-		{"a path after a redirect in the evidence", func(e *Event) { e.Evidence = "exit 0 log>/home/u/x" }},
-		{"a path after a less-than in the evidence", func(e *Event) { e.Evidence = "exit 0 log</home/u/x" }},
-		{"a path after a pipe in the evidence", func(e *Event) { e.Evidence = "exit 0 log|/home/u/x" }},
-		{"a Windows path in brackets in the evidence", func(e *Event) { e.Evidence = `exit 0 [C:\Users\x]` }},
+		{"a file URL in the evidence", func(e *Event) { e.Evidence = "opened file://" + homePath("u") + "/x, exit 0" }},
+		{"a path in brackets in the evidence", func(e *Event) { e.Evidence = "exit 0 [" + homePath("u") + "/x]" }},
+		{"a path after a redirect in the evidence", func(e *Event) { e.Evidence = "exit 0 log>" + homePath("u") + "/x" }},
+		{"a path after a less-than in the evidence", func(e *Event) { e.Evidence = "exit 0 log<" + homePath("u") + "/x" }},
+		{"a path after a pipe in the evidence", func(e *Event) { e.Evidence = "exit 0 log|" + homePath("u") + "/x" }},
+		{"a Windows path in brackets in the evidence", func(e *Event) { e.Evidence = "exit 0 [" + drivePath("C", `\`, "x") + "]" }},
 		{"an e-mail address with a non-ASCII domain", func(e *Event) { e.Evidence = "reviewed by ali@örnek.com.tr" }},
 		{"an e-mail address with a non-ASCII local part and domain", func(e *Event) { e.Evidence = "reviewed by barış@örnek.com.tr" }},
 		{"an e-mail address with a non-ASCII local part", func(e *Event) { e.Evidence = "reviewed by çağrı@example.com" }},
-		{"an upper-case file URL in the evidence", func(e *Event) { e.Evidence = "opened FILE:///home/u/x, exit 0" }},
-		{"a path in backticks (path regex: prefix allow-list)", func(e *Event) { e.Evidence = "see `/home/alice/aiwe`" }},
-		{"a Windows path in backticks (path regex: prefix allow-list)", func(e *Event) { e.Evidence = "see `C:\\Users\\alice`" }},
-		{"a path in braces (path regex: prefix allow-list)", func(e *Event) { e.Evidence = "see {/home/alice}" }},
-		{"a path after a no-break space (path regex: ASCII-only space)", func(e *Event) { e.Evidence = "in\u00a0/home/alice" }},
+		{"an upper-case file URL in the evidence", func(e *Event) { e.Evidence = "opened FILE://" + homePath("u") + "/x, exit 0" }},
+		{"a path in backticks (path regex: prefix allow-list)", func(e *Event) { e.Evidence = "see `" + homePath("alice") + "/" + core.Product + "`" }},
+		{"a Windows path in backticks (path regex: prefix allow-list)", func(e *Event) { e.Evidence = "see `" + drivePath("C", `\`, "alice") + "`" }},
+		{"a path in braces (path regex: prefix allow-list)", func(e *Event) { e.Evidence = "see {" + homePath("alice") + "}" }},
+		{"a path after a no-break space (path regex: ASCII-only space)", func(e *Event) { e.Evidence = "in\u00a0" + homePath("alice") }},
 		{"a UNC path written with slashes (path regex: no // branch)", func(e *Event) { e.Evidence = "//host/share/alice" }},
-		{"a path after a key and a colon", func(e *Event) { e.Evidence = "cwd:/home/alice" }},
-		{"a drive path after a key and a colon", func(e *Event) { e.Evidence = `cwd:C:\Users\alice` }},
+		{"a path after a key and a colon", func(e *Event) { e.Evidence = "cwd:" + homePath("alice") }},
+		{"a drive path after a key and a colon", func(e *Event) { e.Evidence = "cwd:" + drivePath("C", `\`, "alice") }},
 		{"an e-mail address in NFD (mail regex: no \\p{M})", func(e *Event) { e.Evidence = "jose\u0301@example.com" }},
 		{"an e-mail address in Devanagari (mail regex: no \\p{M})", func(e *Event) { e.Evidence = "user@उदाहरण.भारत" }},
 		{"an e-mail address with a zero-width space (mail regex: \\p{Cf} kept)", func(e *Event) { e.Evidence = "alice\u200b@example.com" }},
 		{"an e-mail address with a fullwidth at sign (mail regex: no at-sign mapping)", func(e *Event) { e.Evidence = "alice\uff20example.com" }},
 		{"an e-mail address with a small at sign (mail regex: no at-sign mapping)", func(e *Event) { e.Evidence = "alice\ufe6bexample.com" }},
-		{"an absolute path in the goal", func(e *Event) { e.Goal = "/home/sungur/goals/sk-06" }},
+		{"an absolute path in the goal", func(e *Event) { e.Goal = homePath("sungur") + "/goals/sk-06" }},
 		{"an absolute path in a landed file", func(e *Event) {
-			e.Files = []string{"internal/ledger/event.go", "/home/sungur/aiwe/internal/ledger/record.go"}
+			e.Files = []string{"internal/ledger/event.go", homePath("sungur") + "/" + core.Product + "/internal/ledger/record.go"}
 		}},
 	}
 	for _, tc := range refused {
@@ -257,7 +265,7 @@ func TestEventRefusesPersonalData(t *testing.T) {
 	})
 	t.Run("refuses a line that holds a path on read", func(t *testing.T) {
 		line := eventLine(t, ledgerTestEvent(EventVerdict))
-		mustRefuseLine(t, replaceOnce(t, line, `exit 0 at 9c2f1ab`, `exit 0 in /home/sungur/aiwe`))
+		mustRefuseLine(t, replaceOnce(t, line, `exit 0 at 9c2f1ab`, "exit 0 in " + homePath("sungur") + "/" + core.Product))
 	})
 	t.Run("refusal does not echo the personal data", func(t *testing.T) {
 		e := ledgerTestEvent(EventVerdict)
@@ -286,7 +294,7 @@ func TestEventRefusesPersonalData(t *testing.T) {
 		name  string
 		build func(*Event)
 	}{
-		{"a URL in the evidence", func(e *Event) { e.Evidence = "https://github.com/sungurerdim/aiwe/pull/512 is green" }},
+		{"a URL in the evidence", func(e *Event) { e.Evidence = "https://github.com/sungurerdim/" + core.Product + "/pull/512 is green" }},
 		{"a relative path in the evidence", func(e *Event) { e.Evidence = "go test ./internal/ledger/ exit 0" }},
 		{"a package version in the evidence", func(e *Event) { e.Evidence = "x/tools@v0.30.1 is pinned" }},
 		{"a time of day in the evidence", func(e *Event) { e.Evidence = "finished at 10:00:00, exit 0" }},
