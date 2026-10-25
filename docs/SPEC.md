@@ -185,7 +185,7 @@ Before anything is added (code, a file, a page, a setting, a layer, a gate, a te
 | Complexity (Q12, step `lint`) | a KISS violation | commit |
 | Dead code (step `deadcode`) | unused code, speculative generality | CI |
 | Duplicate detector (a profile cell; planned) | a DRY violation, at the third copy | CI |
-| Check-register duplicate lint (§7.10) | one check at two gate points | gate lint |
+| Two-point lint (§7.10) | one check at two gate points | gate lint |
 | Mutation on selected modules (STD-20) | a test that catches no defect | CI, weekly |
 ## 5. Coding rules and patterns
 Paths are under `internal/`.
@@ -490,7 +490,7 @@ A **gate point** is a moment at which checks run. One command serves them all, `
 - **Executor**: every row that runs a command runs it through the check executor (§7.8), so one queue, one cache and one pool of tickets serve all gate points.
 - **Fast gate and enforcement** (K36): the landing queue runs the commit-point checks of the table on every landing, and the recorded unit verifies, so a commit made with no local hook is still checked; the local git hook is an early warning that runs the same checks. `aiwe install` or slot creation writes `core.hooksPath` in a slot, and the engine's own git calls use an empty one (§5.15).
 - **Duration ledger**: every step writes its duration to the ledger `check` record (`durationMs`, §8.5). A step's budget is the derived p90 (§7.4) or a value its gate row sets by hand. A step over budget prints `slow: <step> 47 s (budget 15 s)` as a `warning` finding (R7); it does not fail the gate, the time limit (§7.8) does.
-- **Check register**: the one list that says where each check runs. Each gate step names the error it `prevents`, its `point`, its `rule` (a registry id) and its `budgetSeconds` (§8.3). Two-stage lint: the same check (equal argv) at two gate points is yellow. Exception, written in the row with its reason: a commit-point check runs once more in CI, because a local hook can be skipped in another harness and the repeat costs seconds; the `static` job of §12.2 is that exception.
+- **Check register**: the one list that says where each check runs. Each gate step names the error it `prevents`, its `point`, its `rule` (a registry id) and its `budgetSeconds` (§8.3). Two-point lint: the same check (equal argv) at two gate points is yellow. Exception, written in the row with its reason: a commit-point check runs once more in CI, because a local hook can be skipped in another harness and the repeat costs seconds; the `static` job of §12.2 is that exception.
 - **Test integrity** (D2, D9): a commit that changes a test file, a CI workflow or a gate script together with product code is refused at the commit point unless the item's `scope.in` names those files; a drop in the assertion count (D9) turns CI red. Reason: DR-12.
 - **Agent experience (AX)**: can an agent run the right test within seconds? The measure is the duration of the narrow test for the changed files, kept in the gate report; its target is `unknown` until the first measurement.
 
