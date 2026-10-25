@@ -174,21 +174,10 @@ func groupByGoal(goals []int, owner map[int]int) []goal {
 // record and the body block is the plan, so a blocker named in either one is a blocker. When the
 // endpoint fails the body alone answers; an issue with no body block either is named in a warning.
 func (s *session) blockers(ctx context.Context, open []issue) (map[int][]int, error) {
+	found, unreadable := s.readBlockers(ctx, open)
 	isOpen := make(map[int]bool, len(open))
 	for _, is := range open {
 		isOpen[is.Number] = true
-	}
-	found := make([][]int, len(open))
-	unreadable := make([]bool, len(open))
-	err := parallel(len(open), func(i int) error {
-		api, apiErr := s.apiNumbers(ctx, open[i].Number, "dependencies/blocked_by")
-		links, hasBlock := bodyBlockers(open[i].Body)
-		unreadable[i] = apiErr != nil && !hasBlock
-		found[i] = append(api, links...)
-		return nil
-	})
-	if err != nil {
-		return nil, err
 	}
 	out := map[int][]int{}
 	var lost []string
@@ -209,6 +198,21 @@ func (s *session) blockers(ctx context.Context, open []issue) (map[int][]int, er
 			" (the dependencies endpoint failed and the body has no record block)")
 	}
 	return out, nil
+}
+
+// readBlockers reads every blocker an open issue names, open or not, and flags the issues whose
+// blockers could not be read at all.
+func (s *session) readBlockers(ctx context.Context, open []issue) (found [][]int, unreadable []bool) {
+	found = make([][]int, len(open))
+	unreadable = make([]bool, len(open))
+	_ = parallel(len(open), func(i int) error {
+		api, apiErr := s.apiNumbers(ctx, open[i].Number, "dependencies/blocked_by")
+		links, hasBlock := bodyBlockers(open[i].Body)
+		unreadable[i] = apiErr != nil && !hasBlock
+		found[i] = append(api, links...)
+		return nil
+	})
+	return found, unreadable
 }
 
 // bodyBlockers reads links.blockedBy from the first JSON block of an issue body; the bool is false

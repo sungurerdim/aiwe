@@ -39,7 +39,7 @@ func TestStatusKeepsHandText(t *testing.T) {
 	t.Run("text outside the markers survives byte for byte", func(t *testing.T) {
 		w := newWorld()
 		w.files["STATUS.md"] = handStatus
-		res, err := generate(context.Background(), w.toolDeps(stamp), "status")
+		res, err := generate(context.Background(), w.toolDeps(stamp()), "status")
 		if err != nil {
 			t.Fatalf("generate status: %v", err)
 		}
@@ -60,12 +60,12 @@ func TestStatusKeepsHandText(t *testing.T) {
 	t.Run("a regeneration over its own output changes only the stamp", func(t *testing.T) {
 		w := newWorld()
 		w.files["STATUS.md"] = handStatus
-		first, err := generate(context.Background(), w.toolDeps(stamp), "status")
+		first, err := generate(context.Background(), w.toolDeps(stamp()), "status")
 		if err != nil {
 			t.Fatalf("first: %v", err)
 		}
 		w.files["STATUS.md"] = body(t, first.recs, "STATUS.md")
-		second, err := generate(context.Background(), w.toolDeps(stamp.Add(time.Hour)), "status")
+		second, err := generate(context.Background(), w.toolDeps(stamp().Add(time.Hour)), "status")
 		if err != nil {
 			t.Fatalf("second: %v", err)
 		}
@@ -80,7 +80,7 @@ func TestStatusKeepsHandText(t *testing.T) {
 
 	t.Run("a new file is seeded with the two empty hand headings", func(t *testing.T) {
 		w := newWorld()
-		res, err := generate(context.Background(), w.toolDeps(stamp), "status")
+		res, err := generate(context.Background(), w.toolDeps(stamp()), "status")
 		if err != nil {
 			t.Fatalf("generate status: %v", err)
 		}
@@ -98,7 +98,7 @@ func TestStatusKeepsHandText(t *testing.T) {
 		} {
 			w := newWorld()
 			w.files["STATUS.md"] = text
-			if _, err := generate(context.Background(), w.toolDeps(stamp), "status"); err == nil ||
+			if _, err := generate(context.Background(), w.toolDeps(stamp()), "status"); err == nil ||
 				!strings.Contains(err.Error(), "STATUS.md") {
 				t.Errorf("%s: err = %v, want an error naming STATUS.md", name, err)
 			}
@@ -108,7 +108,7 @@ func TestStatusKeepsHandText(t *testing.T) {
 	t.Run("unknown ahead and behind is said, never zero", func(t *testing.T) {
 		w := newWorld()
 		w.fail["git rev-list"] = errNoUpstream
-		res, err := generate(context.Background(), w.toolDeps(stamp), "status")
+		res, err := generate(context.Background(), w.toolDeps(stamp()), "status")
 		if err != nil {
 			t.Fatalf("generate status: %v", err)
 		}

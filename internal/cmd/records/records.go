@@ -119,22 +119,22 @@ func (s *session) build(ctx context.Context, name string) (string, error) {
 func execute(ctx context.Context, args []string, d deps, write func(record) error, out, errw io.Writer) int {
 	doWrite, target, err := parseArgs(args)
 	if err != nil {
-		fmt.Fprintf(errw, "records: %s\n", oneLine(err.Error()))
+		say(errw, "records: %s\n", oneLine(err.Error()))
 		return exitUsage
 	}
 	res, err := generate(ctx, d, target)
 	if err != nil {
-		fmt.Fprintf(errw, "records: %s\n", oneLine(err.Error()))
+		say(errw, "records: %s\n", oneLine(err.Error()))
 		return 1
 	}
 	for _, w := range res.warnings {
-		fmt.Fprintf(errw, "records: warning: %s\n", oneLine(w))
+		say(errw, "records: warning: %s\n", oneLine(w))
 	}
 	for _, r := range res.recs {
 		if !doWrite {
-			fmt.Fprintf(out, "==> %s <==\n%s\n", r.name, r.body)
+			say(out, "==> %s <==\n%s\n", r.name, r.body)
 		} else if err := write(r); err != nil {
-			fmt.Fprintf(errw, "records: write %s: %s\n", r.name, oneLine(err.Error()))
+			say(errw, "records: write %s: %s\n", r.name, oneLine(err.Error()))
 			return 1
 		}
 	}
@@ -160,6 +160,9 @@ func parseArgs(args []string) (doWrite bool, target string, err error) {
 	}
 	return doWrite, words[0], nil
 }
+
+// say writes one formatted line; a failed write to the terminal has nowhere to be reported.
+func say(w io.Writer, format string, args ...any) { _, _ = fmt.Fprintf(w, format, args...) }
 
 // oneLine folds a message to one line.
 func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }

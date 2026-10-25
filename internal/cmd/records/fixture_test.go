@@ -98,7 +98,8 @@ func (w *fakeWorld) toolDeps(at time.Time) deps {
 	return deps{run: w.run, read: w.read, now: func() time.Time { return at }}
 }
 
-var stamp = time.Date(2026, 10, 25, 10, 0, 0, 0, time.UTC)
+// stamp is the fixed clock of the tests.
+func stamp() time.Time { return time.Date(2026, 10, 25, 10, 0, 0, 0, time.UTC) }
 
 const specFixture = `# SPEC
 

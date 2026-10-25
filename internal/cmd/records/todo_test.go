@@ -42,7 +42,7 @@ const wantTodo = `# TODO
 func TestTodoOrder(t *testing.T) {
 	t.Run("goals and units come after their blockers, ties by number, with the blocked marker", func(t *testing.T) {
 		w := newWorld()
-		res, err := generate(context.Background(), w.toolDeps(stamp), "todo")
+		res, err := generate(context.Background(), w.toolDeps(stamp()), "todo")
 		if err != nil {
 			t.Fatalf("generate todo: %v", err)
 		}
@@ -59,7 +59,7 @@ func TestTodoOrder(t *testing.T) {
 
 	t.Run("every open issue appears exactly once and no closed one does", func(t *testing.T) {
 		w := newWorld()
-		res, err := generate(context.Background(), w.toolDeps(stamp), "todo")
+		res, err := generate(context.Background(), w.toolDeps(stamp()), "todo")
 		if err != nil {
 			t.Fatalf("generate todo: %v", err)
 		}
@@ -81,7 +81,7 @@ func TestTodoOrder(t *testing.T) {
 		w := newWorld()
 		w.depErr = map[int]bool{454: true}
 		w.open[5].Body = withLinks(456) // #454 names its blocker only in its body now
-		res, err := generate(context.Background(), w.toolDeps(stamp), "todo")
+		res, err := generate(context.Background(), w.toolDeps(stamp()), "todo")
 		if err != nil {
 			t.Fatalf("generate todo: %v", err)
 		}
@@ -97,7 +97,7 @@ func TestTodoOrder(t *testing.T) {
 		w := newWorld()
 		w.depErr = map[int]bool{300: true}
 		w.open[14].Body = "no record block here"
-		res, err := generate(context.Background(), w.toolDeps(stamp), "todo")
+		res, err := generate(context.Background(), w.toolDeps(stamp()), "todo")
 		if err != nil {
 			t.Fatalf("generate todo: %v", err)
 		}
@@ -112,7 +112,7 @@ func TestTodoOrder(t *testing.T) {
 	t.Run("a blocking cycle terminates and still lists every member once", func(t *testing.T) {
 		w := newWorld()
 		w.open[5].Body = withLinks(457) // 454 waits for 457 and 456, 457 waits for 454
-		res, err := generate(context.Background(), w.toolDeps(stamp), "todo")
+		res, err := generate(context.Background(), w.toolDeps(stamp()), "todo")
 		if err != nil {
 			t.Fatalf("generate todo: %v", err)
 		}

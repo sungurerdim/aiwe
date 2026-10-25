@@ -14,7 +14,7 @@ var errNoUpstream = errors.New("git: fatal: no upstream configured")
 // TestArchive catches an archive that is not newest first or that drops a close reason.
 func TestArchive(t *testing.T) {
 	w := newWorld()
-	res, err := generate(context.Background(), w.toolDeps(stamp), "archive")
+	res, err := generate(context.Background(), w.toolDeps(stamp()), "archive")
 	if err != nil {
 		t.Fatalf("generate archive: %v", err)
 	}
@@ -33,7 +33,7 @@ func TestArchive(t *testing.T) {
 // cut the decision text at 120 characters.
 func TestDecisions(t *testing.T) {
 	w := newWorld()
-	res, err := generate(context.Background(), w.toolDeps(stamp), "decisions")
+	res, err := generate(context.Background(), w.toolDeps(stamp()), "decisions")
 	if err != nil {
 		t.Fatalf("generate decisions: %v", err)
 	}
@@ -80,7 +80,7 @@ func TestFailClosed(t *testing.T) {
 			}
 			var written []string
 			var out, errw bytes.Buffer
-			code := execute(context.Background(), []string{"--write", "all"}, w.toolDeps(stamp),
+			code := execute(context.Background(), []string{"--write", "all"}, w.toolDeps(stamp()),
 				func(r record) error { written = append(written, r.name); return nil }, &out, &errw)
 			if code == 0 {
 				t.Errorf("exit code = 0, want non-zero")
@@ -110,13 +110,13 @@ func TestIdempotent(t *testing.T) {
 		return got
 	}
 	w := newWorld()
-	first := run(w, stamp)
+	first := run(w, stamp())
 	if len(first) != 4 {
 		t.Fatalf("all produced %d records, want 4", len(first))
 	}
 	w.files["STATUS.md"] = first["STATUS.md"]
-	same := run(w, stamp)
-	later := run(w, stamp.Add(26*time.Hour))
+	same := run(w, stamp())
+	later := run(w, stamp().Add(26*time.Hour))
 	for name, text := range first {
 		if same[name] != text {
 			t.Errorf("%s differs between two runs at the same time", name)
@@ -136,7 +136,7 @@ func TestExecute(t *testing.T) {
 		w := newWorld()
 		var written []string
 		var out, errw bytes.Buffer
-		code := execute(context.Background(), []string{"all"}, w.toolDeps(stamp),
+		code := execute(context.Background(), []string{"all"}, w.toolDeps(stamp()),
 			func(r record) error { written = append(written, r.name); return nil }, &out, &errw)
 		if code != 0 || len(written) != 0 || errw.Len() != 0 {
 			t.Errorf("code=%d written=%v stderr=%q, want a silent dry run", code, written, errw.String())
@@ -152,7 +152,7 @@ func TestExecute(t *testing.T) {
 		w := newWorld()
 		var written []string
 		var out, errw bytes.Buffer
-		code := execute(context.Background(), []string{"--write", "all"}, w.toolDeps(stamp),
+		code := execute(context.Background(), []string{"--write", "all"}, w.toolDeps(stamp()),
 			func(r record) error { written = append(written, r.name); return nil }, &out, &errw)
 		if got := strings.Join(written, ","); code != 0 || got != "TODO.md,ARCHIVE.md,DECISIONS.md,STATUS.md" {
 			t.Errorf("code=%d written=%s stderr=%q", code, got, errw.String())
@@ -163,7 +163,7 @@ func TestExecute(t *testing.T) {
 		for _, args := range [][]string{nil, {"nonsense"}, {"todo", "status"}, {"--bogus", "todo"}} {
 			w := newWorld()
 			var out, errw bytes.Buffer
-			code := execute(context.Background(), args, w.toolDeps(stamp),
+			code := execute(context.Background(), args, w.toolDeps(stamp()),
 				func(record) error { t.Errorf("wrote on a usage error"); return nil }, &out, &errw)
 			line := strings.TrimRight(errw.String(), "\n")
 			if code != 2 || strings.Contains(line, "\n") || !strings.HasPrefix(line, "records: ") {
