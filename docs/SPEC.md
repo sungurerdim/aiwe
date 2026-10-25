@@ -1,22 +1,22 @@
 # aiwe — Product Specification
 
-Status: target design, revision 10, 2026-10-19. This file holds product, architecture and contracts only (L1). The
-delivery plan lives in the tracker: one goal issue per milestone, units as its sub-issues (§13). The design rules
+Status: target design, revision 11, 2026-10-25. This file holds product, architecture and contracts only (L1). The
+delivery plan lives in the work store: one goal item per milestone, units as its descendants (§13). The design rules
 live in the registry `docs/standards.md`; §3 mirrors it row for row, and `repo/registry` refuses a difference in id, statement or enforcement (#314 K41). Decisions: §16.
 Facts: §17. Labels: **fact** = traced to §17 · **default** = chosen here; the owner may reverse it. An unmeasured
 value is `unknown` (DR-6). Each fact lives in one place; other places cite it by id (DR-n, STD-n, §n, Sn, Mn, On, Ln,
 Qn, Rn, Dn; `#314 Kn` = item n of #314). Section numbers are stable ids; a missing number is a removed section. Decision order: owner decisions, then the value order (§1.4), then necessity (DR-22).
 ## 1. Purpose, users, problems, value, metrics
 ### 1.1 Purpose
-aiwe turns a goal issue into verified, merged code, using the AI subscriptions and API keys you already have. It runs
+aiwe turns a goal item into verified, merged code, using the AI subscriptions and API keys you already have. It runs
 on Windows, macOS and Linux with zero configuration, through each provider's own CLI or API, never through a proxy.
 Its primary interface is an MCP server that the user's harness session starts. It is a public open-source product.
 
 Pillars, in value order:
 1. **Verified delivery**: small units; only the engine runs checks; an independent auditor judges the done criteria;
    only audited tips merge; every unit is measured (§1.5). This is the differentiator (§17).
-2. **Work tracking**: one issue standard (§8.4, O5); a goal splits into sub-issue units with native dependencies;
-   `aiwe issue` and `aiwe report` work across the user's repositories (O8).
+2. **Work tracking**: one work-item standard (§8.4, O31); a goal splits into unit items in an unlimited tree with `blockedBy` dependencies;
+   `aiwe item` and `aiwe report` work across the user's repositories (O8).
 3. **Source organization**: subscriptions and API keys are sources; each run gets its model from measured data
    (§8.1, O9) with ordered fallback (O3); quota classes and resets are tracked (§7.6); spend comes from the ledger
    with an optional cap; at most one consumer subscription per provider (O7); aiwe holds no credential (DR-19).
@@ -27,9 +27,9 @@ Pillars, in value order:
 |---|---|---|
 | S1 | Extra subscriptions and API keys are not usable in a standard way. | One global source registry (§8.1). |
 | S2 | Cost, time, errors and waste are minimised by hand. | Model choice and routing (§8.1), measured capacity (DR-3), quota reaction (§7.6), metrics (§1.5). |
-| S3 | No standard role or task template. | Role cards and the issue standard ship with the engine (§8.4, §9). |
+| S3 | No standard role or task template. | Role cards and the work-item standard ship with the engine (§8.4, §9). |
 | S4 | The writer approves its own work, checks are skipped, scope is vague. | DR-5, DR-6, DR-7, DR-9. |
-| S5 | Context bloat on long work causes wrong or missing work. | Small units (DR-7), a clean context per run, a per-request context ceiling (§7.4, §10.2), state only in tracker and ledger (DR-20). |
+| S5 | Context bloat on long work causes wrong or missing work. | Small units (DR-7), a clean context per run, a per-request context ceiling (§7.4, §10.2), state only in the work store and ledger (DR-20). |
 | S6 | Agents run broad checks outside their scope; a 5 s check becomes 5 min. | DR-8, §7.8. |
 | S7 | Agents do not work the same way. | One prompt contract, card format and return format (§9). |
 ### 1.4 Value order
@@ -50,20 +50,20 @@ the working branch (L10).
 | M6 | Mechanical ratio (R12) | falling trend | Per workflow step the share of `[M]` and `[J]` runs; `judgement` done entries open; auditor runs per unit; manual lead or owner actions per week (manual close, manual confirm, hand-written trailer, hand-edited record). A judgement entry or a manual action seen a third time gets a mechanism. |
 | M7 | Tokens per green unit | measured | Σ(`tokensIn + tokensOut`) over the runs of units merged in the window ÷ number of those units, with fresh tokens (`tokensIn − tokensCachedIn`) printed beside it. One unknown token count → `unknown` plus the measured lower bound. Regression: median of the last 20 > 1.25 × median of the 20 before → red in the report and `aiwe metrics`, plus an `owner-action` issue. |
 ### 1.6 Glossary
-**Goal**: an issue with native sub-issues, its units. **Unit**: an issue in the standard (§8.4) with a file set and a
-verify; the issue number names it and its **finding key** (the record's `key`) is the identity a unit upsert matches on (R4). **Run**: one role (§9.1) on one unit by one source (§8.1); id = ULID.
+**Work item**: one JSON file of the work store (§8.4); its `id` never changes. **Goal**: an item that groups child items, its units. **Unit**: an item in the standard (§8.4) with a file set and a
+verify; the item id names it and its **finding key** (the item's `key`) is the identity a unit upsert matches on (R4). **Run**: one role (§9.1) on one unit by one source (§8.1); id = ULID.
 **Harness**: a CLI program that runs an agent; an **adapter** drives one harness or API wire format (§10.2).
 **Check**: one mechanical command with a recorded result and a **cache key** (`gates.CheckKey`, §7.8); a **gate** is an ordered list of checks; `aiwe unit check` checks a unit (§8.4). **Evidence**:
 engine-recorded command, exit code, last lines and cache key; agent text is never evidence. **Unattended**: no human waits;
 every gate still runs. **Bridge**: the out-of-repository stand-in `aiwe-wt/` that works units until aiwe self-hosts (DR-23); it ends with #269, and a bridge unit closes with its evidence file (§6.3).
 ## 2. Scope and non-goals
-In scope: onboarding a git repository without setup (DR-4); planning a goal into sub-issue units (§7.2); the unit
-lifecycle to the merge (§7.3); sources, model choice, routing and quota reaction; ledger and metrics; issue tooling
+In scope: onboarding a git repository without setup (DR-4); planning a goal into unit items (§7.2); the unit
+lifecycle to the merge (§7.3); sources, model choice, routing and quota reaction; ledger and metrics; item tooling
 and reports across repositories (O8); an MCP server as the primary interface, with the CLI from
 the same registry, and self-update (O10).
 
 **End of job** for a unit: its commit is on the working branch behind a green batch CI run, and
-the issue is closed `completed` with one of the evidences §6.3 names (L7).
+the item is `done` with one of the evidences §6.3 names (L7).
 
 Non-goals (permanent): a web, desktop or mobile UI, terminal session manager or chat bridge; a proxy or gateway for
 model traffic (DR-19); a learned router whose choice can change without a change in its inputs (O9); storing
@@ -82,11 +82,11 @@ check in gate step `repo`. The table mirrors the registry `docs/standards.md` ro
 | DR-4 | A managed project needs no file, setting or setup step. The product needs nothing installed except git: one binary per OS and architecture (§6.2). A project `gate.json`, if present, wins over the derived gate. | planned #257 |
 | DR-5 | A judging run is separate from the writing run and starts with a clean context; it never shares a run or context with the writer; a different model or source is not required (§8.1 point 5). Its verdict counts only from its own result bound to its RunID. | planned #40 |
 | DR-6 | Absence is not evidence: a skipped step makes the gate `incomplete`. An unknown stack, empty output, missing tool or zero collected tests is `not_measured` or red. Prices, quotas, scores and metrics are measured or `unknown` with a reason (`no_price`, `no_usage_data`, `subscription`), never `0`. | test `gates/runner_test.go` TestRunner |
-| DR-7 | A unit is dispatched only when its issue parses (§8.4) with a verify and a file set. The file set holds at most 5 source files; test, lock, generated files and `go.mod`/`go.sum` do not count (Q25). A behaviour unit has a test item: a `done` entry that runs or names a test of the file set. | planned #330 |
+| DR-7 | A unit is dispatched only when its item validates (§8.4) with a verify and a file set. The file set holds at most 5 source files; test, lock, generated files and `go.mod`/`go.sum` do not count (Q25). A behaviour unit has a test item: a `done` entry that runs or names a test of the file set. | planned #330 |
 | DR-8 | Only the engine runs checks: an agent requests its unit verify through `aiwe verify`, the auditor reads recorded results, and a check runs at most once per cache key (§7.8). | test `gates/cache_test.go` TestCacheServesStoredResult |
 | DR-9 | Every engine diff is `git diff <base>...<tip>` from the run's base commit. It is compared with the declared file set (`scope_mismatch`). A flagged line byte-identical on the base is `pre_existing`. A verify that counts from `HEAD~<n>` or `HEAD^` is refused. | test `engine/coverage_test.go` TestCheckScope |
-| DR-10 | Every run works in its own fresh shallow clone with scratch `HOME` and temp and a secret-free environment. A sandbox adapter records its level. Every engine git call runs with repository-configured programs off. A run whose isolation fails does not start (§5.21, §6.5, §6.7). | test `engine/clone_test.go` TestRunClone |
-| DR-11 | The engine owns what it starts: a unit has at most one open run, and a stop ends the whole process tree. Committed work is collected into a run ref before the clone goes. Temporary data is removed on every exit path within §6.4. Recursive removal runs only in `core/remove.go`, on a directory the engine created (§5.15). | test `core/remove_test.go` TestOwnedRemove |
+| DR-10 | Every run works in its own leased slot: a persistent clone, reset to the base commit at every lease and never created or deleted per run, with scratch `HOME` and temp and a secret-free environment. A sandbox adapter records its level. Every engine git call runs with repository-configured programs off. A run whose isolation fails does not start (§5.21, §6.5, §6.7). | planned: stage isolation |
+| DR-11 | The engine owns what it starts: a unit has at most one open run, and a stop ends the whole process tree. Committed work is collected into a run ref before its slot is reset. Temporary data is removed on every exit path within §6.4. Recursive removal runs only in `core/remove.go`, on a directory the engine created (§5.15). | test `core/remove_test.go` TestOwnedRemove |
 | DR-12 | Tests are never weakened, skipped or mocked away. Base tests run against the new code, so behaviour loss is declared or red. A fixed error class gets the earliest gate that would have caught it, in the same change. | judgement: auditor |
 | DR-13 | An agent commits only on its run branch; push, merge and tracker writes belong to the engine. | test `adapters/env_test.go` TestRunReadsNoTrackerToken (proves only that a run reads no tracker token; commit, push and merge limits: planned #295) |
 | DR-14 | Only audited tips merge: queued unit commits ship as one batch pull request, tested once by CI; on green, `main` fast-forwards to the tested tip only while every unit commit still equals its own `AuditedTip` (else `unaudited_commits`), each unit commit keeping its own `Closes` trailer and `Run-Id: <ULID>`. A red batch is split in halves (§7.3 step 11); a red `main` is undone by a revert pull request, never a direct push. | test `engine/integrate_test.go` TestIntegrateMergesAuditedGreenTipWithTrailers |
@@ -95,7 +95,7 @@ check in gate step `repo`. The table mirrors the registry `docs/standards.md` ro
 | DR-17 | Source passes the repository's static rules. Module edges go only through root packages declared in `core/modules.go`. No source holds a machine-specific path, a product name outside its one constant, an ignored error or dead code. | check `repo/source-rules` |
 | DR-18 | All text I/O is UTF-8, byte-exact end to end and independent of the locale; machine-parsed markers are fixed English keys; this repository's source, docs and commit messages are in English. | test `core/text_test.go` TestText |
 | DR-19 | aiwe holds no credential. It reaches a provider only through the provider's own CLI login made by the user, or through an API key read from an environment variable. It passes a key only to the child that needs it. It never stores, caches, prompts for, proxies or alters a credential or subscription traffic (§6.5, §10). | planned #206 |
-| DR-20 | The tracker holds goals, units and owner actions as typed records (§8.4), never free text. Every piece of work is an issue in that standard before it starts. Only built-in tracker elements are used. Intake filters text before it reaches a prompt (§8.4). An issue closes mechanically (L7). | planned #27 |
+| DR-20 | The work store holds goals, units and owner actions as typed items, one flat JSON file each in git (§8.4), never free text, and only `aiwe item` writes it. Every piece of work is an item in that standard before it starts. GitHub is intake and view only. Intake filters text before it reaches a prompt (§8.4). An item closes mechanically (L7). | planned: stage work store |
 | DR-21 | Shipped code links only the Go standard library, `golang.org/x/*` and the official MCP Go SDK, plus the modules these require; any other module needs an owner decision. | check `repo/deps` |
 | DR-22 | Every element (module, rule, workflow, job, step, document section, code path) exists only if it is necessary; each CI and release step states its reason in a `# why:` comment. | check `repo/ci-shape` |
 | DR-23 | aiwe is built with aiwe: every standard it applies to managed projects applies to its own development. Before the self-hosting point (§13, M-Skeleton) the lead applies the standard under L5. After it, a unit worked outside aiwe is a defect. | planned #49 |
@@ -109,7 +109,7 @@ The external standards aiwe builds on; each row below is the row of the one regi
 | STD-2 | Conduct follows Contributor Covenant 3.0; conduct reports go to the maintainer (§17). | contributor-covenant.org (§17) | planned #379 |
 | STD-3 | Commit messages follow Conventional Commits, and the header is ≤ 50 characters (§12.3). | conventionalcommits.org | check `commit-msg` |
 | STD-4 | The release notes use the Keep a Changelog layout (Q15, §12.3). | keepachangelog.com (Q15) | planned: release step `svu` notes (§12.3) |
-| STD-5 | The issue body is one fenced JSON object, RFC 8259, parsed by `encoding/json` (§8.4). | ietf.org (RFC 8259) | planned #330 |
+| STD-5 | A work item is one JSON file, RFC 8259, parsed by `encoding/json` (§8.4). | ietf.org (RFC 8259) | planned #330 |
 | STD-6 | Every check result is stored as SARIF 2.1.0, an OASIS Standard (§7.9). | OASIS Standard, verified 2026-10-18 (§17) | planned #425 |
 | STD-7 | KISS, YAGNI, DRY (rule of three) and SSOT: the smallest design that works, nothing speculative, no abstraction before three uses, one home per fact (§4, DR-17, DR-22). | §4, DR-17, DR-22 | judgement: auditor |
 | STD-8 | Separation of concerns and SOLID: one reason to change per unit, and a dependency on the port, never on a concrete adapter (§4, §5.1). | §4, §5.1 | judgement: auditor |
@@ -143,7 +143,7 @@ The external standards aiwe builds on; each row below is the row of the one regi
 | STD-36 | Timestamps are RFC 3339 in UTC, as the ledger records them (§8.5). | §8.5 | test `ledger/record_test.go` TestAppendReadRun |
 | STD-37 | All text I/O is UTF-8 (RFC 3629), byte-exact and independent of the locale (DR-18, §5.14). | DR-18 | test `core/text_test.go` TestText |
 | STD-38 | Roots follow the XDG Base Directory specification, with the per-OS fallbacks of §6.4. | §6.4 | test `core/platform_test.go` TestPlatform |
-| STD-39 | Issue and document text follows CommonMark/GFM (§8.4). | §8.4 | judgement: doc-writer |
+| STD-39 | Item and document text follows CommonMark/GFM (§8.4). | §8.4 | judgement: doc-writer |
 | STD-40 | SemVer names the release versions (§12.3, L9). | §12.3, L9 | planned: release step `svu next` (§12.3) |
 | STD-41 | Metrics follow the DORA mapping only: M3 is the change fail rate and M5 is the lead time (§1.5). | §1.5 | planned #45 |
 | STD-42 | Owner-action text and reports follow ASD-STE100 at 80 % and ISO 24495-1 plain language. | reports, §9.3 | judgement: doc-writer |
@@ -198,7 +198,7 @@ is opened once without blocking and must be a regular file of at most 64 KiB, el
 ### 5.13 Test structure
 - `x.go` has its behaviour test in `x_test.go`, or the covering test names it. Tests are table-driven; each row names the failure it catches. Every check has a red case on a known-bad input.
 - One contract suite per port, run against every implementation and fake (`providertest.Run`, `trackertest.Run`); the provider suite checks recorded harness flags, lean runs, no credential leaving env, DR-15, DR-19, quota classes (§7.6).
-- Parsers of untrusted text (issue body, intake, `gate.json`, sources, catalogue) have a `Fuzz` test. Fixtures use realistic values, `t.TempDir()` and `core.CreateOwned`. Live calls sit behind the build tag `smoke`.
+- Parsers of untrusted text (item file, intake, `gate.json`, sources, catalogue) have a `Fuzz` test. Fixtures use realistic values, `t.TempDir()` and `core.CreateOwned`. Live calls sit behind the build tag `smoke`.
 - Source file ≤ 400 lines; test file ≤ 500; non-test function ≤ 60 lines (Q23) and cognitive complexity ≤ 12 (Q12); a root package holds its public surface only. Enforced: `repo/size`; `gocognit`.
 - The test step's limit is at least 2 × the longest recorded package, never divided by workers; a package over half the limit turns the gate red. `-p` comes from DR-3.
 ### 5.14 Text and locale
@@ -206,7 +206,7 @@ is opened once without blocking and must be a regular file of at most 64 KiB, el
 file. Case mapping only on ASCII markers; byte comparison and order; ISO numbers and dates; no console code page is
 read or set; Windows argv lives only in `core/process_windows.go` (§17).
 ### 5.15 Owned removal
-`core.Owner.CreateOwned(ctx, root, owner)` makes a directory and its `.owner` marker under `TempRoot` or `CacheRoot`, the only `OwnedRoot` values; only `CreateOwned` makes an `OwnedDir`. `RemoveOwned` refuses (`not_owned`) unless all hold (L6): the real path is under the temp or cache root; no link leaves that root; the marker is present; the walk never descends into a mount point. The state root and user directories stay outside (Q14). A temp or cache root that is or contains the home, the state root, an onboarded local repository or a file-system root, is a link or junction, or is not owner-only is `root_unsafe`, as is any root another user can read, write or owns; a bare clone in the cache root is aiwe's own data, not protected. The fix never names a directory for delete. A state root is `root_unsafe` (L18) when it is a file-system root, is or contains the home or an onboarded local repository, or lies inside an onboarded local repository's work tree.
+`core.Owner.CreateOwned(ctx, root, owner)` makes a directory and its `.owner` marker under `TempRoot` or `CacheRoot`, the only `OwnedRoot` values; only `CreateOwned` makes an `OwnedDir`. `RemoveOwned` refuses (`not_owned`) unless all hold (L6): the real path is under the temp or cache root; no link leaves that root; the marker is present; the walk never descends into a mount point. The state root and user directories stay outside (Q14). A temp or cache root that is or contains the home, the state root, an onboarded local repository or a file-system root, is a link or junction, or is not owner-only is `root_unsafe`, as is any root another user can read, write or owns; a bare clone or a slot in the cache root is aiwe's own data, not protected. The fix never names a directory for delete. A state root is `root_unsafe` (L18) when it is a file-system root, is or contains the home or an onboarded local repository, or lies inside an onboarded local repository's work tree.
 ### 5.17 Static analysis
 `go vet` alone caught none of five tested classes (§17). Gate step `lint` runs golangci-lint from `tools/go.mod` with
 `exhaustive`, `errcheck`, `errorlint`, `contextcheck`, `containedctx`,
@@ -227,8 +227,8 @@ refuses an argument it cannot quote, because `cmd.exe` does not follow `CommandL
 ### 5.21 Git calls
 Every git call of the engine and `repocheck` goes through `core.Git` (DR-10) with `-c core.fsmonitor=false
 -c core.hooksPath=<empty owned dir> -c protocol.ext.allow=never -c submodule.recurse=false`, and `--no-ext-diff
---no-textconv` on `diff`, `log` and `show` (§17). The `file` protocol serves only the engine's own clone. A hook or
-`diff.external` written into a clone's `.git/config` cannot make the engine run it (test `core/git_test.go`).
+--no-textconv` on `diff`, `log` and `show` (§17). The `file` protocol serves only the engine's own slots. A hook or
+`diff.external` written into a slot's `.git/config` cannot make the engine run it (test `core/git_test.go`).
 ## 6. Architecture
 ### 6.1 Modules and packages
 The table of packages, responsibilities and allowed imports is `core.Modules()` in `core/modules.go` (DR-17); `repo/boundaries` compares it with `go list -deps -json ./...`. Decisions kept here: private packages sit under `internal/<m>/internal/`; `internal/repocheck`, `internal/e2e` and `internal/cmd/repocheck` are never shipped; `cmd/aiwe` imports root packages only, except `repocheck`.
@@ -246,41 +246,46 @@ version that passes the git tests → `git_too_old`; both exit 1 with the next a
 no patch apply (§17). The tracker needs no extra program: gh is optional (§10.1, L3). Harnesses are optional sources;
 development tools (§12.2) are never user prerequisites. The MCP layer is the official Go SDK (§17, DR-21).
 ### 6.3 MCP and CLI
-- The primary interface is an MCP server (`aiwe mcp`, stdio only) that the user's harness session starts; the session's lead agent organizes work through its tools: plan, work start, stop and status, models, sources, issue, report (O10). One registry feeds MCP and CLI (DR-16). The skeleton is driven through the CLI (L3). No host harness is assumed (O13).
+- The primary interface is an MCP server (`aiwe mcp`, stdio only) that the user's harness session starts; the session's lead agent organizes work through its tools: plan, work start, stop and status, models, sources, item, report (O10). One registry feeds MCP and CLI (DR-16). The skeleton is driven through the CLI (L3). No host harness is assumed (O13).
 - MCP server start = session start = the model assignment refresh point (§8.1).
 - Long work runs in a detached **work session**: an engine process that outlives the harness session. Starting it returns a work session id. MCP tools and `aiwe runs list` query it. `aiwe runs stop --run <id>` stops one run's tree, records `stopped_by_owner`, requeues the unit and charges nothing.
 - Self-update (L14), from `v0.1.0`, only for a binary installed from a GitHub Release. The binary decides its install source from its own path, matched against per-OS data rows of package-manager directories (Scoop, WinGet, Homebrew). A package-manager install prints the manager's update command instead. A Release install updates at MCP start, at most once a day, with one checker at a time (a lease, §6.6). The checker downloads the latest release and verifies the Ed25519 signature `checksums.txt.sig` of `checksums.txt` with the public key embedded in the binary (`crypto/ed25519`), checks the archive digest and switches on the next start. Before `v0.1.0`: build from source.
 - `aiwe version` prints the injected version without the `v` prefix (§17), else `unknown`. A command that targets a repository without a stored gate runs onboarding first (§7.1).
-- **Close evidence** (the one place; §2, R5, §7.3, §8.4 and the bridge text cite it): a closed unit has one of three evidences: a `Closes` commit on the default branch; a sync report path (`aiwe issue sync`, §7.3); a bridge evidence file, until #269 removes the bridge. A manual close is only `not_planned` or `duplicate` with `superseded_by`. The engine closes a goal after its last sub-issue closes, with no trailer. `aiwe status` accepts exactly these (planned #426).
-- `aiwe status` is derived, never written (R8): it prints from the tracker, the ledger and git — open goals with their sub-issue summary, running, ready, stale and blocked units, closing anomalies, the unshipped batch and open owner actions. It classifies every open issue as `shipped-open` (a `Closes` commit on the default branch, still open), `batch-pending` or `no-work`, and every closed issue without a close evidence as `closed-no-evidence`; it runs after each ship and at session start, and `shipped-open` and `closed-no-evidence` are red (R5, R8). No hand-kept status file exists. The handoff for another harness is `AGENTS.md` plus `aiwe status`.
-- MCP surface: `aiwe mcp snippet` prints a config entry that calls the binary by name; `instructions` (≤ 40 lines, with the resolved roots), `prompts` (`plan-goal`, `open-unit`, `audit-unit`), `resources` (`issue-template`, `roles/<id>`, `projects/<repo-id>/gate`), `tools` (every non-terminal command).
+- **Close evidence** (the one place; §2, R5, §7.3, §8.4 and the bridge text cite it): a `done` unit has one of three evidences: a `Closes` commit on the default branch; a sync report path (`aiwe item sync`, §7.3); a bridge evidence file, until #269 removes the bridge. A manual close is only `cancel` with a reason, and `supersededBy` for a duplicate. The engine finishes a goal or epic after its last child finishes, with no trailer. `aiwe status` accepts exactly these (planned #426).
+- `aiwe status` is derived, never written (R8): it prints from the work store, the ledger and git — open goals with their child summary, running, ready, stale and blocked units, closing anomalies, the unshipped batch and open owner actions. It classifies every open item as `shipped-open` (a `Closes` commit on the default branch, still open), `batch-pending` or `no-work`, and every `done` item without a close evidence as `closed-no-evidence`; it runs after each ship and at session start, and `shipped-open` and `closed-no-evidence` are red (R5, R8). No hand-kept status file exists. The handoff for another harness is `AGENTS.md` plus `aiwe status`.
+- MCP surface: `aiwe mcp snippet` prints a config entry that calls the binary by name; `instructions` (≤ 40 lines, with the resolved roots), `prompts` (`plan-goal`, `open-unit`, `audit-unit`), `resources` (`item-template`, `roles/<id>`, `projects/<repo-id>/gate`), `tools` (every non-terminal command).
 ### 6.4 Disk layout
 `core/platform.go` resolves three roots at run time; first hit wins (DR-3).
 
 | Root | Holds | Windows | macOS | Linux and other POSIX | Override |
 |---|---|---|---|---|---|
 | state | `sources.json`, `sources.state.json`, `models.cache.json`, `assignments.json`, `ledger.jsonl` and rotations, `projects/<repo-id>/`, lease files (§6.6) | `%LOCALAPPDATA%\aiwe\state` | `~/Library/Application Support/aiwe` | `$XDG_STATE_HOME/aiwe`, else `~/.local/state/aiwe` | `AIWE_HOME` |
-| cache | bare clones of repositories onboarded by URL | `%LOCALAPPDATA%\aiwe\cache` | `~/Library/Caches/aiwe` | `$XDG_CACHE_HOME/aiwe`, else `~/.cache/aiwe` | `AIWE_CACHE` |
-| temp | run clones, scratch, child result files | `%TEMP%\aiwe` | `$TMPDIR/aiwe` | `$TMPDIR/aiwe`, else `/tmp/aiwe` | `AIWE_TMP` |
+| cache | bare clones of repositories onboarded by URL; leased slots (§6.5) | `%LOCALAPPDATA%\aiwe\cache` | `~/Library/Caches/aiwe` | `$XDG_CACHE_HOME/aiwe`, else `~/.cache/aiwe` | `AIWE_CACHE` |
+| temp | run scratch, child result files | `%TEMP%\aiwe` | `$TMPDIR/aiwe` | `$TMPDIR/aiwe`, else `/tmp/aiwe` | `AIWE_TMP` |
 
 - Env names derive from the product constant. `repo-id` = normalised remote `host/owner/repo`, never a local path. Stored paths are relative and `/`-separated.
-- Ceilings (default), enforced by the sweep: state ≤ 64 MB and ≤ 1 000 files; cache ≤ 2 GB and ≤ 2 000 files; temp: 0 directories without a live owner. Free disk before a clone ≥ 2 × the last measured clone size, else `no_disk`. Cleanup: ledger rotation, then bare clones least recently used first; still over → `footprint_exceeded`.
+- Ceilings (default), enforced by the sweep: state ≤ 64 MB and ≤ 1 000 files; cache ≤ 2 GB and ≤ 2 000 files for bare clones; slots: N × (repository + dependencies), N from §6.6; temp: 0 directories without a live owner. Free disk before a slot is created ≥ 2 × the last measured slot size, else `no_disk`. Cleanup: ledger rotation, then idle slots, then bare clones least recently used first; still over → `footprint_exceeded`.
 - OS rules: short temp names (`<temp>/r/<pid>-<time>`) and git's long-path option on Windows; file sets compare exact case (paths differing only by case → `invalid`); clones set `core.autocrlf=false`; removal retries 5 times, 200 ms apart (default), then `residue_locked` for the next sweep.
 ### 6.5 Run isolation
-Serves DR-10 and DR-11.
+Serves DR-10 and DR-11 (O33).
 - **Canonical repository**: the onboarded local path, or a bare clone in the cache root; a fetch writes only remote-tracking refs and objects, never the user's checkout.
-- **Clone**: `git clone --depth 1 file://<canonical>` into `core.CreateOwned` at the base commit; no worktree. `TEMP`, `TMP`, `TMPDIR` and `HOME` point into the run's scratch directory.
-- **Restore**: the stack profile's restore command (§8.2) runs inside the clone with the package manager's own user-level cache; no junction, hardlink or shared dependency directory.
-- **Environment**: the parent environment minus secret-shaped variables (every `credentialEnv`, tracker tokens, names containing `TOKEN`, `SECRET`, `KEY` or `PASSWORD`, names ending `_PAT`, `_PASS`, `_PASSWD` or `_DSN`, the last because a DSN always carries its key as the user part of its value, `NPM_CONFIG__AUTH`, `GOOGLE_APPLICATION_CREDENTIALS`, and the value of a name ending `_URL`, `_URI` or `PROXY`: user info with a password, after a `://` scheme or at the front of any other value (so `svc:/pw@host` drops), a `:` with an `@` after it, or a user part without a password that starts with a known token prefix (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`, `github_pat_`, `glpat-`, `glft-`, `xoxb-`, `xoxp-`, `sk-`, `npm_`, `AKIA`). A user part without a password and without such a prefix is a name, not a credential, so `https://zeynep@host/x.git` and the scp-style `git@host:x.git` reach the child; case-blind) and minus the variables that reach a credential or a program outside the run (`reachNames` in `core/env.go`: git config parameters, askpass, SSH agent and exec path variables). The adapter adds back only its own source's key. The harness starts with user-level rules, memory, hooks and plugins off through its documented flag or config-dir variable, which keeps its login. aiwe never copies or links a login file. `GIT_CONFIG_NOSYSTEM=1`, an empty env-set `credential.helper`, `GIT_TERMINAL_PROMPT=0` and `GIT_CONFIG_GLOBAL` at the null device cut git from user settings and helpers (§17). Every check process, the restore command included, gets the same environment.
-- **Collect**: fetch the run branch into the canonical repository as `refs/aiwe/runs/<run-id>`, record residue (uncommitted paths, diff stat), remove the clone; path lists are read from git output, never passed as argv.
-- **Sweeper**: at start and after each run, collect dead runs' clones, then remove temp dirs whose owner process died (§5.15).
-- Measured (§17): shallow `file://` clone 1.27–2.42 s and 7.9 MB; removal 0.35–0.74 s. Rejected: worktrees (shared refs, config and hooks); `--shared` (breaks when the source prunes).
+- **Slot**: a persistent clone of the canonical repository, `<cache>/slots/<repo-id>/s<k>`, made once by `core.CreateOwned` with `core.autocrlf=false`. `aiwe slot lease --repo R --sha S` takes a free slot; with none free and the pool below N it creates one; at N it waits and prints its queue position. N is the load-derived bound of `core/capacity.go` (DR-3). The lease file `<state>/projects/<repo-id>/slots/s<k>.lease` holds the holder's pid, session and time. A run works only in its slot; `TEMP`, `TMP`, `TMPDIR` and `HOME` point into the run's scratch directory under the temp root; `AIWE_SLOT=k` goes to the child, and ports, test database names and build caches derive from k (port base + k, `test_k`).
+- **Reset** at every lease: `git fetch` from the canonical repository · `git checkout --detach <base>` · `git reset --hard` · `git clean -ffdx` keeping only the stack profile's `KeepDirs` (§8.2) · the profile's restore command, only when the lock-file digest changed. **Verify**: `git status --porcelain --ignored` may show only `KeepDirs` lines; any other line marks the slot `dirty`, and it is removed and cloned again. A lease never hands out a slot that is not clean.
+- **Restore**: the restore command runs inside the slot with the package manager's own user-level cache; no junction, hardlink or dependency directory shared between slots.
+- **Environment**: the parent environment minus secret-shaped variables (every `credentialEnv`, tracker tokens, names containing `TOKEN`, `SECRET`, `KEY` or `PASSWORD`, names ending `_PAT`, `_PASS`, `_PASSWD` or `_DSN`, the last because a DSN always carries its key as the user part of its value, `NPM_CONFIG__AUTH`, `GOOGLE_APPLICATION_CREDENTIALS`, and the value of a name ending `_URL`, `_URI` or `PROXY`: user info with a password, after a `://` scheme or at the front of any other value (so `svc:/pw@host` drops), a `:` with an `@` after it, or a user part without a password that starts with a known token prefix (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`, `github_pat_`, `glpat-`, `glft-`, `xoxb-`, `xoxp-`, `sk-`, `npm_`, `AKIA`). A user part without a password and without such a prefix is a name, not a credential, so `https://zeynep@host/x.git` and the scp-style `git@host:x.git` reach the child; case-blind) and minus the variables that reach a credential or a program outside the run (`reachNames` in `core/env.go`: git config parameters, askpass, SSH agent and exec path variables). The adapter adds back only its own source's key. The harness starts with user-level rules, memory, hooks and plugins off through its documented flag or config-dir variable, which keeps its login. aiwe never copies or links a login file. `GIT_CONFIG_NOSYSTEM=1`, an empty env-set `credential.helper`, `GIT_TERMINAL_PROMPT=0` and `GIT_CONFIG_GLOBAL` at the null device cut git from user settings and helpers (§17). Every check process, the restore command included, gets the same environment. The environment, not the directory, carries this isolation, so a slot gets it unchanged.
+- **Collect**: fetch the run branch into the canonical repository as `refs/aiwe/runs/<run-id>`, record residue (uncommitted paths, diff stat), release the lease; the slot stays and the next lease resets it. Path lists are read from git output, never passed as argv.
+- **Landing**: the canonical branch has one writer, the integration queue of §7.3 step 11, which takes audited run refs one at a time, rebases or cherry-picks each onto the batch tip and runs the fast gate. No agent and no interactive session writes the canonical working tree: a session leases a slot or only reads. This ends `index.lock` collisions and foreign files in a commit as a class.
+- **Sweeper**: at start and after each run, reap the leases of dead holders (the slot is reset and freed), then remove temp directories whose owner process died (§5.15); remove a slot unused for 14 days (default). A slot goes nowhere else.
+- **Temporary data** (O35): create nothing where possible, in this order. (1) No file: data moves by pipe, stdin or memory. (2) Otherwise an owned directory under one root (`aiwe tmp new --purpose X`), owned by process and session and removed when the process exits. (3) The sweeper (`aiwe sweep`) removes a dead owner's directory. (4) The ceiling of §6.4 turns an overrun red. (5) The repository gate, at pre-commit and session end, reports a new file that is neither tracked nor ignored, and a `.gitignore` pattern for `tmp`, `scratch` or the like needs a stated reason. A hook rejects writing a repository directory or file named `tmp`, `temp`, `scratch` or `_tmp_*` and names `aiwe tmp new`; a subagent that returns with an untracked file it created is refused.
+- **Worktrees** (O34): `git worktree` is not used. A harness hook rejects `git worktree add` and a subagent call with worktree isolation and names `aiwe slot lease`; the ban stands on the hook, not on text. Reason: worktrees share refs, config and hooks and gave no speed gain (§17). Also rejected: `--shared` clones (they break when the source prunes) and file locks in place of a separate tree (§17).
+- Measured: §17 (isolation, 2026-10-25). Unmeasured (`unknown`): the incremental restore after a lock-file change, a Python dependency repository, a content-addressed package store shared between slots, a cold cache; in the worst case a lease costs what a fresh clone costs.
 ### 6.6 Concurrent sessions (O11)
-5 to 10 or more sessions work at once on the same or different projects without conflict, and with no daemon.
+5 to 10 or more sessions work at once on the same or different projects without conflict, and with no daemon. A multi-agent team is assumed to work around the clock (O36): there is no day or night mode, and one method applies at all times.
 - **Per project**: gate, stack, unit queue, the one work session, metrics and state under `<state>/projects/<repo-id>/`. `models.json` there holds optional pins and exclusions for this project, in the shape of `overrides` (§8.1). An MCP session binds to the project of its working directory and may target another by parameter.
 - **Machine-wide**: sources and their quotas, the catalogue and the model assignment, CPU capacity.
-- **Admission**: there is no fixed session run cap. Concurrent runs = Σ of the source ceilings, each ≤ its `maxConcurrent` (an owner value per source, default 10), over the ready units with disjoint file sets; a new run starts only on the load verdict `start` (`start`, `wait` or `stop`, from `core.LoadSample.Verdict` in `core/capacity.go`; test `core/capacity_load_test.go` TestLoadSampleVerdictThresholds). Checks, builds and runtime processes take tokens from the check executor's pool (#314 K18: pool = measured free cores, and the granted tokens set the worker count); an API loop run takes no token; a full gate takes the whole pool.
-- **Coordination**: the project lock `work.lock` allows one work session per project; a second MCP session attaches to it; units are claimed atomically on the remote, which prevents double work across machines; per-source run slots and CPU admission slots are lease files in the state root, released on exit and reclaimed from dead owners; ledger appends run under a lock; `assignments.json` is written atomically; one refresher at a time reads catalogue and discovery.
+- **Admission**: there is no fixed session run cap. Concurrent runs = Σ of the source ceilings, each ≤ its `maxConcurrent` (an owner value per source, default 10), over the ready units with disjoint file sets, each with a free slot (§6.5); a new run starts only on the load verdict `start` (`start`, `wait` or `stop`, from `core.LoadSample.Verdict` in `core/capacity.go`; test `core/capacity_load_test.go` TestLoadSampleVerdictThresholds). Checks, builds and runtime processes take tokens from the check executor's pool (#314 K18: pool = measured free cores, and the granted tokens set the worker count); an API loop run takes no token; a full gate takes the whole pool.
+- **Coordination**: the project lock `work.lock` allows one work session per project; a second MCP session attaches to it; units are claimed atomically on the remote, which prevents double work across machines; workspace slots (§6.5), per-source run permits and CPU admission permits are leased, each lease a file in the state root, released on exit and reclaimed from dead holders (the sweeper resets and frees a dead holder's slot); ledger appends run under a lock; `assignments.json` is written atomically; one refresher at a time reads catalogue and discovery.
+- **Scope lease** (O33): an item that becomes `active` leases its `scope.in` paths; a second item whose `scope.in` intersects a leased path does not start and joins the queue. The gate runs in aiwe at item start, so it is the same on every OS and harness. Its purpose is to prevent merge conflicts, not to lock files: no OS-neutral file lock stops another process's write (§17).
 ### 6.7 Sandbox adapter
 `Sandbox{Level(); Wrap(ctx, ChildSpec)}` with three levels (Q19): `env-scrub` (only §6.5; the agent runs with the
 user's rights) · `harness-sandbox` (the harness's own documented sandbox, switched on by the adapter) · `os-sandbox`
@@ -295,36 +300,36 @@ can read and change what the user can; README and SECURITY say so (§12.1).
 2. `[M]` A project `gate.json` → use it (DR-4) and go to step 5.
 3. `[M]` Detect stacks (§8.2): `stack_detected`, `multi_stack` (§15), `unknown_stack` (§7.7) or `detect_error`.
 4. `[M]` Derive gate steps whose tool exists and whose config is present.
-5. `[M]` Prove the gate on the base commit in a clean clone: each step `green`, `red_at_base` (stored `known_red`,
+5. `[M]` Prove the gate on the base commit in a leased slot reset to the base commit: each step `green`, `red_at_base` (stored `known_red`,
    reported, not blocking) or `not_measured`, with a measured duration.
 6. `[M]` Store gate and proof under `projects/<repo-id>/` with the input hash; an unchanged rerun is `no_change`.
-### 7.2 Planning — `aiwe plan --repo R --goal <issue>`, or the user's own session
-Both paths use the `issue-template` and the §8.4 record (R2). **Architect path**: `[J]` an architect run returns unit
+### 7.2 Planning — `aiwe plan --repo R --goal <id>`, or the user's own session
+Both paths use the `item-template` and the §8.4 record (R2). **Architect path**: `[J]` an architect run returns unit
 records · `[M]` each record is validated; a failure returns once · `[J]` an auditor run (DR-5) audits the split
 against the goal's `problem` and `done` entries and the file-set overlaps · `[M]` a second failure stops with
-`plan_invalid` and an `owner-action` issue · `[M]` valid records become sub-issues with native blocked-by links (L8);
+`plan_invalid` and an `owner-action` item · `[M]` valid records become child items with `blockedBy` links (L8);
 an unchanged rerun is `no_change`. **Session path**: the user's session writes each unit as a record and runs
-`aiwe unit check`; the tracker write waits for `aiwe issue` (#264; the bridge `issue.py` until then, #314 K43). Intake reads the record again.
-### 7.3 Unit lifecycle — `aiwe work --repo R [--unit N | --goal G]`, skeleton path (M-Skeleton)
+`aiwe unit check`; the store write waits for `aiwe item` (#264; the bridge `issue.py` until then, #314 K43). Intake reads the record again.
+### 7.3 Unit lifecycle — `aiwe work --repo R [--unit ID | --goal ID]`, skeleton path (M-Skeleton)
 | Step | Kind | What happens |
 |---|---|---|
-| 1 intake | M | Read the issue through the tracker port and the intake filter (DR-20, R2); read the record (§8.4) and run the intake gates (R3). Skip `owner-action` and blocked issues. |
-| 2 claim | M | One open run per unit: a local lock in the skeleton, an atomic remote ref `refs/aiwe/claim/<issue>` later (§6.6). The base commit is the head of the remote working branch at claim. Units with intersecting file sets never run together. |
-| 3 isolate | M | Make the run clone (§6.5); failure → `isolation_failed`. |
+| 1 intake | M | Read the item through the tracker port (§10.1); read the record (§8.4) and run the intake gates (R3). Skip `owner-action` and blocked items. |
+| 2 claim | M | One open run per unit: a local lock in the skeleton, an atomic remote ref `refs/aiwe/claim/<id>` later (§6.6). The base commit is the head of the remote working branch at claim. Units with intersecting file sets never run together (scope lease, §6.6). |
+| 3 isolate | M | Lease and reset a slot (§6.5); failure → `isolation_failed`. |
 | 4 route | M | Resolve roles (§9.1); take each role's first available entry of the session assignment (§8.1). |
 | 5 write | J | A behaviour unit's test is written at admission by the test-author (R6); the engine records the red proof on the test commit over the base. A base that moves before the run repeats the red proof and renews the tests when it fails to hold. Then the engineer or doc-writer writes the change on the run branch, with the role prompt (§9.2). |
 | 6 verify | M | The engine runs the unit verify once per cache key when the agent asks through `aiwe verify` and returns red output to it. |
-| 7 collect | M | Run branch to a run ref; residue recorded; clone removed. |
+| 7 collect | M | Run branch to a run ref; residue recorded; lease released. |
 | 8 scope check | M | `<base>...<tip>` against the file set (DR-9). |
 | 9 audit | J | Every unit gets an auditor in a separate run with a clean context (DR-5); it compares the done criteria with the diff using engine evidence only. The #314 K2 residue (surviving mutants, D12/D13 flags, judgement done entries, any not_measured part of the set) widens that evidence and never decides whether the audit runs. Every `path:line` and identifier a RED verdict cites must resolve on the tip, else `unverified_finding` and a new auditor run. |
 | 10 fix loop | J | Returned or red → an engineer fix round, at most 2 (§7.4), then `quarantined`. **Fix delta**: the round resumes the run's recorded conversation while it is eligible (§10.3); else a fresh run whose task is the `FIX` section only: every failing item of the red record (#314 K13), the diff stat of `<base>...<tip>`, the RED findings with `path:line` and the previous return (≤ 12 lines); the card and the stable prompt prefix stay identical, so the prefix cache hits. A second red moves the next run up the assignment (§8.1 point 9). |
-| 11 integrate | M | One batch in flight per project: a batch pull request starts when the queue is empty, a goal is done, the oldest queued commit is older than 6 h, or at once for a critical fix (#314 K10). Push the run branch; queued unit commits ship as one batch pull request; wait for its CI (red → the batch is split in halves, a fix round, step 10); fast-forward `main` to the tested tip only while every unit commit still equals its own `AuditedTip` (DR-14), each unit commit keeping its own `Closes` trailer; a unit removed by the split stays open and returns as a fix round; a second refusal because `main` moved → `push_rejected`. Title: `<type>(<scope>): ` of the first non-test commit, then the issue title with a lower-case first letter; the whole title is cut to 50 characters. Message per §12.3, written by the engine (L7, R5). A breaking marker waits for the owner (§12.3). |
-| 12 main | M | No `main` push starts a run (§12.2); the green batch pull request is the merge evidence and `main` carries the tested tip. A red found on `main` after a batch merge → a revert pull request, merged once its CI is green; the unit issue reopens and requeues. Red revert CI → `revert_red`; no run in time → `ci_not_observed`. A goal is closed by the engine after its last sub-issue closes (§6.3). A milestone whose issues are all closed is closed. |
+| 11 integrate | M | One batch in flight per project: a batch pull request starts when the queue is empty, a goal is done, the oldest queued commit is older than 6 h, or at once for a critical fix (#314 K10). Push the run branch; queued unit commits ship as one batch pull request; wait for its CI (red → the batch is split in halves, a fix round, step 10); fast-forward `main` to the tested tip only while every unit commit still equals its own `AuditedTip` (DR-14), each unit commit keeping its own `Closes` trailer; a unit removed by the split stays open and returns as a fix round; a second refusal because `main` moved → `push_rejected`. Title: `<type>(<scope>): ` of the first non-test commit, then the item title with a lower-case first letter; the whole title is cut to 50 characters. Message per §12.3, written by the engine (L7, R5). A breaking marker waits for the owner (§12.3). |
+| 12 main | M | No `main` push starts a run (§12.2); the green batch pull request is the merge evidence and `main` carries the tested tip. A red found on `main` after a batch merge → a revert pull request, merged once its CI is green; the unit item returns to `open` and requeues. Red revert CI → `revert_red`; no run in time → `ci_not_observed`. A goal or epic is finished by the engine after its last child finishes (§6.3). |
 | 13 closeout | M | Append run and check records (§8.5); upsert units by finding key (R4); delete the claim ref and the remote run branch. |
 
-After each gate run, `aiwe issue sync` upserts units by finding key (R4): finding key red and no unit → create; red and a unit open → update its items; green → close `completed` with the report path (a close evidence, §6.3); a changed rule revision → the unit is `stale`, not dispatched, until the rule's check has run again. A conformance unit's parent is the milestone goal of its rule's registry row and its urgency comes from that milestone; a unit whose parent goal is closed is not dispatched; an issue cites a rule and never copies its text (R10). Keep each goal under the 100 sub-issue cap by one unit per finding-key cluster (rule × directory); above it, area goals. A new plan or an audit matches the open units of older goals by finding key mechanically: still wanted → move under the goal; green → close with evidence; no longer wanted → close not_planned with superseded_by; the unmatched rest goes to one bounded agent run (R4).
+After each gate run, `aiwe item sync` upserts units by finding key (R4): finding key red and no unit → create; red and a unit open → update its items; green → `done` with the report path (a close evidence, §6.3); a changed rule revision → the unit is `stale`, not dispatched, until the rule's check has run again. A conformance unit's parent is the milestone goal of its rule's registry row and its urgency comes from that milestone; a unit whose parent goal is finished is not dispatched; an item cites a rule and never copies its text (R10). Make one unit per finding-key cluster (rule × directory), placed in the area of that directory (§8.4). A new plan or an audit matches the open units of older goals by finding key mechanically: still wanted → move under the goal; green → `done` with evidence; no longer wanted → `cancel` with `supersededBy`; the unmatched rest goes to one bounded agent run (R4).
 
-After the skeleton, these join (§13): an **already-done** check before step 3 (base verify; ambiguous → analyst); the stored **gate** on a clean clone of the tip after step 8, reusing recorded cache keys; **D-checks** and **mutation** before the audit (§11); **security-reviewer** and **ux-reviewer** beside the auditor (a `not_measured` UI review does not block, Q10); the **debugger** on a repeated red; the **ladder** (§7.7).
+After the skeleton, these join (§13): an **already-done** check before step 3 (base verify; ambiguous → analyst); the stored **gate** in a leased slot at the tip after step 8, reusing recorded cache keys; **D-checks** and **mutation** before the audit (§11); **security-reviewer** and **ux-reviewer** beside the auditor (a `not_measured` UI review does not block, Q10); the **debugger** on a repeated red; the **ladder** (§7.7).
 ### 7.4 Failure paths
 Red signature = step id + sorted failing test ids + exit code + first error line, with digits, hashes and temp paths normalised.
 
@@ -332,25 +337,25 @@ Red signature = step id + sorted failing test ids + exit code + first error line
 |---|---|---|
 | Two or more stacks; no known stack; detection fails | `multi_stack`, `unknown_stack`, `detect_error` | Stop (§15); ladder (§7.7); red. |
 | No adapter can run ladder rung 2 | `artefact_requested` | The owner answers with `aiwe artefact submit`. |
-| Unit text invalid; no role resolves; a tool result over its cap | `unit_invalid`, `role_unresolved`, `prompt_too_large` | Label `invalid`; findings in the ledger and `aiwe unit check`. |
-| Product decision; plan fails parse or audit twice; first 5 units of a goal (default) have M1 < 70 %; revert pull request CI red | `owner_decision`, `plan_invalid`, `goal_paused`, `revert_red` | Stop the unit, goal or queue; an `owner-action` issue that blocks it; ledger `owner_action`. |
+| Unit text invalid; no role resolves; a tool result over its cap | `unit_invalid`, `role_unresolved`, `prompt_too_large` | Refused at write or intake, no item created; findings in the ledger and `aiwe unit check`. |
+| Product decision; plan fails parse or audit twice; first 5 units of a goal (default) have M1 < 70 %; revert pull request CI red | `owner_decision`, `plan_invalid`, `goal_paused`, `revert_red` | Stop the unit, goal or queue; an `owner-action` item that blocks it; ledger `owner_action`. |
 | Gate or verify red, agent fault; zero tests collected | `red`, `no_tests_collected` | Fix round. |
-| Same red signature in two consecutive rounds | `repeated_red` | A debugger run; repeated again → stop, label `help wanted`, `owner-action` issue. |
-| Red from the environment (tool, network, timeout) | `environment` | Retry once in a new clone with a `rerunReason`; still red → `not_measured`; not charged. |
+| Same red signature in two consecutive rounds | `repeated_red` | A debugger run; repeated again → stop, `owner-action` item. |
+| Red from the environment (tool, network, timeout) | `environment` | Retry once in another leased slot with a `rerunReason`; still red → `not_measured`; not charged. |
 | Isolation failed or disk short | `isolation_failed`, `no_disk` | Not started; queued; a second failure → `environment`. |
 | Over the run limit, or silent past the silence limit | `timed_out`, `stalled` | Stop the tree; kill evidence (§7.8); an attempt. |
-| Observed model differs; account restricted | `model_mismatch`, `account_restricted` | Not charged; next candidate (§8.1); a restricted source is set `restricted` (§7.6) with an `owner-action` issue. |
+| Observed model differs; account restricted | `model_mismatch`, `account_restricted` | Not charged; next candidate (§8.1); a restricted source is set `restricted` (§7.6) with an `owner-action` item. |
 | No candidate for a role | `no_capacity` | The unit waits; other roles continue. |
-| No tracker token (§10.1) | `tracker_unauthenticated` | No dispatch; exit 1 with the next action. |
+| No GitHub token (§10.1) | `tracker_unauthenticated` | No intake, CI read or pull request; exit 1 with the next action. |
 | Conflict at integration | `conflict` | A resolution run on the rebased run branch; two failures → `skipped`, requeued (Q11). |
-| Three failures on one unit; no CI run in the wait limit | `quarantined`, `ci_not_observed` | Not offered again, label `help wanted`; never green. |
+| Three failures on one unit; no CI run in the wait limit | `quarantined`, `ci_not_observed` | Not offered again; an `owner-action` item blocks it; never green. |
 | Run process lost | `lost` | Requeued; the record closes with the time since `StartedAt` as an upper bound, never 0 ms. |
 | Ledger not writable; footprint over after cleanup | `ledger_unavailable`, `footprint_exceeded` | No dispatch. |
-| Unanswered harness permission request; owner stops a run | `permission_blocked`, `stopped_by_owner` | Stopped, requeued, not charged; an `owner-action` issue for the first. |
+| Unanswered harness permission request; owner stops a run | `permission_blocked`, `stopped_by_owner` | Stopped, requeued, not charged; an `owner-action` item for the first. |
 | API reply cut; the context estimate over its ceiling (E, below) | `answer_truncated`, `token_limit` | An attempt, never a finished run; the next run of a `token_limit` starts from the run ref with the previous return. |
 | A unit commit differs from its `AuditedTip`; `VERDICT:` in a commit; RED cites what does not resolve | `unaudited_commits`, `verdict_in_branch`, `unverified_finding` | Refused; new auditor run for the last. |
-| A check red, then green on rerun | `flaky` | An `owner-action` issue blocks the unit; closing it clears the flag (L15). |
-| Breaking commit | `breaking_change` | Not merged; `owner-action` issue; `aiwe unit approve-breaking` (§12.3). |
+| A check red, then green on rerun | `flaky` | An `owner-action` item blocks the unit; finishing it clears the flag (L15). |
+| Breaking commit | `breaking_change` | Not merged; `owner-action` item; `aiwe unit approve-breaking` (§12.3). |
 | Unsafe root; failed removal check; locked file | `root_unsafe`, `not_owned`, `residue_locked` | Nothing removed (§5.15); next sweep retries a lock. |
 | Invalid UTF-8; terminal-only command without a terminal; git missing or too old | `invalid_utf8`, `not_a_terminal`, `git_missing`, `git_too_old` | Refused or exit 1 with the next action; `invalid_utf8` names the first invalid byte. |
 
@@ -371,8 +376,8 @@ cannot get under 150,000. Read-only roles get only read tools.
 - Output reserve per role and model: `max_tokens` R = 16,000 until 20 greens exist, then 2 × p99 per-turn completion over those greens (the context ceiling above).
 - CI wait for a batch: max(30 min, 3 × p90 of its batch CI durations) once 20 exist; else 30 min; the adapter polls every 30 s; expiry → `ci_not_observed`.
 ### 7.5 Resume
-State lives in refs, the tracker and the ledger. After a crash `work` marks open runs `lost`, releases claims with no
-live run, and collects then removes temp directories of dead owners. A run ref goes once its unit's issue is closed.
+State lives in refs, the tracker and the ledger. After a crash `work` marks open runs `lost`, releases claims and slot leases with no
+live run, and collects then removes temp directories of dead owners. A run ref goes once its unit's item is `done`.
 ### 7.6 Quota exhaustion and account restriction
 The adapter classifies an error from structured fields, never from message text alone (a text-only harness gets a
 per-adapter rule under its contract suite). A quota class sets the source `passive` with its reset time;
@@ -395,7 +400,7 @@ For gate steps, unknown-stack profiles, adapter config, quota rules and unit dec
 same input hash is reused · rung 1: a mechanical derivation is proved and stored · rung 2: a synthesis run (architect
 or engineer), verified by an auditor run and proved on the base commit or by an adapter dry run, stored as
 `{artefact, inputHash, producerRunId, verifierRunId, evidence}`; no adapter → `artefact_requested` and the owner's
-terminal-only `aiwe artefact submit`, then the same proof · rung 3: a product decision → an `owner-action` issue.
+terminal-only `aiwe artefact submit`, then the same proof · rung 3: a product decision → an `owner-action` item.
 ### 7.8 Check execution (DR-8)
 - **Cache key** (`gates.CheckKey`, sha256): argv + digest of the step's declared inputs from git objects (default the whole tracked tree) + env fingerprint (OS, architecture, version output of the first token, lock file digests).
 - **Rerun** of a cache key: only with a recorded `rerunReason`, once, after an environment-class failure. A check red, then green on rerun is `flaky` (§7.4, L15).
@@ -467,7 +472,7 @@ Escalation moves up the list. No run recomputes the list.
 11. **Owner overrides**: `pin` (always first; a pin wins), `exclude`, `tier` per role. The skeleton runs on pins.
 12. **Explanation**: `aiwe models` prints the current assignment per role, its inputs and every rejected candidate with its reason; `aiwe models --refresh` recomputes it outside a session; each run record stores the assignment version it used. Without catalogue or evidence the order is pins, then own evidence, then source order, and the output names the unknown inputs.
 ### 8.2 Stack profiles — `stacks/profiles/<stack>.json`
-One embedded file per stack: `ID, Detect, Restore, Gate, TestFiles, SourceExt, LockFiles, TestCase, Assertion, NoTests, Mutation, Complexity, Registry, SecurityPaths, UIPaths, UIRunner`. The skeleton ships the Go row: detect `go.mod`, restore `go mod download`, gate `go vet ./...`, `go test ./...`, `gofmt -l .` (empty output), test files `*_test.go`, lock file `go.sum`, complexity tool `gocognit`. Other stacks come with M-Trust (§13). A stack missing cells, or an unknown stack, reads them `not_measured` and takes the ladder (§7.7); every derived command is proved per repository before use (§7.1 step 5). Role path tables (default, DR-15): documents `*.md`, `*.mdx`, `*.rst`, `*.adoc`, `*.txt`, `docs/**`; security: a path segment containing `auth`, `login`, `session`, `token`, `secret`, `credential`, `password`, `crypto`, `permission`, `oauth` or `webhook`, a D16 hit, or a stack's input entry point (Go `*handler*.go`); UI: the stack's UI patterns and `UIRunner`, the project's own browser tool found by its config file (none → `not_measured`).
+One embedded file per stack: `ID, Detect, Restore, Gate, TestFiles, SourceExt, LockFiles, KeepDirs, TestCase, Assertion, NoTests, Mutation, Complexity, Registry, SecurityPaths, UIPaths, UIRunner`. The skeleton ships the Go row: detect `go.mod`, restore `go mod download`, gate `go vet ./...`, `go test ./...`, `gofmt -l .` (empty output), test files `*_test.go`, lock file `go.sum`, no `KeepDirs` (the module cache is global), complexity tool `gocognit`. Other stacks come with M-Trust (§13). A stack missing cells, or an unknown stack, reads them `not_measured` and takes the ladder (§7.7); every derived command is proved per repository before use (§7.1 step 5). Role path tables (default, DR-15): documents `*.md`, `*.mdx`, `*.rst`, `*.adoc`, `*.txt`, `docs/**`; security: a path segment containing `auth`, `login`, `session`, `token`, `secret`, `credential`, `password`, `crypto`, `permission`, `oauth` or `webhook`, a D16 hit, or a stack's input entry point (Go `*handler*.go`); UI: the stack's UI patterns and `UIRunner`, the project's own browser tool found by its config file (none → `not_measured`).
 ### 8.3 Stored gate — `projects/<repo-id>/gate.json` (a project `gate.json` uses the same format)
 ```json
 { "formatVersion": 1, "origin": "derived", "inputHash": "<sha256>",
@@ -476,55 +481,45 @@ One embedded file per stack: `ID, Detect, Restore, Gate, TestFiles, SourceExt, L
 ```
 `command` is argv, never a shell string. `origin`: `project | derived | synthesized`. `expect` also allows
 `outputMatches` and `outputRejects`. A project `gate.json` omits `origin`, `inputHash` and `proof`.
-### 8.4 The issue standard
-Every goal, unit and owner action is an issue in this standard (O5, DR-20); a finding is not an issue (R1). The
-`issue-template` resource, `aiwe unit check`, `aiwe issue` (O8), the intake parser and the architect card follow this
-section. The tool is the only writer; nobody edits a body by hand. All records, task texts, role cards, evidence
-files and reports are English; the chat with the owner stays in the owner's language.
+### 8.4 The work item standard
+Every goal, unit and owner action is a work item in this standard (O31, DR-20); a finding is not an item (R1). The `item-template` resource, `aiwe unit check`, `aiwe item` (O8), the intake parser and the architect card follow this section. `aiwe item` is the only writer: nobody edits an item file by hand, and pre-commit refuses an item file that does not validate or was not written by it. Field names and enum values are English ASCII; text is UTF-8 and the CLI takes long text from a file or stdin (DR-18). All records, task texts, role cards, evidence files and reports in this repository are English; the chat with the owner stays in the owner's language.
 
-**Shape**: three, nothing else. A **goal** has sub-issues, is never dispatched, and the engine closes it after its last sub-issue closes (§6.3); a milestone goal of §13 and an audit goal are ordinary goals. A **unit** is a leaf, is dispatched, has one outcome and one finding key,
-and holds at most 5 source files (DR-7). An **owner action** carries the label `owner-action` and is never
-dispatched. There are no audit-generation or per-rule epics: a finding-key upsert makes a generation unnecessary, an issue
-has one parent, and the per-rule view is a query on the rules (R4).
+**Store**: flat JSON files in git under `work/` of the project's record repository: `schema.json` (the versioned schema, the one owner of the format), `areas.json` (the area tree, `[{id, parent, title}]`), `views.json` (saved queries) and `items/<id>.json` (one file per item). `TODO.md`, `ARCHIVE.md`, the automatic part of `STATUS.md`, the owner summary and the board are generated by `aiwe item render`, carry a generated marker on the first line and are never edited by hand. An **id** is a prefix and 6 Crockford base32 characters drawn from time and random bits (`W-7K3F9Q`); it never changes, a title may; a duplicate id is red in lint.
 
-**Record**: the body is one fenced JSON object (RFC 8259, `encoding/json`; STD-5) and nothing else: `v`, `kind`, `key`, `rules`, `problem{symptom, expected, cause{state: known|unknown, text}, impact, affected, class}`, `scope{in, new, out, constraints}`, `steps[{do, at}]`, `done[{id, check, expect} | {id, judgement, text}]`, `red{check, base, items}`, `distinct[{n, reason}]` (#314 K35), `legacy` (#314 K34; a migrated heading keeps its prose and is not ready until an agent rewrites it before dispatch), optional `context` (at most 3 lines). The engine derives and the author never writes: `key` of generated units, `rules` revisions, severity (affected × class, #314 K8: `affected` is one or more of customer, owner, admin, developer, system; `class` is `must` or `nice`; the result is `high` for `must`, `low` for `nice` and `unknown` for no party, `roles.Severity`; written table: #415), the priority label, `red`, and blockers from file-set overlap. Title: at most 72 characters, plain. The validator refuses a missing field, a relative reference ("above", "same as"), a placeholder ("TBD", "etc."), a path that does not exist (`new` excepted), a `check` that does not resolve, and a `done` entry with neither a check nor a named judgement role. A schema change runs `aiwe issue migrate`, which rewrites every record mechanically; formats never coexist. A heading migrates as a **legacy** record (#314 K34): each `F1` line becomes a `done` entry, the Problem text goes verbatim into `problem.symptom` with `cause.state` `unknown`, and `legacy` stays true until an agent rewrites the unit before dispatch. The agent never reads raw JSON: `UNIT` (§9.2) is a deterministic text rendering of the record. The value sets of `kind` and `v` are not in the code yet (planned #427).
+**Shape**: `type` is one of `goal`, `epic`, `story`, `task`, `bug`, `spike`, `chore`, `owner-action`, at any depth (a `bug` may be a direct child of an `epic`). `goal` and `epic` group items, are never dispatched, and are finished by the engine after their last child finishes (§6.3); a milestone goal of §13 and an audit goal are ordinary goals. A **unit** is a dispatchable leaf: type `story`, `task`, `bug`, `spike` or `chore`, with a `scope.in`, a resolving `done` entry, one outcome and one finding key, and at most 5 source files (DR-7). An `owner-action` waits for the owner and is never dispatched. There are no audit-generation or per-rule epics: a finding-key upsert makes a generation unnecessary, an item has one parent, and the per-rule view is a query on the rules (R4).
+
+**Hierarchy** (O32): two dimensions, both unlimited in depth. The work breakdown is `parent` (one parent per item). The area is `area` (the primary area, required) and `areasRelated`; the tree is `areas.json` (`ui` → `ui/panel` → `ui/telegram`). Moving a group changes one `parent` in `areas.json` and touches no item file. Lint: an undefined area and a parent cycle are red; an empty area, an implausible type under a parent (an `epic` under a `task`) and a tree deeper than 5 are yellow.
+
+**Record**: one JSON object per file (RFC 8259, `encoding/json`; STD-5), keys `camelCase`:
+
+| Fields | Required | Meaning |
+|---|---|---|
+| `v`, `id`, `title`, `type`, `status`, `created`, `updated` | always | schema version; id; plain title of at most 72 characters; type; status (below); ISO 8601 UTC times |
+| `priority` (`P1`–`P4`), `severity`, `key`, `rules` | always; derived | the engine derives them and the author never writes them: severity (`affected` × `class`, #314 K8: `affected` is one or more of customer, owner, admin, developer, system; `class` is `must` or `nice`; the result is `high` for `must`, `low` for `nice` and `unknown` for no party, `roles.Severity`; written table: #415), `priority` from it, the `key` of generated units and the `rules` revisions |
+| `parent`, `area`, `areasRelated`, `blockedBy`, `related` | `area` always | hierarchy (above) and dependency kinds; the engine adds blockers from file-set overlap |
+| `problem{symptom, expected, cause{state: known\|unknown, text}, impact, affected, class}`, `need{problemEvidence, deleteOption, existing, smallestChange, alternatives[{what, files, whyNot}], ifNotDone, risksNotAdded[{risk, likelihood, complexity}]}`, `scope{in, new, out, constraints}`, `estimate{files, lines}`, `done[{id, check, expect} \| {id, judgement, text}]` | DoR | `alternatives` needs at least one entry; a `goal`, `epic` or `owner-action` carries `need` and `estimate` in short form (`problemEvidence`, `ifNotDone`) |
+| `steps[{do, at}]`, `red{check, base, items}`, `distinct[{id, reason}]` (#314 K35), `legacy` (#314 K34), `context` (at most 3 lines), `timebox{hours \| sessions}`, `decisions` | optional | `legacy`: a migrated heading keeps its prose and is not ready until an agent rewrites it before dispatch; `timebox`: an overrun shrinks the scope, never the time; `decisions`: ids of the decisions the item rests on |
+| `defer{until \| after, reason}`, `waiting{on, questionFile, options, recommendation}`, `cancel{reason, supersededBy}`, `handoff{state, next, at, updated}`, `close{commit, verifyOutputPath, effect}` | by status | required while `deferred`, `waiting`, `cancelled`, `active` (`handoff`) and `done` |
+
+The validator refuses a missing field, a relative reference ("above", "same as"), a placeholder ("TBD", "etc."), a path that does not exist (`new` excepted), a `check` that does not resolve, and a `done` entry with neither a check nor a named judgement role. A schema change runs `aiwe item migrate`, which rewrites every item mechanically and is idempotent; formats never coexist. `migrate --from github` turns a GitHub issue into an item; a heading body becomes a **legacy** item (#314 K34): each `F1` line becomes a `done` entry, the Problem text goes verbatim into `problem.symptom` with `cause.state` `unknown`, and `legacy` stays true until an agent rewrites the unit before dispatch. The agent never reads raw JSON: `UNIT` (§9.2) is a deterministic text rendering of the item. The value sets of `type`, `status` and `v` are not in the code yet (planned #427).
+
+**Status**: `open` → `active` (`start`) → `done` (`close`); `active` ⇄ `waiting` (`wait` with a question file, `answer`); `open` → `deferred` (`defer`) and back to `open` when its condition holds; `open` → `cancelled` (`cancel`). `waiting` holds only an item that waits for the owner: question, options and recommendation sit in `waiting.questionFile`, and the engine does not count the item as open work. `deferred` takes a date (`until`) or another item (`after: <id>`), never free text; `aiwe item revive` reopens a due item at session start and in CI. `cancelled` needs `cancel.reason`; an open item that depends on a cancelled one is red in lint, and a bulk cancel lists such items in its dry run; an item that rests on a superseded decision gets a yellow warning. **Ready and done**: `open` → `active` needs `problem`, `need`, `scope.in`, `estimate` and `done` filled, else the tool refuses. `done` needs a green verify output (`close.verifyOutputPath`), the sha of the commit on the default branch (`close.commit`) and `close.effect` (measured before → after, else `not measured`); a unit that a later gate run found green closes with the report path in `verifyOutputPath` and no commit (§6.3). A `judgement` entry closes only with the independent auditor's GREEN record (DR-5).
+
+**Commands** (DR-16; a table for people, `--json` for agents; exit codes follow §5.3): `aiwe item new --type T --area A --file record.json` · `show ID` · `list QUERY [--view NAME]` · `ready` (`open`, blockers `done`, DoR complete; order priority, severity, age) · `start | handoff | wait | answer | close | defer | cancel | revive ID` · `set ID field=value` · `bulk QUERY (--set … | --cancel --reason-file F) [--apply]` · `lint` (schema, relations, status consistency) · `migrate [--from github] [--apply]` · `render` · `sync` (closes from commit traces and green reports, upserts units by finding key, flags inconsistencies: R4, §7.3) · `merge %O %A %B`; `aiwe area add | move | list`; `aiwe intake`. Every write is one of these; CI and pre-commit run `lint`.
+
+**Query**: space-separated conditions are ANDed and `OR` is explicit: `status=open type=bug priority<=P2`, `area:ui/**` (subtree), `under:<id>` (breakdown subtree), `decision:<id>`, `defer.after:<id>`, `updated>2026-10-01`, `~"text"` (full text in title and text fields), any field path (`need.ifNotDone~"data loss"`), `-` negates (`-type=owner-action`); `views.json` saves a query under a name. Speed is unmeasured (`unknown`): the aim is under 1 s over 5 000 files by parallel reads, and an index cache is added only if the measure misses it. **Bulk**: a dry run is the default and prints a table, with items whose `areasRelated` touches the target but whose primary area differs listed apart; `--apply` makes one commit whose message carries the query and the count, and one `git revert` undoes it; nothing is deleted, only cancelled. **Merge**: one file per item avoids most conflicts; the JSON-aware driver `aiwe item merge` merges three ways per field, and a field changed differently on both sides stays a conflict for a person; generated files regenerate.
 
 How aiwe reads it:
-- **Goal or unit**: an issue with native sub-issues is a goal (§17). A unit is a record with a `scope.in` and a
-  resolving `done` check. Nothing else is dispatched.
-- **Intake gates** (R3): creating or checking a unit lists candidates and refuses to continue while one exists: the
-  same `key` open; `scope.in` of two units intersecting; `scope.out` of one intersecting `scope.in` of the other; a
-  blocked-by cycle; an equal normalised title; text similarity of `problem` and `steps` above a threshold (a
-  candidate, never a verdict). The caller answers `--merge-into N`, `--supersede N` or `--distinct N:<reason>`; the
-  answer is stored and the pair is not flagged again. A unit without `scope.in` fails the validator, so every unit is
-  covered.
-- **File set** (DR-7): each `scope.in` path; `new` marks a file the unit creates. Plain paths must exist; `new` paths
-  must not. A tracked test file outside the file set that holds an identifier of `steps` → `scope_outside_files`.
-- **Verify**: each `done` check resolves to argv by shell-style quoting and runs without a shell; a shell
-  operator outside quotes (`&&`, `\|\|`, `\|`, `;`, `>`, `<`, backtick, `$(`) or a `HEAD~<n>`/`HEAD^` base is refused;
-  the first token must resolve. It is checked, never run, before review.
-- **Test items**: a `done` entry that runs or names a test file of the file set. A **behaviour unit** (a file set
-  path with a `SourceExt` of its stack) has at least one; its test commit is red on base and green on the tip (§7.3 step 5).
-- **Admission** (R6): a defect finding from a judge or a person is admitted only with a failing reproduction the
-  engine ran (`red` recorded); without one it is class `design` and goes to the owner-action path or is dropped; its
-  finding key is the rule plus the reproduction's test id. A check-derived unit needs no new test: the recorded check report
-  is its red proof, and its verify is the same check for that finding key. A behaviour unit's tests are written by the
-  test-author as soon as intake accepts it (R6); the engine records the red proof, a moved base repeats it and renews the
-  tests when it fails to hold, and the weak-test check (a removed assertion, an added skip, a changed expected value,
-  a test without an assertion) runs first (#314 K38(c), K38(e)). A fix round receives only the report of its red run (R7).
-- **Dependencies**: native blocked-by links (§17); a unit waits while a blocker is open (L8).
-- **Owner work**: label `owner-action`, never dispatched. A stop for the owner opens an `owner-action` issue in this
-  standard that blocks the unit: `problem` holds the decision with the recommendation first, `steps` holds each option
-  and its consequence, `context` holds engine evidence (gate tail, diff stat, Run-Id). Text from a run's `decision:` lines
-  passes intake, masking and the payload scan first.
-- **Built-in elements only** (DR-20): type via GraphQL `repository.issueTypes` (Q4): null → label `bug`,
-  `enhancement` or `documentation`; else type `Bug`, `Feature` or `Task`. Labels `invalid` (refused text), `help
-  wanted` (quarantined) and `owner-action` (never dispatched). One milestone per roadmap milestone (§13); the
-  milestone of the parent goal, or of the rule, is the unit's urgency (R10). Close reasons `completed`,
-  `not_planned`, `duplicate` (§17). No status label, no field, no comment: progress, evidence, narrative, copied tool
-  output and session plans are never in an issue; evidence goes into the commit and the pull request. Closing is mechanical (R5, §6.3, §12.3): the close evidences, the manual-close rule and the goal rule are in §6.3.
-- **Intake filter** (DR-20): only the body by an author with write permission; HTML comments removed; bidirectional
-  embedding, override or isolate controls → `invalid`. The text enters prompts only in `UNIT`.
+- **Intake gates** (R3): creating or checking a unit lists candidates and refuses to continue while one exists: the same `key` open; `scope.in` of two units intersecting; `scope.out` of one intersecting `scope.in` of the other; a blocked-by cycle; an equal normalised title; text similarity of `problem` and `steps` above a threshold (a candidate, never a verdict). The caller answers `--merge-into ID`, `--supersede ID` or `--distinct ID:<reason>`; the answer is stored and the pair is not flagged again. A unit without `scope.in` fails the validator, so every unit is covered.
+- **File set** (DR-7): each `scope.in` path; `new` marks a file the unit creates. Plain paths must exist; `new` paths must not. A tracked test file outside the file set that holds an identifier of `steps` → `scope_outside_files`.
+- **Verify**: each `done` check resolves to argv by shell-style quoting and runs without a shell; a shell operator outside quotes (`&&`, `\|\|`, `\|`, `;`, `>`, `<`, backtick, `$(`) or a `HEAD~<n>`/`HEAD^` base is refused; the first token must resolve. It is checked, never run, before review.
+- **Test items**: a `done` entry that runs or names a test file of the file set. A **behaviour unit** (a file set path with a `SourceExt` of its stack) has at least one; its test commit is red on base and green on the tip (§7.3 step 5).
+- **Admission** (R6): a defect finding from a judge or a person is admitted only with a failing reproduction the engine ran (`red` recorded); without one it is class `design` and goes to the owner-action path or is dropped; its finding key is the rule plus the reproduction's test id. A check-derived unit needs no new test: the recorded check report is its red proof, and its verify is the same check for that finding key. A behaviour unit's tests are written by the test-author as soon as intake accepts it (R6); the engine records the red proof, a moved base repeats it and renews the tests when it fails to hold, and the weak-test check (a removed assertion, an added skip, a changed expected value, a test without an assertion) runs first (#314 K38(c), K38(e)). A fix round receives only the report of its red run (R7).
+- **Dependencies**: `blockedBy` (L8); a unit waits while a blocker is not finished.
+- **Owner work**: type `owner-action`, never dispatched. A stop for the owner opens an `owner-action` item in this standard that blocks the unit: `problem` holds the decision, `waiting.recommendation` the recommendation and `waiting.options` each option with its consequence, `context` engine evidence (gate tail, diff stat, Run-Id). Text from a run's `decision:` lines passes intake, masking and the payload scan first.
+- **Urgency and evidence**: a roadmap milestone (§13) is a goal item; a unit's urgency is that of its nearest milestone-goal ancestor, or of its rule's registry milestone (R10). An item has no comment thread: narrative, copied tool output and session plans are never in an item, the one running note is `handoff`, and evidence goes into the commit and the pull request. Closing is mechanical (R5, §6.3, §12.3): the close evidences, the manual-close rule and the goal rule are in §6.3.
+- **GitHub** (O31): intake and view only, never the work list and never a second source of truth. A request arrives as a GitHub issue or an e-mail; `aiwe intake` reads it, creates the item when it is accepted and closes the GitHub issue `completed` with a comment naming the item id. There is no two-way sync: GitHub may show a one-way view of the store, and nothing is read back from it.
+- **Intake filter** (DR-20): only the body by an author with write permission; HTML comments removed; bidirectional embedding, override or isolate controls → refused, no item created. The text enters prompts only in `UNIT`.
 ### 8.5 Ledger — `<state>/ledger.jsonl`
 Append-only JSONL, one schema with `kind`: `run`, `check` or `owner_action`. `core.Measured[T]{Value; Known}`
 serialises as a number or `"unknown"` (DR-6). Every record: `formatVersion, kind, at, repoId, goal, unit, runId, revision`
@@ -581,28 +576,23 @@ May: read, search, edit inside the file set, call `aiwe verify`, commit on the r
 gate commands (DR-8); anything DR-13 reserves; publish a package; reach the network beyond the adapter's policy;
 delete recursively (DR-11).
 ## 10. Interfaces
-### 10.1 Tracker port (GitHub first)
+### 10.1 Tracker port (file store first)
 ```go
 type Tracker interface {
     Identified
     ReadUnits(ctx context.Context, repo RepoID) ([]Unit, error)
-    Write(ctx context.Context, op Op) error // create | edit | label | close | reopen | milestone | pr-create | pr-merge
+    Write(ctx context.Context, op Op) error // create | edit | transition | intake-close | pr-create | pr-merge
     Permission(ctx context.Context, repo RepoID, login string) (Permission, error) // write | read | none
     CIStatus(ctx context.Context, repo RepoID, sha string) (CIStatus, error)       // pending | green | red | none
     Capabilities() TrackerCaps
 }
 ```
-- The adapter calls REST over HTTPS with the standard library; GraphQL only where REST lacks the call (L3). The token
-  comes from `GH_TOKEN`, then `GITHUB_TOKEN`, then `gh auth token` when gh is installed; gh is never required. No token →
-  `tracker_unauthenticated` (§7.4). The token is held in memory for the call only (DR-19). Least permissions (default): Contents, Issues and Pull requests
-  read and write; Actions and Metadata read. `git push` uses git's own credential helper.
-- One tracker read per dispatch cycle; a re-read follows a run end, a merge or the close of an `owner-action` issue, at
-  most once per 60 s.
+- The **file store** is the primary adapter (O31): it reads and writes `work/items/<id>.json` through the schema (§8.4), validates before it writes, and needs no network, token or gh. `Capabilities()` tells the engine what an adapter supports; the file store has no CI status, pull request or intake.
+- The **GitHub adapter** serves intake (`aiwe intake`, the `intake-close` write), the one-way view and the code host (CI status, pull requests). It calls REST over HTTPS with the standard library; GraphQL only where REST lacks the call (L3). The token comes from `GH_TOKEN`, then `GITHUB_TOKEN`, then `gh auth token` when gh is installed; gh is never required. No token → `tracker_unauthenticated` (§7.4). The token is held in memory for the call only (DR-19). Least permissions (default): Contents, Issues and Pull requests read and write; Actions and Metadata read. `git push` uses git's own credential helper.
+- One GitHub read per dispatch cycle; a re-read follows a run end, a merge or an intake, at most once per 60 s.
 - Every write passes masking and the payload scan (§11).
-- `pr-create` = `POST /repos/{owner}/{repo}/pulls`; `pr-merge` = `PUT .../pulls/{pull_number}/merge` with
-  `merge_method: rebase` (a fast-forward, so each unit commit keeps its own `Closes` trailer), the §7.3 step 11 title and message, and `sha` = the tested batch tip (§17).
-- Sub-issues and blocked-by use GitHub's native relations (§17, L8). Volume stays under GitHub's limits (§17); a `403`
-  or `429` limit follows `rate_window`. Only `tracker/` knows GitHub; `tracker/trackertest` holds the fake.
+- `pr-create` = `POST /repos/{owner}/{repo}/pulls`; `pr-merge` = `PUT .../pulls/{pull_number}/merge` with `merge_method: rebase` (a fast-forward, so each unit commit keeps its own `Closes` trailer), the §7.3 step 11 title and message, and `sha` = the tested batch tip (§17).
+- Hierarchy and dependencies are item fields (`parent`, `blockedBy`), not GitHub relations. GitHub's limits (§17) bind only its adapter; a `403` or `429` limit follows `rate_window`. Only `tracker/` knows GitHub or the file layout; `tracker/trackertest` holds the fake and runs against both adapters.
 ### 10.2 Provider port (model API and agent runtime)
 ```go
 type Provider interface {
@@ -647,7 +637,7 @@ object-rooted schema: a failure returns to the model in the same run, an absent 
 branch, diff and results (§9.3). Per-child lifetime caps, nested agents and an in-process registry are rejected: a run is an OS process or
 an HTTP loop owned by the engine, so ownership, capacity and stop authority are durable records.
 ## 11. Quality system applied to managed projects
-Mechanical: stack detection, gate derivation and base proof (§7.1); intake and issue parse (§8.4); tests red on base
+Mechanical: stack detection, gate derivation and base proof (§7.1); intake and item parse (§8.4); tests red on base
 before code for every behaviour unit (§7.3 step 5); unit verify once per cache key (§7.8); scope check (DR-9); payload scan
 before text leaves the machine; batch CI before the merge and revert on red (§7.3); red signature and goal pause
 (§7.4). After the skeleton, on `<base>...<tip>` lines only, each diff check has one cell (L2). Mutation on changed
@@ -736,10 +726,10 @@ private key held as a CI secret and publish the signature as the asset `checksum
 
 **Commit messages** (here and in managed projects): the Conventional Commits header is ≤ 50 characters, `type(scope): `
 included. Body lines are ≤ 72 characters; URLs, trailers and quoted command or output lines are exempt. A unit commit
-carries exactly one `Closes <owner>/<repo>#N` and no `Refs` (R5); a non-unit commit carries no issue trailer;
-`Closes` names only an issue in the same repository.
+carries exactly one `Closes <item-id>` and no `Refs` (R5); a non-unit commit carries no issue trailer;
+`Closes` names only an item of the same work store.
 The closing commit carries `Effect: <before> → <after>` with measured values. Engine commits carry `Run-Id: <ULID>`.
-`external` commits (Dependabot, outside contributors) are exempt from the trailer and `Run-Id` rules; `owner` commits (for an `owner-action` issue) are exempt from the `Run-Id` rule (Q17).
+`external` commits (Dependabot, outside contributors) are exempt from the trailer and `Run-Id` rules; `owner` commits (for an `owner-action` item) are exempt from the `Run-Id` rule (Q17).
 `repocheck commit-msg` checks this repository's commits; the engine composes its own messages to the same rules.
 
 Rules: versions follow L9 (`v0.1.0` at M-Release, `1.0.0` at M-Trust); bumps (§17): breaking → major, `feat` → minor,
@@ -749,8 +739,8 @@ literals. Release notes (Q15): Keep a Changelog layout via `changelog.groups` (`
 Changed); CI never commits to `main`. Provenance: one attestation, verified with `gh attestation verify` or
 `checksums.txt`; cosign rejected. Code signing: Q7. The job runs only on a `main` dispatch, after `required` is green.
 ## 13. Roadmap
-Each milestone has one goal issue; the tracker holds the units as its sub-issues (L1).
-- **M-Skeleton**: CI gates `main`, and `aiwe work --repo . --unit N` takes one aiwe issue to a merged pull request
+Each milestone has one goal item; the work store holds the units as its descendants (L1).
+- **M-Skeleton**: CI gates `main`, and `aiwe work --repo . --unit ID` takes one aiwe item to a merged pull request
   with zero owner actions, running on pinned models over the OpenCode Go model API (O14); this is the self-hosting point (O1, DR-23).
 - **M-Usable**: aiwe is usable in its own work: the MCP server, the work session, concurrent sessions (O11) and model choice
   (O9) first; sources with fallback and quota reaction; the DeepSeek, Fireworks and Gemini model APIs, then the cursor and
@@ -758,8 +748,8 @@ Each milestone has one goal issue; the tracker holds the units as its sub-issues
 - **M-Release**: aiwe works other repositories and ships (O17): self-update (O10), the Go stack profile with the derived gate
   and the core D-checks, `aiwe onboard`, the security-reviewer, the codex and gemini agent runtimes (O12), CI on three
   operating systems, a sandbox-repository end-to-end run; the repository turns public and `v0.1.0` ships (L9).
-- **M-Tracking**: `aiwe issue` and `aiwe report` across repositories (O8); in the product the work model lands as
-  `aiwe issue`, `aiwe unit check`, `aiwe verify` and `aiwe status` with MCP tools from one registry (DR-16), in M-Tracking
+- **M-Tracking**: `aiwe item` and `aiwe report` across repositories (O8); in the product the work model lands as
+  `aiwe item`, `aiwe unit check`, `aiwe verify` and `aiwe status` with MCP tools from one registry (DR-16), in M-Tracking
   and M-Usable (R11).
 - **M-Trust**: `aiwe metrics` M1–M7, invariance, escaped defects, mutation, the debugger, stack profiles beyond Go and
   the adaptation ladder; `1.0.0` ships (L9).
@@ -772,7 +762,6 @@ Each milestone has one goal issue; the tracker holds the units as its sub-issues
 | Percentage shares per source (O3) | Model choice (§8.1) cannot express a split the owner asks for. |
 | Duplicate-check counts and gate-slowdown reports (L10) | A measured slow or repeated check. |
 | Other API wire formats; remote cloud agents | A source needs one; the provider documents dispatch and concurrency. |
-| Non-GitHub trackers | A user asks, with a repository to test on. |
 | `harness-sandbox` and `os-sandbox` | An adapter or external tool enforces one on three OS without elevated rights (§6.7). |
 | Several stacks in one repository | A target repository has two; until then `multi_stack` stops. |
 | One unit on two providers | Lead time p90 > 3× median over 50 units, or `repeated_red` on 3 of 50 units. |
@@ -796,10 +785,10 @@ Each decision keeps its id. **Enforced by** is that decision's one cell (L2).
 | O2 | aiwe keeps its own API agent loop for API-key sources, after the skeleton (owner, 2026-10-12). | superseded in part by O14 | test `adapters/loop_test.go` TestLoopRunsARoleThroughToolsToAFinalAnswer |
 | O3 | Routing is an ordered (source, model) fallback list per role; percentage shares are deferred (owner, 2026-10-12). | valid; the list is the session assignment of O9 | test `roles/roles_test.go` TestPinnedListPerRole |
 | O4 | Operation units are deferred (§15) (owner, 2026-10-12). | valid | judgement: auditor |
-| O5 | The issue format is the global issue standard, English variant (§8.4); no checkboxes, status labels or comments; large outcomes are native sub-issues; commit trailers follow §12.3 (owner, 2026-10-12; R5). | valid | test `repocheck/commit_message_test.go` TestCommitMessage |
+| O5 | The issue format is the global issue standard, English variant (§8.4); no checkboxes, status labels or comments; large outcomes are native sub-issues; commit trailers follow §12.3 (owner, 2026-10-12; R5). | superseded in part by O31 (the issue format and native sub-issues); the trailer rule stays valid | test `repocheck/commit_message_test.go` TestCommitMessage |
 | O6 | Source organization covers only work aiwe runs; reading other tools' logs stays a non-goal (owner, 2026-10-12). | valid | judgement: auditor |
 | O7 | At most one consumer subscription per provider; API keys unlimited; a subscription at its limit waits or moves to another provider or API, never to a second account of the same provider (owner, 2026-10-12). | valid | judgement: auditor |
-| O8 | After the skeleton aiwe absorbs the global issue tooling: `aiwe issue` (create, edit, check) and `aiwe report` across repositories; the template lives only in aiwe (owner, 2026-10-12). | valid | planned #264 |
+| O8 | After the skeleton aiwe absorbs the global issue tooling: `aiwe issue` (create, edit, check) and `aiwe report` across repositories; the template lives only in aiwe (owner, 2026-10-12). | superseded in part by O31 (the command is `aiwe item`) | planned #264 |
 | O9 | Model choice is automatic, by fixed rules, assigned per session at MCP server start or `aiwe work` start (§8.1); it is placed first in M-Usable, and the skeleton runs on pins (owner, 2026-10-12). | valid | test `roles/roles_test.go` TestPinnedListPerRole |
 | O10 | The primary interface is an MCP server started by the user's harness session, with a detached work session (§6.3), placed at the start of M-Usable, and self-update (§6.3), placed in M-Release because it needs a signed release (owner, 2026-10-12; split by O17). | valid | planned #263 |
 | O11 | Many concurrent sessions work without conflict and without a daemon (§6.6); placed in M-Usable with O10 (owner, 2026-10-12). | valid | planned #293 |
@@ -822,14 +811,20 @@ Each decision keeps its id. **Enforced by** is that decision's one cell (L2).
 | O28 | When the repository turns public, the lead enables the ruleset (branch protection), secret scanning and push protection in the same turn and checks each with the API (owner). | valid | planned #261 |
 | O29 | Security work is never deferred in favour of other work (owner). | valid | judgement: auditor |
 | O30 | The engine owns each run's lifecycle (§10.3): one settlement transaction, capabilities and options asserted before a clone or a process exists, a durable conversation record a fix round resumes from without a route fallback, `waiting_engine` for a run blocked in a verify, and a schema-checked `report_result` claim. Lifetime limits, nested agents and an in-process registry are rejected because a run is an OS process or an HTTP loop owned by the engine (owner request, 2026-10-24; evidence `aiwe-wt/evidence/2026-10-24-subagent-mechanism.md`). | valid | planned #432, #433, #434, #435, #436, #437 |
-| L1 | This file holds product, architecture and contracts, ≤ 900 lines (cap, owner 2026-10-17; #307 brought the file back under the cap); the delivery plan and the unknowns live in tracker issues; §17 keeps only cited facts (lead, 2026-10-12). | valid | judgement: doc-writer |
+| O31 | The work store is flat JSON files in git, one file per item (`work/items/<id>.json`), written only by `aiwe item`; GitHub is intake and view only, with no two-way sync (§8.4, §10.1). It rewrites DR-20 and supersedes the tracker part of O5 (owner, 2026-10-25). | valid | planned: stage work store |
+| O32 | The item hierarchy and the area tree have unlimited depth, and the kind is the field `type`, independent of depth (§8.4). It supersedes the three-kind set, the single native sub-issue chain and the 100-sub-issue ceiling of the old §8.4 (owner, 2026-10-25). | valid | planned: stage work store |
+| O33 | Each agent works in its own leased slot: a persistent clone, reset at every lease and never created or deleted per run; one landing queue is the only writer to the canonical branch; an item that becomes `active` leases its `scope.in` and an overlapping item waits (§6.5, §6.6). It rewrites DR-10, whose fresh shallow clone per run it supersedes; measured basis in §17 (owner, 2026-10-25). | valid | planned: stage isolation |
+| O34 | `git worktree` is banned by a harness hook, not by text: the hook rejects `git worktree add` and a subagent call with worktree isolation (§6.5) (owner, 2026-10-25). | valid | planned: stage isolation |
+| O35 | Temporary data is created last: first no file (pipe, stdin, memory), then an owned directory, then the sweeper for a dead owner, then the footprint ceiling, then the repository gate (§6.5) (owner, 2026-10-25). | valid | planned: stage isolation |
+| O36 | A multi-agent team that works around the clock is assumed: no day or night mode, and the ideal method applies at all times; agents never obstruct one another first, temporary data near zero second. The presence switch of O26 is not a time mode (owner, 2026-10-25). | valid | judgement: auditor |
+| L1 | This file holds product, architecture and contracts, ≤ 900 lines (cap, owner 2026-10-17; #307 brought the file back under the cap); the delivery plan and the unknowns live in the work store; §17 keeps only cited facts (lead, 2026-10-12). | valid | judgement: doc-writer |
 | L2 | Every rule id has one enforcement cell; its grammar is in `docs/standards.md` (lead, 2026-10-12; amended #307). `repo/rules` checks that the §12.1 files exist and does not parse these tables. | valid | planned #308 |
-| L3 | The skeleton binds one tracker (GitHub over HTTPS with the standard library; gh is optional, §10.1) and one provider (the OpenCode Go model API client, O14), driven through the CLI; the MCP server opens M-Usable (O10) (lead, 2026-10-12). | valid | test `tracker/github_test.go` TestGitHubReadsIssuesOverHTTPS |
+| L3 | The skeleton binds one tracker (GitHub over HTTPS with the standard library; gh is optional, §10.1) and one provider (the OpenCode Go model API client, O14), driven through the CLI; the MCP server opens M-Usable (O10) (lead, 2026-10-12). | superseded in part by O31 (the file store is primary; GitHub is intake, view and code host) | test `tracker/github_test.go` TestGitHubReadsIssuesOverHTTPS |
 | L4 | `tool` lines move to `tools/go.mod`, run with `go tool -modfile=tools/go.mod` (lead, 2026-10-12). | valid | test `repocheck/doctor_io_test.go` TestMachineDoctorEnvResolvesToolsModule |
 | L5 | Hand-worked units until self-hosting follow risk tiers: test-author first for every behaviour unit and an auditor run for every unit (O16); risky units reviewed separately; O15 overrides who audits a mechanism unit until #341 closes (lead, 2026-10-12). | valid | judgement: auditor |
 | L6 | The owner key and the keyed hash on owned-directory records and markers are removed; removal keeps the root, link, marker and mount-point checks. Reason: a forged marker can only remove aiwe's own temp directory, and a run below `os-sandbox` could read the key anyway (lead, 2026-10-12). | decided; not built (planned #260) | planned #260 |
 | L7 | Close on merge (§6.3, §12.3): a red merge → revert pull request and the unit reopens (lead, 2026-10-12). | valid | test `repocheck/commit_message_test.go` TestCommitMessage |
-| L8 | Unit dependencies are native blocked-by links; goal → units are native sub-issues; owner-only work has label `owner-action` and is never dispatched (lead, 2026-10-12). | valid | judgement: auditor |
+| L8 | Unit dependencies are native blocked-by links; goal → units are native sub-issues; owner-only work has label `owner-action` and is never dispatched (lead, 2026-10-12). | superseded in part by O31 and O32 (dependencies and hierarchy are item fields; owner work is a type) | judgement: auditor |
 | L9 | `v0.1.0` when M-Release closes, with the repository public; `1.0.0` when M-Trust closes (lead, 2026-10-12; O17). | valid | judgement: auditor |
 | L10 | Product metrics are M1–M7; duplicate-check counts and gate-slowdown reports are deferred (§15); footprint ceilings stay enforced by the sweep (§6.4) (lead, 2026-10-12). | valid | judgement: auditor |
 | L11 | Working code is not removed only to shrink; meta-machinery is not extended, except code a decision removes (L2, L6, Q22 marking) (lead, 2026-10-12). | valid | judgement: auditor |
@@ -843,7 +838,7 @@ Each decision keeps its id. **Enforced by** is that decision's one cell (L2).
 | Q1 | License: MIT. | valid | planned #379 |
 | Q2 | Product name aiwe, read from one constant (DR-17). | valid | check `repo/source-rules` |
 | Q3 | Nothing is published before the trust milestone; the first version is `1.0.0`. | superseded by L9 | judgement: auditor |
-| Q4 | The repository is on a personal account; issue type follows the GraphQL rule of §8.4; contract tests prove both paths. | valid | planned #330 |
+| Q4 | The repository is on a personal account; issue type follows the GraphQL rule of §8.4; contract tests prove both paths. | superseded by O31 | planned #330 |
 | Q6 | Audit independence is DR-5; the ledger records the level, and one source is never refused (owner, 2026-10-14). O15 overrides who audits a mechanism unit until #341 closes. | valid | test `engine/contract_test.go` TestAuditorContractBindsVerdictToRunID |
 | Q7 | Code signing: none until M-Trust closes; the owner decides then. | valid | judgement: auditor |
 | Q8 | The operator only plans; the engine performs the access. | deferred with operation units (O4) | judgement: auditor |
@@ -865,7 +860,7 @@ Each decision keeps its id. **Enforced by** is that decision's one cell (L2).
 | Q24 | A code unit has at most 5 source files (owner, 2026-10-11). | valid | test `engine/unit_test.go` TestParseUnitRefusesAScopeOverTheCeiling |
 | Q25 | `go.mod` and `go.sum` are a manifest and its lock file, not source files (owner, 2026-10-11). | valid | test `engine/coverage_test.go` TestCheckScope |
 | R1 | The work model: work is the difference between desired state (rules and goals) and observed state (check results), made executable. DR and STD rules live in one registry (R9), a check turns a rule into findings (R7), and the engine derives conformance units from findings by finding key: create, update or close, never duplicate. Three issue shapes only: goal, unit, owner action; a finding is no issue (#314 K33, owner, 2026-10-18). | valid | judgement: auditor |
-| R2 | The issue body is one typed record, a fenced JSON object (RFC 8259), written only by the tool; the §8.4 record replaces the heading standard and its F1, F2 and F3 items become `done` entries (#314 K34, owner, 2026-10-18). | valid | planned #330 |
+| R2 | The issue body is one typed record, a fenced JSON object (RFC 8259), written only by the tool; the §8.4 record replaces the heading standard and its F1, F2 and F3 items become `done` entries (#314 K34, owner, 2026-10-18). | superseded in part by O31 (the record is a file, not an issue body) | planned #330 |
 | R3 | Intake gates list duplicate, overlapping and cyclic candidates and refuse to continue until the caller answers `--merge-into`, `--supersede` or `--distinct` (#314 K35, owner, 2026-10-18). | valid | planned #314 |
 | R4 | Sync is continuous: after each gate run units are upserted by finding key, and a changed rule revision marks them `stale` until the rule's check runs again (#314 K36, owner, 2026-10-18). | valid | planned #314 |
 | R5 | Closing is mechanical (§6.3, §12.3): the engine writes the trailers, and `repocheck commit-msg` refuses a unit commit without them (#314 K37, owner, 2026-10-18). | valid | test `repocheck/commit_message_test.go` TestCommitMessage |
@@ -874,13 +869,13 @@ Each decision keeps its id. **Enforced by** is that decision's one cell (L2).
 | R8 | Status is derived, never written: `aiwe status` prints from the tracker, the ledger and git; no hand-kept status file exists (#314 K40, owner, 2026-10-18). | valid | planned #314 |
 | R9 | One registry holds every DR and STD rule: DR-1…DR-23 and the §3.1 standards, with id, statement, enforcement, fix hint, milestone and revision; SPEC §3 mirrors it row for row (#314 K41, owner, 2026-10-18). | valid | test `repocheck/registry_test.go` TestRegistry |
 | R10 | Urgency comes from the milestone of the parent goal or of the rule's registry row; the record of §8.4 replaces the headings; the architect returns records and the engine writes `Closes` (#314 K42, owner, 2026-10-18). | valid | judgement: auditor |
-| R11 | Landing order: the report format first, then the record, the intake gates and the script part of closing in the bridge, then the obsolete issues, then this registry, then derived status, then sync; the product surface is `aiwe issue`, `aiwe unit check`, `aiwe verify` and `aiwe status` (#314 K43, owner, 2026-10-18). | valid | judgement: auditor |
+| R11 | Landing order: the report format first, then the record, the intake gates and the script part of closing in the bridge, then the obsolete issues, then this registry, then derived status, then sync; the product surface is `aiwe issue`, `aiwe unit check`, `aiwe verify` and `aiwe status` (#314 K43, owner, 2026-10-18). | superseded in part by O31 (the command is `aiwe item`) | judgement: auditor |
 | R12 | `aiwe metrics` reports the mechanical ratio; a judgement entry or a manual action seen a third time gets a mechanism, and the trend must fall (#314 K44, owner, 2026-10-18). | valid | planned #314 |
 
-Owner actions and lead tasks are issues; an owner action has the label `owner-action` (L8).
+Owner actions and lead tasks are work items; an owner action has type `owner-action` (L8, O31).
 ## 17. Facts and sources
 Checked 2026-10-10 unless dated.
-- GitHub REST: `state_reason` is `completed`, `not_planned`, `duplicate` or `reopened`; sub-issues ≤ 100 per parent and ≤ 8 levels; dependencies at `.../dependencies/blocked_by` and `/blocking`; 5 000 requests per hour per user token, ≤ 100 concurrent, content creation about 80 per minute and 500 per hour; the merge call takes `merge_method`, `commit_title`, `commit_message` and `sha`, which the head must match. Source: docs.github.com.
+- GitHub REST: `state_reason` is `completed`, `not_planned`, `duplicate` or `reopened`; 5 000 requests per hour per user token, ≤ 100 concurrent, content creation about 80 per minute and 500 per hour; the merge call takes `merge_method`, `commit_title`, `commit_message` and `sha`, which the head must match. Source: docs.github.com.
 - GitHub Actions: a path-filtered workflow leaves required checks pending; a job skipped by `if:` reports success, so a required job needs `needs` with `always()`; private repositories get 2 000 (Free) or 3 000 (Pro) minutes per month, public ones run free; each job rounds up to a whole minute. Private vulnerability reporting is for public repositories; attestations use `actions/attest` with `id-token: write` and `attestations: write` and verify with `gh attestation verify`. Source: docs.github.com.
 - `actions/setup-go` v7 caches by default and, with no `toolchain` line, reads the `go` line; `go.mod` pins `go 1.27.2`; GoReleaser v2.18.3 needs at least 1.27.1. Source: actions/setup-go docs; `go.mod`, 2026-10-11.
 - Anthropic: a rate limit returns 429 with `retry-after`; a spend limit returns 429 without it, code `enforced_spend_limit_reached`, reset on the 1st of the month 00:00 UTC; OpenRouter rejects with 402 and `limit_source` (platform.claude.com; openrouter.ai). Third parties may not "route requests through Free, Pro, or Max plan credentials on behalf of their users" or "collect, store, or intermediate Claude.ai credentials or session tokens"; a user's own login to the official CLI is allowed (code.claude.com, Legal and compliance). A router that altered subscription OAuth traffic saw bans about one minute after connecting, and its ban detector never auto-recovers (OmniRoute issues, `BAN_DETECTION.md`).
@@ -896,5 +891,6 @@ Checked 2026-10-10 unless dated.
 - golangci-lint v2.14.0 has the §5.17 linters; nilaway's README warns of false positives; `gocognit` adds 1 per whole `switch`; govulncheck and `go mod tidy -diff` exit non-zero on a finding; deadcode lists functions unreachable from `main`; `go test -run` matching no test prints `[no tests to run]` and exits 0; `go version -m` prints a binary's modules. Source: golangci-lint.run; pkg.go.dev; Go 1.27.2 runs, 2026-10-11.
 - Go: the race detector needs cgo and, except on macOS, a C compiler; `errgroup` cancels at the first error; `Cmd.Cancel` and `Cmd.WaitDelay` bound a child holding pipes; Windows quoting follows `CommandLineToArgvW` and batch files need `SysProcAttr.CmdLine`; lookup ignores the current directory (`ErrDot`). Source: go.dev; pkg.go.dev.
 - git 2.52.0: an empty `credential.helper` resets helpers; `GIT_CONFIG_NOSYSTEM` skips system config; `GIT_TERMINAL_PROMPT=0` stops prompts; `core.hooksPath` moves hooks; `protocol.ext.allow` defaults to `never`; `git diff` has `--no-ext-diff` and `--no-textconv`. Source: git documentation.
-- Isolation survey (one Windows machine, NTFS, 504-file repository): the §6.5 numbers; worktrees share refs and config; `--shared` clones break when the source prunes. Source: measurement; git-scm.com.
+- Isolation, measured 2026-10-25 (`olcum-yalitim.md`; Windows 11, NTFS, git 2.52.0, idle machine, load verdict `start` in 24 of 24 checks, median of 3): per run, the Go repository costs 0.51 s for a fresh shallow clone plus a 2.38 s build, and 0.28 s for a slot reset plus a 1.02 s build; a Node repository costs 0.45 to 2.73 s for a worktree, `clone --local` or shallow clone plus 39.3 to 42.9 s of `npm ci` and about 600 MB of new disk, and 0.32 s for a slot reset plus a 1.07 s no-op install and no new disk. After reset `git status --porcelain --ignored` showed 0 lines (Go) and only `!! node_modules/` (Node), 3 of 3. Worktrees gained no speed and share refs and config; `--shared` clones break when the source prunes. Source: measurement; git-scm.com.
+- Same-tree parallel work, 2026-10-03 to 2026-10-25 (session logs and agent reports; deduplicated lower bounds, about ±20 %): 59 `index.lock` errors on 14 days, 169 foreign-file commit warnings on 12 days, 12 "file modified since read" errors (a person or a linter can also cause one), 6 reports that another agent's half-done work broke a test or build. A file lock does not replace a separate tree: only a Windows share lock stopped every writer, git included, and only while its holder lived; `attrib +R` and a harness hook did not, `flock` is advisory and git-lfs lock does not block local writes (documentation). Source: `olcum-yalitim.md` M2 and M4, 2026-10-25.
 - The latest Contributor Covenant is 3.0 (contributor-covenant.org).
