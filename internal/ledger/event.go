@@ -252,13 +252,13 @@ func (e Event) validateFields(fields []string) error {
 }
 
 // absolutePath finds an absolute path in a text: POSIX, a Windows drive or UNC, at the start of the
-// text, after a space, a delimiter or a shell redirect, or after file:/, so a URL and a relative
-// path pass.
-var absolutePath = regexp.MustCompile(`(^|[\s"'(\[=:,;<>|]|file:/+)(/[A-Za-z0-9_.~-]+|[A-Za-z]:[\\/]|\\\\)`)
+// text, after a space, a delimiter or a shell redirect, or after file:/ in any case, so a URL and a
+// relative path pass.
+var absolutePath = regexp.MustCompile(`(^|[\s"'(\[=:,;<>|]|(?i:file):/+)(/[A-Za-z0-9_.~-]+|[A-Za-z]:[\\/]|\\\\)`)
 
-// emailAddress finds an e-mail address in a text, also one whose domain holds letters outside ASCII;
-// the top-level label is letters, so a package version such as tools@v0.30.1 passes.
-var emailAddress = regexp.MustCompile(`[A-Za-z0-9._%+-]+@[\p{L}0-9-]+(\.[\p{L}0-9-]+)*\.\p{L}{2,}`)
+// emailAddress finds an e-mail address in a text, also one whose local part or domain holds letters
+// outside ASCII; the top-level label is letters, so a package version such as tools@v0.30.1 passes.
+var emailAddress = regexp.MustCompile(`[\p{L}\p{N}._%+-]+@[\p{L}0-9-]+(\.[\p{L}0-9-]+)*\.\p{L}{2,}`)
 
 // validatePersonalData refuses an event that holds an absolute path or an e-mail address in any text
 // field (SPEC §8.5). The refusal names the kind of data and never repeats it.
