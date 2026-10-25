@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/sungurerdim/aiwe/internal/core"
 )
@@ -138,4 +139,43 @@ func TestHookRefusesBadInput(t *testing.T) {
 			}
 		})
 	}
+}
+
+// failingReader is a stdin whose read fails, as a broken pipe does.
+type failingReader struct{}
+
+func (failingReader) Read([]byte) (int, error) { return 0, errors.New("broken pipe") }
+
+// TestHookRefusesAnUnreadableStdin proves a stdin that cannot be read is refused; catches: a read
+// error swallowed, so a broken pipe reaches the hook as an allow.
+func TestHookRefusesAnUnreadableStdin(t *testing.T) {
+	t.Parallel()
+	in, err := ReadInput(failingReader{})
+	var ce *core.Error
+	if !errors.As(err, &ce) || ce.Outcome != core.OutcomeError {
+		t.Fatalf("ReadInput on a failing stdin = %#v, %v; want a *core.Error with outcome %q", in, err, core.OutcomeError)
+	}
+}
+
+// FuzzParseInput catches a parser of the untrusted harness input that panics, that accepts input
+// which is not UTF-8 or names no session, or that refuses with anything but a refusal (SPEC §5.13).
+func FuzzParseInput(f *testing.F) {
+	f.Add([]byte(`{"session_id":"s1"}`))
+	f.Add([]byte(`{"session_id":"s3","tool_name":"Bash","tool_input":{"command":"ls"},"future":[1,2]}`))
+	f.Add([]byte(`{"session_id":"s1"}{"session_id":"s2"}`))
+	f.Add([]byte("{\"session_id\":\"s\xff\"}"))
+	f.Add([]byte(""))
+	f.Fuzz(func(t *testing.T, b []byte) {
+		in, err := ParseInput(b)
+		if err != nil {
+			var ce *core.Error
+			if !errors.As(err, &ce) || ce.Outcome != core.OutcomeError {
+				t.Fatalf("ParseInput(%q) error = %v, want a *core.Error with outcome %q", b, err, core.OutcomeError)
+			}
+			return
+		}
+		if in.SessionID == "" || !utf8.Valid(b) {
+			t.Fatalf("ParseInput accepted %q as %#v: no session or not UTF-8", b, in)
+		}
+	})
 }

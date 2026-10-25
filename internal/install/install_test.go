@@ -238,6 +238,8 @@ func TestInstallRefusesSettingsItCannotMerge(t *testing.T) {
 		{"json array", "an array replaced by an object", `["a"]`},
 		{"hooks not an object", "a hooks value of another type overwritten", `{"hooks":"off"}`},
 		{"event not a list", "an event value of another type overwritten", `{"hooks":{"Stop":{"x":1}}}`},
+		{"group not an object", "a matcher group of another type overwritten", `{"hooks":{"Stop":["x"]}}`},
+		{"group hooks not a list", "a group's hooks of another type overwritten", `{"hooks":{"Stop":[{"hooks":"x"}]}}`},
 		{"invalid utf-8", "bytes that are not UTF-8 merged (DR-18)", "{\"model\":\"\xff\"}"},
 	}
 	for _, tc := range cases {
