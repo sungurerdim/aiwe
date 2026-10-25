@@ -8,6 +8,8 @@ import (
 	"github.com/sungurerdim/aiwe/internal/core"
 	"github.com/sungurerdim/aiwe/internal/engine"
 	"github.com/sungurerdim/aiwe/internal/gates"
+	"github.com/sungurerdim/aiwe/internal/hook"
+	"github.com/sungurerdim/aiwe/internal/install"
 )
 
 // version is the one exception to the package-variable ban (SPEC §5.3): the release build sets it
@@ -26,7 +28,9 @@ func registry() []core.Command {
 	}
 	cmds = append(cmds, core.ConfigCommands()...)
 	cmds = append(cmds, engine.Commands()...)
-	return append(cmds, gates.Commands()...)
+	cmds = append(cmds, gates.Commands()...)
+	cmds = append(cmds, hook.Commands(os.Stdin)...)
+	return append(cmds, install.Commands(os.UserHomeDir)...)
 }
 
 // runVersion reports the version injected at build time, or unknown when none was injected.

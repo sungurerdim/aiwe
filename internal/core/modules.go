@@ -27,6 +27,8 @@ func Modules() []Module {
 		engine    = "internal/engine"
 		mcp       = "internal/mcp"
 		repocheck = "internal/repocheck"
+		hook      = "internal/hook"
+		install   = "internal/install"
 	)
 	return []Module{
 		{Package: core, Serves: "S1, M7", Responsibility: "Command contract, result and errors, params, " +
@@ -53,8 +55,13 @@ func Modules() []Module {
 		{Package: repocheck, Serves: "S4", Imports: []string{core},
 			Responsibility: "This repository's own checks (repo/*, commit message, CI changes and report). " +
 				"Never shipped."},
+		{Package: hook, Serves: "S2", Imports: []string{core},
+			Responsibility: "The hook command of each harness event: reads the harness input and passes it on."},
+		{Package: install, Serves: "S1", Imports: []string{core},
+			Responsibility: "Harness installation: one adapter row per harness, hook entries merged into its " +
+				"settings, drift repaired, foreign entries untouched."},
 		{Package: path.Join("cmd", Product), Serves: "S7",
-			Imports:        []string{core, stacks, gates, roles, adapters, tracker, ledger, engine, mcp},
+			Imports:        []string{core, stacks, gates, roles, adapters, tracker, ledger, engine, mcp, hook, install},
 			Responsibility: "CLI and the mcp subcommand; wires the registry."},
 		{Package: "internal/cmd/repocheck", Serves: "S4", Imports: []string{core, repocheck},
 			Responsibility: "Entry point of repocheck."},
