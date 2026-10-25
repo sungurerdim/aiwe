@@ -186,7 +186,7 @@ Before anything is added (code, a file, a page, a setting, a layer, a gate, a te
 | Dead code (step `deadcode`) | unused code, speculative generality | CI |
 | Duplicate detector (a profile cell; planned) | a DRY violation, at the third copy | CI |
 | Two-point lint (§7.10) | one check at two gate points | gate lint |
-| Mutation on selected modules (STD-20) | a test that catches no defect | CI, weekly |
+| Mutation on changed lines (STD-20), 300 s budget (default) | a test that catches no defect | unit audit |
 ## 5. Coding rules and patterns
 Paths are under `internal/`.
 ### 5.1 Ports and adapters
