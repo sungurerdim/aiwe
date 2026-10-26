@@ -1,10 +1,10 @@
 # Status
 
 <!-- auto:start -->
-<!-- generated 2026-10-25T22:58:20Z by go run ./internal/cmd/records from git, gh issue list and gh run list; do not edit by hand -->
-- HEAD: 2a6d1e956c08 test(core): stop the live child without a race
-- Branch: main, ahead 0, behind 0 of the upstream
-- Issues: 227 open, 211 closed
+<!-- generated 2026-10-26T08:09:05Z by go run ./internal/cmd/records from git, gh issue list and gh run list; do not edit by hand -->
+- HEAD: a908261ab7d0 docs(standards): mark unshipped judges planned
+- Branch: main, ahead 2, behind 0 of the upstream
+- Issues: 229 open, 211 closed
 - CI (main, workflow ci): success, 2026-10-21T01:12:42Z, sha d130d8fce30c
 <!-- auto:end -->
 
