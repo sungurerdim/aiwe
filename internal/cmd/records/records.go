@@ -27,7 +27,8 @@ import (
 const (
 	// recordsCmd is the command named in every generated marker line.
 	recordsCmd = "go run ./internal/cmd/records"
-	// rootGoal is G0, the issue whose sub-issue tree TODO.md lists first.
+	// rootGoal is the root goal, the issue whose sub-issue tree TODO.md lists first. SPEC §13 (O42)
+	// removed G0 for the nested milestones, which this root does not yet follow (planned #540).
 	rootGoal = 438
 	// specPath holds the decision log.
 	specPath = "docs/SPEC.md"
