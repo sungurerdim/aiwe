@@ -143,14 +143,14 @@ The external standards aiwe builds on; each row below is the row of the one regi
 | STD-36 | Timestamps are RFC 3339 in UTC, as the ledger records them (§8.5). | §8.5 | test `ledger/record_test.go` TestAppendReadRun |
 | STD-37 | All text I/O is UTF-8 (RFC 3629), byte-exact and independent of the locale (DR-18, §5.14). | DR-18 | test `core/text_test.go` TestText |
 | STD-38 | Roots follow the XDG Base Directory specification, with the per-OS fallbacks of §6.4. | §6.4 | test `core/platform_test.go` TestPlatform |
-| STD-39 | Item and document text follows CommonMark/GFM (§8.4). | §8.4 | judgement: doc-writer |
+| STD-39 | Item and document text follows CommonMark/GFM (§8.4). | §8.4 | planned #46 |
 | STD-40 | SemVer names the release versions (§12.3, L9). | §12.3, L9 | planned: release step `svu next` (§12.3) |
 | STD-41 | Metrics follow the DORA mapping only: M3 is the change fail rate and M5 is the lead time (§1.5). | §1.5 | planned #45 |
-| STD-42 | Owner-action text and reports follow ASD-STE100 and ISO 24495-1 plain language. | reports, §9.3 | judgement: doc-writer |
+| STD-42 | Owner-action text and reports follow ASD-STE100 and ISO 24495-1 plain language. | reports, §9.3 | planned #46 |
 | STD-43 | Output carries no colour and honours `NO_COLOR` (§4). | §4 | test `core/output_test.go` TestOutput |
 | STD-44 | Licence and package metadata use SPDX identifiers (§12.1). | §12.1 | planned #379 |
-| STD-45 | WCAG 2.2 AA is the UI conformance level, so 2.5.8 Target Size (Minimum) holds: a target is at least 24 by 24 CSS pixels, with the standard's exceptions (spacing, equivalent, inline, user agent control, essential); the register names AA, not the 44 by 44 of 2.5.5 (W3C Recommendation, 12 December 2024; owner, 2026-10-17). | W3C Recommendation, 12 December 2024 | judgement: ux-reviewer |
-| STD-46 | WAI-ARIA Authoring Practices and the axe rules are the default UI criteria of the ux-reviewer. | ux-reviewer card | judgement: ux-reviewer |
+| STD-45 | WCAG 2.2 AA is the UI conformance level, so 2.5.8 Target Size (Minimum) holds: a target is at least 24 by 24 CSS pixels, with the standard's exceptions (spacing, equivalent, inline, user agent control, essential); the register names AA, not the 44 by 44 of 2.5.5 (W3C Recommendation, 12 December 2024; owner, 2026-10-17). | W3C Recommendation, 12 December 2024 | planned #70 |
+| STD-46 | WAI-ARIA Authoring Practices and the axe rules are the default UI criteria of the ux-reviewer. | ux-reviewer card | planned #70 |
 | STD-47 | OWASP ASVS, the OWASP Top 10 and the API Security Top 10 are the default criteria of the security-reviewer for a web or API project. | security-reviewer card | judgement: security-reviewer |
 | STD-48 | Ed25519 (RFC 8032) verifies the release signature, and SHA-256 (FIPS 180-4) names the release digests (L14, §12.3). | L14, §12.3 | planned #252 |
 | STD-49 | A live project restores its stored data from a backup in a drill at least every 90 days (default); the drill's dated evidence file is the check. | sre.google (Site Reliability Engineering, ch. 26, Data Integrity) | planned #447 |
