@@ -1,10 +1,10 @@
 # Status
 
 <!-- auto:start -->
-<!-- generated 2026-10-26T08:09:05Z by go run ./internal/cmd/records from git, gh issue list and gh run list; do not edit by hand -->
-- HEAD: a908261ab7d0 docs(standards): mark unshipped judges planned
-- Branch: main, ahead 2, behind 0 of the upstream
-- Issues: 229 open, 211 closed
+<!-- generated 2026-10-26T15:25:55Z by go run ./internal/cmd/records from git, gh issue list and gh run list; do not edit by hand -->
+- HEAD: 92930616e4ac docs: regenerate STATUS after the 7b0c154 ship
+- Branch: main, ahead 1, behind 0 of the upstream
+- Issues: 219 open, 233 closed
 - CI (main, workflow ci): success, 2026-10-21T01:12:42Z, sha d130d8fce30c
 <!-- auto:end -->
 
