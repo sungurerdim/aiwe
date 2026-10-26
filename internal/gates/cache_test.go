@@ -208,6 +208,7 @@ func cacheTestGit(t *testing.T, dir, stdin string, args ...string) string {
 // cacheTestRepo makes a git work tree whose first commit holds files.
 func cacheTestRepo(t *testing.T, files map[string]string) string {
 	t.Helper()
+	commandsTestSetRoots(t) // core.Git keeps its hooks directory under the state override, not a fresh root
 	dir, hooks := t.TempDir(), t.TempDir()
 	cacheTestGit(t, dir, "", "init", "-q")
 	for _, kv := range [][2]string{{"core.hooksPath", hooks}, {"user.name", "Ada Lovelace"},

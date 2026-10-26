@@ -49,16 +49,10 @@ func verifyTestStep(record string) gates.GateStep {
 }
 
 // verifyTestOwner opens an owner over fresh roots, so the verify's check runs in owned directories
-// (SPEC §6.4, §7.8).
+// (SPEC §6.4, §7.8). engineTestRoots keeps the git state override out of those roots.
 func verifyTestOwner(t *testing.T) *core.Owner {
 	t.Helper()
-	base := t.TempDir()
-	roots := core.OwnedRoots{State: filepath.Join(base, "state"), Temp: filepath.Join(base, "temp"),
-		Cache: filepath.Join(base, "cache"), Home: filepath.Join(base, "home"),
-		Canonical: []string{filepath.Join(base, "repo")}}
-	for _, d := range []string{roots.Home, roots.Canonical[0]} {
-		verifyTestOK(t, os.MkdirAll(d, 0o700))
-	}
+	roots := engineTestRoots(t)
 	self, err := core.CurrentProcess()
 	if err != nil {
 		t.Fatalf("CurrentProcess: %v", err)
