@@ -1,6 +1,7 @@
 package repocheck
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -420,6 +421,17 @@ func TestCIShapeGateDrift(t *testing.T) {
 		}
 		if !gateDrift(rep) {
 			t.Fatalf("findings = %+v, want gate_ci_drift", rep.Findings)
+		}
+	})
+
+	t.Run("a gate.json that is not a regular file is an error, unread", func(t *testing.T) {
+		// A FIFO would block the open; the guard of #199 refuses it from its mode.
+		_, _, err := CIShape(fstest.MapFS{
+			ciWorkflowPath: {Data: []byte(ciGateWorkflow)},
+			"gate.json":    {Data: []byte(ciGateJSON), Mode: fs.ModeNamedPipe},
+		})
+		if err == nil {
+			t.Fatalf("CIShape: err nil, want an error for a gate.json that is not a regular file")
 		}
 	})
 
