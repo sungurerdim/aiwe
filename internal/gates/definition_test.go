@@ -364,6 +364,17 @@ func TestStepsForChange(t *testing.T) {
 		}
 	})
 
+	t.Run("a literal input path with a glob character selects its step", func(t *testing.T) {
+		// The cache key counts docs/a[1].md as an input (matchesInputs); selection must agree.
+		open := Definition{FormatVersion: formatVersion, Steps: []GateStep{
+			gateStep("docs", []string{"docs"}, []string{"docs/a[1].md"}, "true"),
+		}}
+		got := StepsForChange(open, []string{"docs/a[1].md"})
+		if !slices.Equal(got, []string{"docs"}) {
+			t.Fatalf("StepsForChange(docs/a[1].md) = %v, want [docs]", got)
+		}
+	})
+
 	t.Run("when excludes a step the inputs name", func(t *testing.T) {
 		open := declaredGate()
 		open.Steps[0].Inputs = []string{"**/*.md", "**/*.go"}
