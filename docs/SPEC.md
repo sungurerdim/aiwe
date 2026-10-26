@@ -254,8 +254,10 @@ refuses an argument it cannot quote, because `cmd.exe` does not follow `CommandL
 `exec.ErrDot`. Enforced: test `core/process_test.go` on three OS.
 ### 5.21 Git calls
 Every git call of the engine and `repocheck` goes through `core.Git` (DR-10) with `-c core.fsmonitor=false
--c core.hooksPath=<empty owned dir> -c protocol.ext.allow=never -c submodule.recurse=false`, and `--no-ext-diff
---no-textconv` on `diff`, `log` and `show` (§17). The `file` protocol serves only the engine's own slots. A hook or
+-c core.hooksPath=<empty owned dir> -c protocol.ext.allow=never -c submodule.recurse=false
+-c fetch.fsckObjects=true -c transfer.fsckObjects=true`, and `--no-ext-diff --no-textconv` on `diff`, `log` and
+`show` (§17). A fetch or clone checks every object it receives and refuses a malformed tree, such as one with a
+`.git` entry; `fetch.fsckObjects` is fixed too because it outranks `transfer.fsckObjects` (#537). The `file` protocol serves only the engine's own slots. A hook or
 `diff.external` written into a slot's `.git/config` cannot make the engine run it (test `core/git_test.go`).
 ## 6. Architecture
 ### 6.1 Modules and packages
