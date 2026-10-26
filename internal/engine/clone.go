@@ -86,7 +86,7 @@ func NewClone(ctx context.Context, owner *core.Owner, spec CloneSpec) (*Clone, e
 	clone.owned = append(clone.owned, scratch)
 	clone.Scratch = scratch.Path()
 	clone.Env = runEnv(clone.Scratch)
-	if err := clone.make(ctx, run.Path()); err != nil {
+	if err := cloneAt(ctx, run.Path(), spec.Canonical, clone.Dir, spec.Base); err != nil {
 		return nil, errors.Join(err, clone.remove(ctx, owner))
 	}
 	return clone, nil
@@ -99,23 +99,23 @@ func (c *Clone) BindRequest(req *adapters.RunRequest) {
 	req.Env = append([]string{}, c.Env...)
 }
 
-// make clones the canonical repository into the run's own directory, fetches the base commit and
-// checks it out, so the run starts at its base commit whatever the HEAD of the canonical repository
-// is. into is the run's own directory, which holds the clone.
-func (c *Clone) make(ctx context.Context, into string) error {
-	source, err := fileURL(c.Canonical)
+// cloneAt clones the canonical repository into dir, fetches the base commit and checks it out, so
+// the clone starts at its base commit whatever the HEAD of the canonical repository is. into is the
+// owned directory that holds dir: a run's own directory, or a slot's (SPEC §6.5).
+func cloneAt(ctx context.Context, into, canonical, dir, base string) error {
+	source, err := fileURL(canonical)
 	if err != nil {
 		return err
 	}
 	if _, err := core.Git(ctx, into, "clone", "--depth", "1", "--no-tags", "--no-checkout",
-		"--config", "core.autocrlf=false", source, c.Dir); err != nil {
-		return fmt.Errorf("clone %s: %w", c.Canonical, err)
+		"--config", "core.autocrlf=false", source, dir); err != nil {
+		return fmt.Errorf("clone %s: %w", canonical, err)
 	}
-	if _, err := core.Git(ctx, c.Dir, "fetch", "--depth", "1", "--no-tags", "origin", c.Base); err != nil {
-		return fmt.Errorf("fetch the base commit %s: %w", c.Base, err)
+	if _, err := core.Git(ctx, dir, "fetch", "--depth", "1", "--no-tags", "origin", base); err != nil {
+		return fmt.Errorf("fetch the base commit %s: %w", base, err)
 	}
-	if _, err := core.Git(ctx, c.Dir, "checkout", "--detach", c.Base); err != nil {
-		return fmt.Errorf("check out the base commit %s: %w", c.Base, err)
+	if _, err := core.Git(ctx, dir, "checkout", "--detach", base); err != nil {
+		return fmt.Errorf("check out the base commit %s: %w", base, err)
 	}
 	return nil
 }
@@ -188,12 +188,20 @@ func fileURL(dir string) (string, error) {
 // write into the user's profile (DR-10, SPEC §6.7). The adapter of the run's source adds only its
 // own key back.
 func runEnv(scratch string) []string {
+	env := parentEnv()
+	for _, name := range scratchEnvNames() {
+		env = setEnv(env, name, scratch)
+	}
+	return env
+}
+
+// parentEnv returns the parent environment without its secret-shaped variables and without the
+// variables that point a git call at a repository outside the clone (DR-10, SPEC §6.5): the
+// environment of a run before its scratch is set, and the whole environment of a slot's restore.
+func parentEnv() []string {
 	env := core.CleanEnv(core.Environ(), nil)
 	for _, name := range repoEnvNames() {
 		env = dropEnv(env, name)
-	}
-	for _, name := range scratchEnvNames() {
-		env = setEnv(env, name, scratch)
 	}
 	return env
 }
@@ -259,4 +267,12 @@ func dropEnv(env []string, name string) []string {
 		out = append(out, entry)
 	}
 	return out
+}
+
+// wrapErr returns err with what in front of it, or nil for no error.
+func wrapErr(what string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%s: %w", what, err)
 }

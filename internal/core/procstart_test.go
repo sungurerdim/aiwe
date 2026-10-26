@@ -231,3 +231,73 @@ func TestRealPathEmpty(t *testing.T) {
 		t.Errorf("realPath(\"\") = %q, nil; want an error", got)
 	}
 }
+
+// TestProcessIDRoundTrip catches a ProcessID that does not survive being stored as its PID, Start
+// and StartID and rebuilt with ProcessFrom: one that OwnerAlive judges other than the original, an
+// exact start identity lost on the way so that a reused pid stays alive on Linux, or a ProcessFrom
+// with no start identity that differs from one built by hand.
+func TestProcessIDRoundTrip(t *testing.T) {
+	self, err := CurrentProcess()
+	if err != nil {
+		t.Fatalf("CurrentProcess: %v", err)
+	}
+	dead := procTestDeadPID(t)
+	const stored = "boot/12345"
+	rows := []struct {
+		name  string // the failure the row catches
+		exact bool   // the row needs an OS with an exact start identity
+		check func(t *testing.T)
+	}{
+		{"the running process rebuilt from its stored fields is not alive", false, func(t *testing.T) {
+			p := ProcessFrom(self.PID, self.Start, self.StartID())
+			if !OwnerAlive(p) {
+				t.Errorf("OwnerAlive(ProcessFrom(%d, %v, %q)) = false, want true: the process runs", self.PID, self.Start, self.StartID())
+			}
+		}},
+		{"the rebuilt identity differs from the original in a field", false, func(t *testing.T) {
+			p := ProcessFrom(self.PID, self.Start, self.StartID())
+			if p.PID != self.PID || !p.Start.Equal(self.Start) || p.id != self.id {
+				t.Errorf("ProcessFrom(PID, Start, StartID()) = {%d %v %q}, want the original {%d %v %q}", p.PID, p.Start, p.id, self.PID, self.Start, self.id)
+			}
+		}},
+		{"StartID does not return the start identity ProcessFrom was given", false, func(t *testing.T) {
+			if got := ProcessFrom(self.PID, self.Start, stored).StartID(); got != stored {
+				t.Errorf("ProcessFrom(%d, %v, %q).StartID() = %q, want %q", self.PID, self.Start, stored, got, stored)
+			}
+		}},
+		{"the same pid under another start identity is alive", true, func(t *testing.T) {
+			other := procTestLinuxID(t, self.PID) + "0"
+			if OwnerAlive(ProcessFrom(self.PID, self.Start, other)) {
+				t.Errorf("OwnerAlive(ProcessFrom(%d, %v, %q)) = true, want false: the pid runs under another start identity", self.PID, self.Start, other)
+			}
+		}},
+		{"a gone process rebuilt from its stored fields is alive", false, func(t *testing.T) {
+			if OwnerAlive(ProcessFrom(dead, self.Start, self.StartID())) {
+				t.Errorf("OwnerAlive(ProcessFrom(%d, %v, %q)) = true, want false: the process is gone", dead, self.Start, self.StartID())
+			}
+		}},
+		{"StartID of a ProcessID without a start identity is not empty", false, func(t *testing.T) {
+			if got := (ProcessID{PID: self.PID, Start: self.Start}).StartID(); got != "" {
+				t.Errorf("ProcessID{%d, %v}.StartID() = %q, want \"\"", self.PID, self.Start, got)
+			}
+		}},
+		{"ProcessFrom with no start identity differs from a ProcessID built by hand", false, func(t *testing.T) {
+			want := ProcessID{PID: self.PID, Start: self.Start}
+			got := ProcessFrom(self.PID, self.Start, "")
+			if got != want {
+				t.Errorf("ProcessFrom(%d, %v, \"\") = %+v, want %+v", self.PID, self.Start, got, want)
+			}
+			if OwnerAlive(got) != OwnerAlive(want) {
+				t.Errorf("OwnerAlive(ProcessFrom(%d, %v, \"\")) = %v, want %v as built by hand", self.PID, self.Start, OwnerAlive(got), OwnerAlive(want))
+			}
+		}},
+	}
+	for _, r := range rows {
+		t.Run(r.name, func(t *testing.T) {
+			if r.exact && !exactStartID {
+				t.Skipf("%s keeps no exact start identity", runtime.GOOS)
+			}
+			r.check(t)
+		})
+	}
+}

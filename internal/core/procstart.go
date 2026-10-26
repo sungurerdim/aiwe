@@ -18,6 +18,17 @@ type ProcessID struct {
 	id    string
 }
 
+// StartID returns the exact start identity of p, or "" when p has none. A caller that stores p
+// stores StartID() as it came from CurrentProcess and hands it back to ProcessFrom unchanged.
+func (p ProcessID) StartID() string { return p.id }
+
+// ProcessFrom rebuilds a ProcessID from its stored fields; an empty startID means none. The identity
+// is kept as given on every OS. On an OS without exact identities, OwnerAlive counts a ProcessID
+// that holds one alive (fail-closed), so a value stored elsewhere never removes a live owner.
+func ProcessFrom(pid int, start time.Time, startID string) ProcessID {
+	return ProcessID{PID: pid, Start: start, id: startID}
+}
+
 // CurrentProcess returns the identity of the running process.
 func CurrentProcess() (ProcessID, error) {
 	pid := os.Getpid()
