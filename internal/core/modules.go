@@ -65,6 +65,8 @@ func Modules() []Module {
 			Responsibility: "CLI and the mcp subcommand; wires the registry."},
 		{Package: "internal/cmd/repocheck", Serves: "S4", Imports: []string{core, repocheck},
 			Responsibility: "Entry point of repocheck."},
+		{Package: "internal/cmd/gatesteps", Serves: "S4", Imports: []string{gates},
+			Responsibility: "Entry point of the CI step selection: the gate steps a change runs, from gate.json."},
 		{Package: "internal/e2e", Serves: "M2", Imports: []string{core},
 			Responsibility: "End-to-end smoke tests (build tag smoke) that drive the built binary as a child " +
 				"process. Never shipped."},

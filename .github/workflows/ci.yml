@@ -15,20 +15,40 @@ permissions:
   contents: read
 
 jobs:
-  gate:
+  changes:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
+    outputs:
+      build: ${{ steps.change.outputs.build }}
     steps:
-      # why: every gate step reads the tree of the commit under test.
+      # why: the selector reads the diff that names the change, so it needs the base history
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # why: the gate runs go tools, and the go line of go.mod pins the toolchain they need.
+        with:
+          fetch-depth: 0
+      # why: the selector is a command of this module, so the toolchain must match go.mod
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      # why: this gate is the merge signal of the repository, and a red step must fail the run.
-      - name: gate
-        run: go run ./cmd/aiwe gates gate --repo .
+      - id: change
+        # why: gatesteps calls gates.StepsForChange on gate.json, the one source of the steps, so this
+        #      workflow never picks a step itself; --no-renames names both paths of a move, and a diff
+        #      that cannot be read leaves the list empty, which selects every step (fail closed)
+        run: |
+          set -eu
+          paths="${RUNNER_TEMP}/paths"
+          : > "$paths"
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            if ! git fetch --no-tags origin "+refs/heads/${GITHUB_BASE_REF}:refs/remotes/origin/${GITHUB_BASE_REF}" ||
+              ! git diff --no-renames --name-only -z "origin/${GITHUB_BASE_REF}" HEAD > "$paths"; then
+              echo "the diff of the change could not be read; every step runs" >&2
+              : > "$paths"
+            fi
+          fi
+          go run ./internal/cmd/gatesteps < "$paths" >> "$GITHUB_OUTPUT"
   build:
+    needs: changes
+    # build is true when the selection runs the go test step of gate.json, so the matrix follows it
+    if: needs.changes.outputs.build == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -49,3 +69,19 @@ jobs:
       - run: go vet ./...
       # why: the tests prove the behaviour on this OS.
       - run: go test ./...
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      # why: every gate step reads the tree of the commit under test.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # why: the gate runs go tools, and the go line of go.mod pins the toolchain they need.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      # why: this gate is the merge signal of the repository, and a red step must fail the run.
+      # why: the gate runs every step and takes no list from the change job: the runner counts a
+      #      required step left out of --step as not measured, so a partial list leaves the gate
+      #      incomplete and red (DR-6, SPEC §7.8); the change selection decides the build matrix only
+      - name: gate steps
+        run: go run ./cmd/aiwe gates gate --repo .

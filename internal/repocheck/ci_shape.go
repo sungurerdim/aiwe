@@ -18,6 +18,7 @@ const (
 	ruleConcurrencyShape = "concurrency_shape"
 	ruleJobsMissing      = "jobs_missing"
 	ruleExtraWorkflow    = "extra_workflow"
+	ruleGateCIDrift      = "gate_ci_drift"
 )
 
 // The one workflow and its directory (SPEC §12.1), and the concurrency SPEC §12.2 prescribes,
@@ -43,7 +44,8 @@ type CIShapeReport struct {
 // CIShape checks the CI workflow of the tree fsys against SPEC §12.2: every step carries a
 // `# why:` comment, every `uses:` names a full commit SHA, the triggers are pull_request and
 // workflow_dispatch with no push, the concurrency is the prescribed one, and ci.yml is the only
-// workflow. present is false when the tree has no ci.yml: the shape was not measured, and the
+// workflow, and the workflow takes its gate steps from gate.json alone (#316). present is false
+// when the tree has no ci.yml: the shape was not measured, and the
 // caller reports it so, never green (DR-6).
 func CIShape(fsys fs.FS) (rep CIShapeReport, present bool, err error) {
 	body, err := fs.ReadFile(fsys, ciWorkflowPath)
@@ -57,7 +59,11 @@ func CIShape(fsys fs.FS) (rep CIShapeReport, present bool, err error) {
 	if err != nil {
 		return CIShapeReport{}, false, fmt.Errorf("ci-shape: %w", err)
 	}
-	rep = workflowShape(parseYAML(string(body)))
+	roots := parseYAML(string(body))
+	rep = workflowShape(roots)
+	if err := appendGateDrift(fsys, roots, &rep); err != nil {
+		return CIShapeReport{}, false, err
+	}
 	for _, e := range entries {
 		ext := path.Ext(e.Name())
 		if e.IsDir() || (ext != ".yml" && ext != ".yaml") {
@@ -217,7 +223,8 @@ func unquote(s string) string {
 }
 
 // yamlNode is one key or list item of the block YAML subset a workflow uses: its line, its indent,
-// its key and inline value, the comments above and beside it, and the nodes below it.
+// its key and inline value, the comments above and beside it, the nodes below it, and the trimmed
+// non-blank lines of the block scalar it opens.
 type yamlNode struct {
 	line     int
 	indent   int
@@ -226,20 +233,23 @@ type yamlNode struct {
 	value    string
 	comments []string
 	children []*yamlNode
+	block    []string
 }
 
 // parseYAML reads the block structure of body by indent. The lines of a block scalar (`run: |`)
-// are skipped, so a shell comment in a script is never read as a YAML comment.
+// go to the block of the node that opens it, never to a node or a comment, so a shell comment in a
+// script is never read as a YAML comment.
 func parseYAML(body string) []*yamlNode {
 	root := &yamlNode{indent: -1}
 	stack := []*yamlNode{root}
 	var pending []string
-	block := -1
+	block, owner := -1, (*yamlNode)(nil)
 	for i, raw := range strings.Split(strings.ReplaceAll(body, "\r\n", "\n"), "\n") {
 		text := strings.TrimRight(raw, " \t")
 		trimmed := strings.TrimLeft(text, " ")
 		indent := len(text) - len(trimmed)
 		if inBlock(block, indent, trimmed) {
+			keepBlockLine(owner, trimmed)
 			continue
 		}
 		block = -1
@@ -255,10 +265,17 @@ func parseYAML(body string) []*yamlNode {
 			stack = attach(stack, n)
 		}
 		if last := nodes[len(nodes)-1]; isBlockScalar(last.value) {
-			block = last.indent
+			block, owner = last.indent, last
 		}
 	}
 	return root.children
+}
+
+// keepBlockLine adds a non-blank line of a block scalar, trimmed, to the block of owner.
+func keepBlockLine(owner *yamlNode, trimmed string) {
+	if trimmed != "" {
+		owner.block = append(owner.block, strings.TrimSpace(trimmed))
+	}
 }
 
 // inBlock reports whether a line of the given indent and trimmed text belongs to the block scalar

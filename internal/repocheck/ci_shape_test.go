@@ -1,10 +1,14 @@
 package repocheck
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
+
+	"github.com/sungurerdim/aiwe/internal/core"
 )
 
 // The pinned actions of the fixture: full commit SHAs with the version in a comment (SPEC §12.2).
@@ -56,13 +60,15 @@ jobs:
         run: go test ./...
 `
 
-// ciShapeOf runs CIShape on a tree that holds body as the one workflow.
+// ciShapeOf runs CIShape on a tree that holds body as the one workflow. The shape fixture has no
+// step selection and no gate.json, so gate_ci_drift is dropped: TestCIShapeGateDrift owns that rule.
 func ciShapeOf(t *testing.T, body string) CIShapeReport {
 	t.Helper()
 	rep, present, err := CIShape(fstest.MapFS{ciWorkflowPath: {Data: []byte(body)}})
 	if err != nil || !present {
 		t.Fatalf("CIShape: present %v, err %v; want the workflow measured", present, err)
 	}
+	rep.Findings = slices.DeleteFunc(rep.Findings, func(f Finding) bool { return f.Rule == "gate_ci_drift" })
 	return rep
 }
 
@@ -217,6 +223,210 @@ func TestCIShape(t *testing.T) {
 		if err != nil || present || rep.Workflows != 0 || len(rep.Findings) != 0 {
 			t.Fatalf("CIShape without %s: report %+v, present %v, err %v; want not present and no error",
 				ciWorkflowPath, rep, present, err)
+		}
+	})
+}
+
+// ciGateJSON is the gate the workflows below share. Its step ids are the ones a workflow may never
+// write out itself: the selection names them, and the workflow only reads its build output.
+const ciGateJSON = `{
+  "formatVersion": 1,
+  "steps": [
+    {"id": "format", "command": ["gofmt", "-l", "."], "required": true,
+      "inputs": ["**/*.go"], "when": ["source", "test-only"], "expect": {"exitCode": 0}},
+    {"id": "repo", "command": ["go", "run", "./internal/cmd/repocheck", "all", "--repo", "."], "required": true,
+      "inputs": ["**"], "when": ["docs", "source", "test-only"], "expect": {"exitCode": 0}},
+    {"id": "test", "command": ["go", "test", "-json", "./..."], "required": true,
+      "inputs": ["**/*.go"], "when": ["source", "test-only"], "expect": {"exitCode": 0}}
+  ]
+}
+`
+
+// ciGateWorkflow is a valid workflow (#316): the changes job has one output, build, which gatesteps
+// derives from gate.json and the build job reads; no job reads a step list, so the job has none. The
+// gate run takes no step list: the runner counts a required step left out of --step as not measured,
+// so a partial list fails the gate (DR-6). No step id or change class is written in the workflow.
+const ciGateWorkflow = `name: ci
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.change.outputs.build }}
+    steps:
+      # why: the selector reads the diff of the change
+      - uses: ` + checkoutRef + ` # v4.2.2
+      - id: change
+        # why: gatesteps reads gate.json, the one source of the steps
+        run: |
+          set -eu
+          paths="${RUNNER_TEMP}/paths"
+          if ! git diff --no-renames --name-only -z "origin/${GITHUB_BASE_REF}" HEAD > "$paths"; then
+            : > "$paths"
+          fi
+          go run ./internal/cmd/gatesteps < "$paths" >> "$GITHUB_OUTPUT"
+  build:
+    needs: changes
+    if: needs.changes.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: test # why: processes and paths differ by OS
+        run: go test ./...
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      # why: a step left out of the run is not measured, so the gate runs every step
+      - name: gate steps
+        run: |
+          set -eu
+          go run ./cmd/` + core.Product + ` gates gate --repo .
+`
+
+// ciShapeWithGate runs CIShape on a tree that holds the workflow and ciGateJSON.
+func ciShapeWithGate(t *testing.T, workflow string) CIShapeReport {
+	t.Helper()
+	rep, present, err := CIShape(fstest.MapFS{
+		ciWorkflowPath: {Data: []byte(workflow)},
+		"gate.json":    {Data: []byte(ciGateJSON)},
+	})
+	if err != nil || !present {
+		t.Fatalf("CIShape: present %v, err %v; want the workflow measured", present, err)
+	}
+	return rep
+}
+
+// gateDrift reports whether rep contains gate_ci_drift.
+func gateDrift(rep CIShapeReport) bool {
+	return slices.ContainsFunc(rep.Findings, func(f Finding) bool { return f.Rule == "gate_ci_drift" })
+}
+
+// TestCIShapeGateDrift catches CI step selection that is a second copy of gate.json (#316): a
+// selection step that writes its output itself instead of running gatesteps, a job output that does
+// not come from that step, a selection output no job reads, a diff that follows renames or swallows
+// its failure, a gate run that takes the selected list or any output of the selection job, which
+// leaves a required step not measured and the gate incomplete, a gate job that needs the selection
+// job, even through another job, or whose condition or env reads it in dot or index form, which can
+// skip the gate, a gate run that names its own ids or pastes an expression into its script, a
+// condition that names a step id, a change class read beside the selection, no gate run, and a
+// missing gate.json.
+func TestCIShapeGateDrift(t *testing.T) {
+	t.Run("accepts a workflow whose gate runs every step", func(t *testing.T) {
+		if rep := ciShapeWithGate(t, ciGateWorkflow); len(rep.Findings) != 0 {
+			t.Fatalf("findings = %+v, want none", rep.Findings)
+		}
+	})
+
+	const selector = `          go run ./internal/cmd/gatesteps < "$paths" >> "$GITHUB_OUTPUT"` + "\n"
+	const echo = `          echo 'build=true' >> "$GITHUB_OUTPUT"` + "\n"
+	const build = "      build: ${{ steps.change.outputs.build }}\n"
+	const gateRun = ` gates gate --repo .` + "\n"
+	const gateStep = "      - name: gate steps\n"
+	const gateJob = "  gate:\n    runs-on: ubuntu-latest\n"
+	const relayed = gateStep + "        env:\n          STEPS: ${{ needs.changes.outputs.steps }}\n" +
+		"        run: |\n          set -eu\n          steps=$(printf '%s' \"$STEPS\" | tr -d '\"[]')\n" +
+		"          go run ./cmd/x gates gate --repo . --step \"$steps\"\n"
+	refused := []struct{ name, old, repl string }{
+		{"a selection replaced by an echo", selector, echo},
+		{"an echo beside the selection", selector, selector + echo},
+		{"a build output written out", "build: ${{ steps.change.outputs.build }}", "build: 'true'"},
+		{"a selection output no job reads", build, "      steps: ${{ steps.change.outputs.steps }}\n" + build},
+		{"an output of another step", "${{ steps.change.outputs.build }}", "${{ steps.other.outputs.build }}"},
+		{"a diff that follows renames", "git diff --no-renames --name-only", "git diff --name-only"},
+		{"a swallowed failure", selector, "          git fetch --no-tags origin || true\n" + selector},
+		{"an expression pasted into the gate script", gateRun, gateRun + "          echo '${{ needs.changes.outputs.steps }}'\n"},
+		{"a gate run that relays the selected list", ciGateWorkflow[strings.Index(ciGateWorkflow, gateStep):], relayed},
+		{"a gate run that reads the list through env", gateStep,
+			gateStep + "        env:\n          STEPS: ${{ needs.changes.outputs.steps }}\n"},
+		{"a gate run that reads the build output through env", gateStep,
+			gateStep + "        env:\n          BUILD: ${{ needs.changes.outputs.build }}\n"},
+		{"a run that names its own step ids", gateRun, " gates gate --repo . --step format,repo,test\n"},
+		{"a condition that names a step id", "if: needs.changes.outputs.build == 'true'",
+			"if: contains(fromJSON(needs.changes.outputs.steps), 'test')"},
+		{"a condition on a change class", "      - name: gate steps\n",
+			"      - name: gate steps\n        if: contains(fromJSON(needs.changes.outputs.classes), 'docs')\n"},
+		{"a class marker comment", gateStep, gateStep + "        # class: docs\n"},
+		{"a second path classifier", gateRun, gateRun + `          case "*_test.go") add test-only ;;` + "\n"},
+		{"a second gate run with step ids", "  gate:\n",
+			"  again:\n    runs-on: ubuntu-latest\n    steps:\n      - name: some # why: x\n        run: go run ./cmd/x gates gate --repo . --step repo\n  gate:\n"},
+		{"no gate run", ciGateWorkflow[strings.Index(ciGateWorkflow, "  gate:\n"):], ""},
+		// A gate job that waits on the selection or reads it can be skipped on a docs-only change, and
+		// a skipped job passes a required check: the merge signal turns green with no gate run.
+		{"a gate job skipped on the build output", gateJob,
+			"  gate:\n    needs: changes\n    if: needs.changes.outputs.build == 'true'\n    runs-on: ubuntu-latest\n"},
+		{"a gate job that needs the selection job", gateJob, "  gate:\n    needs: changes\n    runs-on: ubuntu-latest\n"},
+		{"a gate job that needs it in a flow list", gateJob,
+			"  gate:\n    needs: [changes]\n    runs-on: ubuntu-latest\n"},
+		{"a gate job that needs it in a block list", gateJob,
+			"  gate:\n    needs:\n      - changes\n    runs-on: ubuntu-latest\n"},
+		{"a gate job that needs a job that needs it", gateJob, "  gate:\n    needs: build\n    runs-on: ubuntu-latest\n"},
+		{"a gate job condition on the build output", gateJob,
+			"  gate:\n    if: needs.changes.outputs.build == 'true'\n    runs-on: ubuntu-latest\n"},
+		{"a gate job condition that indexes the selection job", gateJob,
+			"  gate:\n    if: needs['changes'].outputs.build == 'true'\n    runs-on: ubuntu-latest\n"},
+		{"a gate job env that reads the build output", gateJob,
+			"  gate:\n    runs-on: ubuntu-latest\n    env:\n      BUILD: ${{ needs.changes.outputs.build }}\n"},
+		{"a gate step condition on the build output", gateStep,
+			gateStep + "        if: needs.changes.outputs.build == 'true'\n"},
+		{"a gate step env that indexes the selection job", gateStep,
+			gateStep + "        env:\n          BUILD: ${{ needs[\"changes\"].outputs.build }}\n"},
+		{"a gate job that needs it in a multi-line flow list", gateJob,
+			"  gate:\n    needs: [\n      build,\n      lint\n      ]\n    runs-on: ubuntu-latest\n"},
+	}
+	for _, tc := range refused {
+		t.Run("refuses "+tc.name, func(t *testing.T) {
+			if !strings.Contains(ciGateWorkflow, tc.old) {
+				t.Fatalf("workflow has no %q", tc.old)
+			}
+			body := strings.Replace(ciGateWorkflow, tc.old, tc.repl, 1)
+			if rep := ciShapeWithGate(t, body); !gateDrift(rep) {
+				t.Fatalf("findings = %+v, want gate_ci_drift", rep.Findings)
+			}
+		})
+	}
+
+	// The allowed side of the needs rule: a gate job may wait on a job that does not depend on the
+	// selection, and a job id that only starts with the selection's id is another job.
+	const lintJob = "  lint:\n    runs-on: ubuntu-latest\n    steps:\n      - name: vet # why: x\n        run: go vet ./...\n"
+	accepted := []struct{ name, old, repl string }{
+		{"a gate job that needs a job free of the selection", gateJob,
+			lintJob + "  gate:\n    needs: lint\n    runs-on: ubuntu-latest\n"},
+		{"a gate env that reads a job whose id only starts with the selection's", gateStep,
+			gateStep + "        env:\n          X: ${{ needs.changes_x.outputs.y }}\n"},
+	}
+	for _, tc := range accepted {
+		t.Run("accepts "+tc.name, func(t *testing.T) {
+			if !strings.Contains(ciGateWorkflow, tc.old) {
+				t.Fatalf("workflow has no %q", tc.old)
+			}
+			body := strings.Replace(ciGateWorkflow, tc.old, tc.repl, 1)
+			if rep := ciShapeWithGate(t, body); gateDrift(rep) {
+				t.Fatalf("findings = %+v, want no gate_ci_drift", rep.Findings)
+			}
+		})
+	}
+
+	t.Run("a missing gate.json is drift, not a pass", func(t *testing.T) {
+		rep, present, err := CIShape(fstest.MapFS{ciWorkflowPath: {Data: []byte(ciGateWorkflow)}})
+		if err != nil || !present {
+			t.Fatalf("CIShape: present %v, err %v; want the workflow measured", present, err)
+		}
+		if !gateDrift(rep) {
+			t.Fatalf("findings = %+v, want gate_ci_drift", rep.Findings)
+		}
+	})
+
+	t.Run("accepts this repository's workflow and gate.json", func(t *testing.T) {
+		rep, present, err := CIShape(os.DirFS(filepath.Join("..", "..")))
+		if err != nil || !present || len(rep.Findings) != 0 {
+			t.Fatalf("CIShape(repository): findings %+v, present %v, err %v; want none", rep.Findings, present, err)
 		}
 	})
 }

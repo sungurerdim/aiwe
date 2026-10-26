@@ -2,13 +2,26 @@
   "formatVersion": 1,
   "steps": [
     { "id": "format", "command": ["gofmt", "-l", "."], "required": true,
+      "inputs": ["**/*.go"], "when": ["source", "test-only"],
       "expect": { "exitCode": 0, "outputRejects": "\\S" } },
-    { "id": "lint", "command": ["go", "tool", "-modfile=tools/go.mod", "golangci-lint", "run", "--allow-parallel-runners", "./..."], "required": true, "expect": { "exitCode": 0 } },
-    { "id": "vuln", "command": ["go", "tool", "-modfile=tools/go.mod", "govulncheck", "./..."], "required": true, "expect": { "exitCode": 0 } },
-    { "id": "tidy", "command": ["go", "mod", "tidy", "-diff"], "required": true, "expect": { "exitCode": 0 } },
+    { "id": "lint", "command": ["go", "tool", "-modfile=tools/go.mod", "golangci-lint", "run", "--allow-parallel-runners", "./..."], "required": true,
+      "inputs": ["**/*.go", ".golangci.yml"], "when": ["source", "test-only", "config"],
+      "expect": { "exitCode": 0 } },
+    { "id": "vuln", "command": ["go", "tool", "-modfile=tools/go.mod", "govulncheck", "./..."], "required": true,
+      "inputs": ["**/*.go", "go.mod", "go.sum"], "when": ["source", "test-only", "deps"],
+      "expect": { "exitCode": 0 } },
+    { "id": "tidy", "command": ["go", "mod", "tidy", "-diff"], "required": true,
+      "inputs": ["**/*.go", "go.mod", "go.sum", "tools/go.mod", "tools/go.sum"], "when": ["source", "test-only", "deps"],
+      "expect": { "exitCode": 0 } },
     { "id": "deadcode", "command": ["go", "tool", "-modfile=tools/go.mod", "deadcode", "./cmd/...", "./internal/cmd/..."], "required": false,
+      "inputs": ["**/*.go"], "when": ["source", "test-only"],
       "expect": { "exitCode": 0, "outputRejects": "\\S" } },
-    { "id": "repo", "command": ["go", "run", "./internal/cmd/repocheck", "all", "--repo", "."], "required": true, "expect": { "exitCode": 0 } },
-    { "id": "test", "command": ["go", "test", "-json", "./..."], "required": true, "timeoutSeconds": 900, "expect": { "exitCode": 0 } }
+    { "id": "repo", "command": ["go", "run", "./internal/cmd/repocheck", "all", "--repo", "."], "required": true,
+      "inputs": ["**"], "when": ["docs", "test-only", "source", "config", "ci", "deps"],
+      "expect": { "exitCode": 0 } },
+    { "id": "test", "command": ["go", "test", "-json", "./..."], "required": true, "timeoutSeconds": 900,
+      "inputs": ["**/*.go", "go.mod", "go.sum", "tools/go.mod", "tools/go.sum",
+        "docs/SPEC-contracts.md", "docs/SPEC.md", "docs/standards.md"], "when": ["docs", "source", "test-only", "deps"],
+      "expect": { "exitCode": 0 } }
   ]
 }
