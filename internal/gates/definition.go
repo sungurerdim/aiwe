@@ -262,26 +262,11 @@ func inputsTouch(globs, paths []string) bool {
 		return true
 	}
 	for _, p := range paths {
-		for _, g := range globs {
-			if g == "**" || matchParts(strings.Split(g, "/"), strings.Split(p, "/")) {
-				return true
-			}
+		if matchesInputs(p, globs) {
+			return true
 		}
 	}
 	return false
-}
-func matchParts(g, p []string) bool {
-	if len(g) == 0 {
-		return len(p) == 0
-	}
-	if g[0] == "**" {
-		return matchParts(g[1:], p) || (len(p) > 0 && matchParts(g, p[1:]))
-	}
-	if len(p) == 0 {
-		return false
-	}
-	ok, err := path.Match(g[0], p[0])
-	return err == nil && ok && matchParts(g[1:], p[1:])
 }
 func classesOf(p string) []string {
 	var classes []string
