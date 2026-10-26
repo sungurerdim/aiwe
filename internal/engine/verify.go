@@ -15,57 +15,66 @@ import (
 // outputTailLines is how many lines of a verify's output reach the fix round (SPEC §8.5).
 const outputTailLines = 40
 
-// VerifyRequest is one unit verify: the step to run, the directory it runs in, the key inputs
-// and the cache that makes the same key run once (DR-8, SPEC §7.8).
+// VerifyRequest is one unit verify: the step to run, the directory it runs in and the cache that
+// makes the same key run once (DR-8, SPEC §7.8). The key is measured from the step and the
+// directory, never passed by the caller (DR-6).
 type VerifyRequest struct {
 	Step gates.GateStep
 	// Dir is the working directory of the step. It is not part of the key, so a fresh clone of the
 	// same tree maps to the same key (SPEC §6.5, §7.8).
 	Dir   string
-	Key   gates.KeyInput
 	Cache *gates.Cache
 }
 
 // VerifyReport is what a fix round reads: the step, the argv, the exit code, the result word and
-// the tail of the output (SPEC §7.3 step 6).
+// the tail of the output (SPEC §7.3 step 6). Uncached is true when the step ran outside the cache
+// because the work tree differs from HEAD under its declared inputs: no stored result was served
+// and this one was not stored.
 type VerifyReport struct {
 	Step     string
 	Command  []string
 	ExitCode int
 	Result   gates.Result
 	Tail     string
+	Uncached bool
 }
 
 // Verify runs req once per key. A key already in the cache returns the stored result and does not
-// run the step again. The key covers the step's argv, the digest of its declared inputs from git
-// objects and the env fingerprint, so a stored result is never served for a changed tree; the
-// step's id and the directory are not part of it, so a fresh clone of the same tree reuses the
-// stored result and a caller labels it with the step it asked for (§6.5, §7.3 step 6). A red step
-// returns its step, argv, exit code and output tail. The runner starts the step argv as a process
-// tree, never through a shell. Verify returns an error only when the step does not exit or the key
-// covers no tree.
+// run the step again. The key covers the argv the step runs, the digest of its declared inputs from
+// git objects and the env fingerprint, so a stored result is never served for a changed tree or
+// another command; the step's id and the directory are not part of it, so a fresh clone of the same
+// tree reuses the stored result and a caller labels it with the step it asked for (§6.5, §7.3 step
+// 6). A work tree that differs from HEAD under the step's declared inputs runs the step, serves no
+// stored result and stores none, and the report says so (fail-closed, SPEC §7.8). A nil cache is
+// refused by the cache and runs nothing. A step with no command, a directory that is not the work
+// tree root, a declared input with no blob, or a toolchain probe that does not print its values is
+// refused before the step runs (DR-6). A red step returns its step, argv, exit code and output
+// tail. The runner starts the step argv as a process tree, never through a shell. Verify returns an
+// error only when the step does not exit, the key cannot be measured, or the cache is nil.
 func Verify(ctx context.Context, runner *gates.Runner, req VerifyRequest) (VerifyReport, error) {
-	if req.Key.InputsDigest == "" {
-		return VerifyReport{}, &core.Error{Outcome: core.OutcomeError,
-			Expected: "a check key over the step's declared inputs", Found: "an empty InputsDigest",
-			Next: "summarise the step's declared inputs from git objects, then run the verify again"}
+	in, clean, err := gates.ResolveKeyInput(ctx, req.Dir, req.Step)
+	if err != nil {
+		return VerifyReport{}, err
 	}
-	key := gates.CheckKey(req.Key)
-	if req.Cache == nil {
-		return runOnce(ctx, runner, req)
-	}
-	stored, err := req.Cache.Once(key, func() (gates.CheckResult, error) {
+	build := func() (gates.CheckResult, error) {
 		report, err := runOnce(ctx, runner, req)
 		if err != nil {
 			return gates.CheckResult{}, err
 		}
-		return gates.CheckResult{Key: key, StepID: report.Step, Result: report.Result,
-			ExitCode: report.ExitCode, Tail: report.Tail}, nil
-	})
+		return gates.CheckResult{Result: report.Result, ExitCode: report.ExitCode, Tail: report.Tail}, nil
+	}
+	var stored gates.CheckResult
+	if clean {
+		stored, err = req.Cache.Once(gates.CheckKey(in), build)
+	} else {
+		stored, err = req.Cache.Uncached(build)
+	}
 	if err != nil {
 		return VerifyReport{}, err
 	}
-	return newReport(req.Step.ID, req.Step.Command, stored.ExitCode, stored.Result, stored.Tail), nil
+	report := newReport(req.Step.ID, req.Step.Command, stored.ExitCode, stored.Result, stored.Tail)
+	report.Uncached = !clean
+	return report, nil
 }
 
 // runOnce refuses a runner that cannot run a check, then runs req once.
