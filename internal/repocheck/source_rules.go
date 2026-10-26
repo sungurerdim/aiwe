@@ -96,7 +96,7 @@ type sourceChecker struct {
 	found   []SourceFinding
 }
 
-// checkSource refuses a shell script outside the allow-list, then checks one Go file; unreadable or unparsable source is a finding, and any other tracked file has no Go rule to break (K31).
+// checkSource refuses a shell script outside the allow-list, then checks one Go file; unreadable or unparsable source is a finding, and any other tracked file has no Go rule to break, bar SPEC's line cap (K31, L1).
 func checkSource(cfg SourceRulesConfig, f SourceFile) []SourceFinding {
 	if isShellScript(f) {
 		if f.Path == shellScriptAllow {
@@ -105,7 +105,7 @@ func checkSource(cfg SourceRulesConfig, f SourceFile) []SourceFinding {
 		return []SourceFinding{{Rule: ruleShellScript, Path: f.Path}}
 	}
 	if !strings.HasSuffix(f.Path, ".go") {
-		return nil
+		return specCapFindings(f)
 	}
 	text, err := core.ReadText(f.Body)
 	if err != nil {
@@ -125,6 +125,7 @@ func checkSource(cfg SourceRulesConfig, f SourceFile) []SourceFinding {
 	c.checkBuildLines(file)
 	c.checkConfigLiterals(file)
 	c.checkShellCalls(file)
+	c.checkSkips(file)
 	return c.found
 }
 
