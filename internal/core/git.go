@@ -97,14 +97,19 @@ func gitRun(ctx context.Context, dir, stdin string, args ...string) (GitResult, 
 // the flags that turn external diff and textconv programs off, then the caller's arguments.
 // status has neither --no-ext-diff nor --no-textconv. Passing --no-textconv makes git reject the
 // call, so status gets -c diff.external= before the subcommand: an empty value overrides a clone's
-// diff.external. Porcelain status does not run a textconv driver (SPEC §5.21).
+// diff.external. Porcelain status does not run a textconv driver (SPEC §5.21). The fsck options
+// make a fetch or clone check every object it receives and refuse a malformed or dangerous tree,
+// such as one with a .git entry; fetch.fsckObjects is fixed too because it outranks
+// transfer.fsckObjects, so a repository's false would switch the check off again.
 func gitArgv(hooks string, args []string) []string {
 	argv := []string{
 		"git",
 		"-c", "core.fsmonitor=false",
 		"-c", "core.hooksPath=" + filepath.ToSlash(hooks),
+		"-c", "fetch.fsckObjects=true",
 		"-c", "protocol.ext.allow=never",
 		"-c", "submodule.recurse=false",
+		"-c", "transfer.fsckObjects=true",
 	}
 	if args[0] == "status" {
 		argv = append(argv, "-c", "diff.external=")
