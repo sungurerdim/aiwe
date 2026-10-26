@@ -26,7 +26,7 @@ type gateStep struct {
 // names a step id or reads a change class. A missing or unreadable gate.json is drift, never a
 // pass (DR-6).
 func appendGateDrift(fsys fs.FS, roots []*yamlNode, rep *CIShapeReport) error {
-	data, err := fs.ReadFile(fsys, "gate.json")
+	data, err := readGateFile(fsys)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("ci-shape: %w", err)
 	}

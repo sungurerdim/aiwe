@@ -308,18 +308,24 @@ func LiveChecks(fsys fs.FS, checks []string) ([]string, error) {
 	return append(append(live, steps...), hooks...), nil
 }
 
-// requiredSteps returns the ids of the steps gate.json declares required; a gate.json that cannot
-// be read is an error, never an empty set (DR-6). A gate.json that is not a regular file, such as
-// a FIFO whose open blocks, or is over maxRepoFileBytes is refused from its mode, unopened (#199).
-func requiredSteps(fsys fs.FS) ([]string, error) {
+// readGateFile reads gate.json of fsys. A gate.json that is not a regular file, such as a FIFO
+// whose open blocks, or is over maxRepoFileBytes is refused from its mode, unopened (#199). A
+// missing file is an error that wraps fs.ErrNotExist.
+func readGateFile(fsys fs.FS) ([]byte, error) {
 	info, err := fs.Stat(fsys, gateFile)
-	if err == nil && (!info.Mode().IsRegular() || info.Size() > maxRepoFileBytes) {
-		err = fmt.Errorf("not a regular file of at most %d bytes", maxRepoFileBytes)
+	if err != nil {
+		return nil, err
 	}
-	var body []byte
-	if err == nil {
-		body, err = fs.ReadFile(fsys, gateFile)
+	if !info.Mode().IsRegular() || info.Size() > maxRepoFileBytes {
+		return nil, fmt.Errorf("not a regular file of at most %d bytes", maxRepoFileBytes)
 	}
+	return fs.ReadFile(fsys, gateFile)
+}
+
+// requiredSteps returns the ids of the steps gate.json declares required; a gate.json that cannot
+// be read is an error, never an empty set (DR-6).
+func requiredSteps(fsys fs.FS) ([]string, error) {
+	body, err := readGateFile(fsys)
 	if err != nil {
 		return nil, fmt.Errorf("trace: live enforcement: %s: %w", gateFile, err)
 	}
