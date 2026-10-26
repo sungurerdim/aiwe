@@ -378,6 +378,8 @@ Red signature = step id + sorted failing test ids + exit code + first error line
 | Red from the environment (tool, network, timeout) | `environment` | Retry once in another leased slot with a `rerunReason`; still red → `not_measured`; not charged. |
 | Isolation failed or disk short | `isolation_failed`, `no_disk` | Not started; queued; a second failure → `environment`. |
 | Over the run limit, or silent past the silence limit | `timed_out`, `stalled` | Stop the tree; kill evidence (§7.8); an attempt. |
+| The model-API loop (§10.2) reaches its turn cap before a final answer | `turn_limit` | The run ends with its report and the usage of the completed turns; the step stops with this outcome. Next: raise the turn limit or narrow the task, then run the unit again. |
+| The model-API loop (§10.2) is still running when its own time limit ends | `time_limit` | The run ends with its report and the usage of the completed turns; the step stops with this outcome. Next: raise the time limit or narrow the task, then run the unit again. |
 | Observed model differs; account restricted | `model_mismatch`, `account_restricted` | Not charged; next candidate (§8.1); a restricted source is set `restricted` (§7.6) with an `owner-action` item. |
 | No candidate for a role | `no_capacity` | The unit waits; other roles continue. |
 | `aiwe item take` finds no ready item for the role | `none_ready` | Nothing is held (§6.6); the reply names the first blocker per candidate, or the load state when it is not `start`. |
