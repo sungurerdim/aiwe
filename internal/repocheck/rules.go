@@ -1,10 +1,12 @@
 package repocheck
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/sungurerdim/aiwe/internal/core"
@@ -283,4 +285,76 @@ func sectionStart(lines []string, head string) int {
 		}
 	}
 	return -1
+}
+
+// LiveChecks returns the ids of the checks the gate of fsys really runs, as docs/standards.md
+// writes them: `repo/<check>` for each name in checks, each required gate.json step, and each hook
+// of .githooks, which runs one repocheck command. An unreadable gate.json is an error (DR-6).
+func LiveChecks(fsys fs.FS, checks []string) ([]string, error) {
+	steps, err := requiredSteps(fsys)
+	if err != nil {
+		return nil, err
+	}
+	var live []string
+	if slices.Contains(steps, repoStep) {
+		for _, name := range checks {
+			live = append(live, repoStep+"/"+name)
+		}
+	}
+	hooks, err := hookNames(fsys)
+	if err != nil {
+		return nil, err
+	}
+	return append(append(live, steps...), hooks...), nil
+}
+
+// requiredSteps returns the ids of the steps gate.json declares required; a gate.json that cannot
+// be read is an error, never an empty set (DR-6). A gate.json that is not a regular file, such as
+// a FIFO whose open blocks, or is over maxRepoFileBytes is refused from its mode, unopened (#199).
+func requiredSteps(fsys fs.FS) ([]string, error) {
+	info, err := fs.Stat(fsys, gateFile)
+	if err == nil && (!info.Mode().IsRegular() || info.Size() > maxRepoFileBytes) {
+		err = fmt.Errorf("not a regular file of at most %d bytes", maxRepoFileBytes)
+	}
+	var body []byte
+	if err == nil {
+		body, err = fs.ReadFile(fsys, gateFile)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("trace: live enforcement: %s: %w", gateFile, err)
+	}
+	var gate struct {
+		Steps []struct {
+			ID       string `json:"id"`
+			Required bool   `json:"required"`
+		} `json:"steps"`
+	}
+	if err := json.Unmarshal(body, &gate); err != nil {
+		return nil, fmt.Errorf("trace: live enforcement: %s: %w", gateFile, err)
+	}
+	var steps []string
+	for _, s := range gate.Steps {
+		if s.Required {
+			steps = append(steps, s.ID)
+		}
+	}
+	return steps, nil
+}
+
+// hookNames returns the names of the hooks of .githooks; a tree without the directory has none.
+func hookNames(fsys fs.FS) ([]string, error) {
+	entries, err := fs.ReadDir(fsys, hooksDir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("trace: live enforcement: %s: %w", hooksDir, err)
+	}
+	var names []string
+	for _, e := range entries {
+		if !e.IsDir() {
+			names = append(names, e.Name())
+		}
+	}
+	return names, nil
 }

@@ -65,6 +65,7 @@ func checks() []check {
 		{"source-rules", findingsOnly(runSourceRules)},
 		{"deps", findingsOnly(runDeps)},
 		{"ci-shape", runCIShape},
+		{"trace", runTrace},
 	}
 }
 
@@ -161,6 +162,32 @@ func runCIShape(_ context.Context, repo string) (measured, error) {
 	}
 	return measured{findings: rep.Findings,
 		detail: fmt.Sprintf("%d workflows, %d jobs, %d steps", rep.Workflows, rep.Jobs, rep.Steps)}, nil
+}
+
+// runTrace traces each rule row of docs/standards.md to a live enforcement and each `// rule:`
+// marker and card Gate value to a rule row (the-gate-fails-a-rule-id-without-a-live-enforcement).
+// The reads go through an os.Root at repo, so a link out of the repository is an error.
+func runTrace(_ context.Context, repo string) (measured, error) {
+	root, err := os.OpenRoot(repo)
+	if err != nil {
+		return measured{}, fmt.Errorf("trace: %w", err)
+	}
+	defer func() { _ = root.Close() }()
+	names := make([]string, 0, len(checks()))
+	for _, c := range checks() {
+		names = append(names, c.name)
+	}
+	live, err := repocheck.LiveChecks(root.FS(), names)
+	if err != nil {
+		return measured{}, err
+	}
+	rep, err := repocheck.Trace(repo, live)
+	if err != nil {
+		return measured{}, err
+	}
+	return measured{findings: rep.Findings, detail: fmt.Sprintf(
+		"%d rules: %d live, %d planned, %d judgement, %d decision-only",
+		rep.Total, rep.Live, rep.Planned, rep.Judgement, rep.DecisionOnly)}, nil
 }
 
 // runCommitMsg checks the commit message on stdin, as the commit-msg hook and the CI step pass it

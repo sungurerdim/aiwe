@@ -357,3 +357,75 @@ func TestRepocheckCommitMsg(t *testing.T) {
 		})
 	}
 }
+
+// traceFixture is writeFixture plus the two files a trace run reads: a gate.json that declares step
+// repo, and a registry with one rule row whose test enforcement names registryTest. The fixture
+// module declares declaredTest, so the two differ when the rule has no live test.
+func traceFixture(t *testing.T, registryTest, declaredTest string) string {
+	t.Helper()
+	repo := writeFixture(t)
+	files := map[string]string{
+		"gate.json": `{"formatVersion":1,"steps":[{"id":"repo",` +
+			`"command":["go","run","./internal/cmd/repocheck","all","--repo","."],` +
+			`"required":true,"expect":{"exitCode":0}}]}`,
+		"docs/standards.md": "| id | statement | enforcement | fix | milestone | rev |\n" +
+			"|---|---|---|---|---|---|\n" +
+			"| DR-30 | A rule id keeps a live enforcement. | test `fixture/fixture_test.go` " +
+			registryTest + " | Restore the test. | M-Skeleton | 01234567 |\n",
+		"internal/fixture/fixture_test.go": "package fixture\n\nimport \"testing\"\n\n// " +
+			declaredTest + " proves the rule the registry names.\nfunc " + declaredTest +
+			"(t *testing.T) {\n\tif Answer() != 42 {\n\t\tt.Fatalf(\"Answer() = %d, want 42\", Answer())\n\t}\n}\n",
+	}
+	for rel, body := range files {
+		p := filepath.Join(repo, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			t.Fatalf("mkdir %s: %v", rel, err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
+	return repo
+}
+
+// TestRepocheckTraceAll catches a gate step repo that never runs the trace check, and a trace check
+// that passes a rule row whose test enforcement no file declares: a rule can lose its only test
+// without the gate turning red (the-gate-fails-a-rule-id-without-a-live-enforcement).
+func TestRepocheckTraceAll(t *testing.T) {
+	t.Setenv("GOPROXY", "off")
+	t.Setenv("GOTOOLCHAIN", "local")
+	t.Setenv("GOFLAGS", "-mod=readonly")
+	if !slices.ContainsFunc(checks(), func(c check) bool { return c.name == "trace" }) {
+		t.Fatal("checks() holds no trace check; `repocheck all` would never trace a rule id")
+	}
+	tests := []struct{ name, registryTest, declaredTest, want string }{
+		{"a rule whose test exists is green", "TestAnswer", "TestAnswer", "green"},
+		{"a rule whose test is absent is red", "TestGone", "TestAnswer", "red"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := traceFixture(t, tc.registryTest, tc.declaredTest)
+			var out bytes.Buffer
+			code := core.RunCLI(t.Context(), commands(), []string{"all", "--repo", repo, "--format", "json"}, &out, io.Discard)
+			var rep allReport
+			if err := json.Unmarshal(out.Bytes(), &rep); err != nil {
+				t.Fatalf("repocheck all --format json is not one result envelope: %v; output %q", err, out.String())
+			}
+			got := ""
+			for _, c := range rep.Data.Checks {
+				if c.Check == "trace" {
+					got = c.Result
+				}
+			}
+			if got != tc.want {
+				t.Fatalf("trace result = %q, want %q; output %q", got, tc.want, out.String())
+			}
+			if tc.want == "red" && !strings.Contains(out.String(), "no_live_enforcement") {
+				t.Fatalf("repocheck all output %q misses the finding no_live_enforcement", out.String())
+			}
+			if tc.want == "red" && code == 0 {
+				t.Fatalf("repocheck all exit code = 0 with trace red; output %q", out.String())
+			}
+		})
+	}
+}
