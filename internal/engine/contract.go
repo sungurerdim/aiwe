@@ -20,13 +20,15 @@ const (
 )
 
 // ContractInput is the card text, the unit text and the run they are built for. Repository,
-// Branch and FileSet are written into SCOPE. CapBytes limits the result only; it is not part of
-// the text. An empty repository, branch or file set is written as given.
+// Branch and FileSet are written into SCOPE. Fix, when non-empty, is the task of a fix round and
+// replaces the UNIT section, so a fix round receives the delta only. CapBytes limits the result
+// only; it is not part of the text. An empty repository, branch or file set is written as given.
 type ContractInput struct {
 	RunID      string
 	Role       string
 	Card       string
 	Unit       string
+	Fix        string
 	Repository string
 	Branch     string
 	FileSet    []string
@@ -40,9 +42,11 @@ type Contract struct {
 }
 
 // BuildContract assembles the SPEC §9.2 sections from the card, the unit and the run's
-// repository, branch and file set. An auditor contract with no run id is refused before the text is
-// built: its RETURN section writes the VERDICT line to that id (SPEC §9.1, §9.3, DR-5). A result
-// over the cap is prompt_too_large and names the size it measured.
+// repository, branch and file set. The card, RULES and SCOPE come first as the stable prefix a fix
+// round keeps, and then the task: UNIT, or FIX when a fix round supplies its delta (SPEC §7.3 step
+// 10, K9). An auditor contract with no run id is refused before the text is built: its RETURN
+// section writes the VERDICT line to that id (SPEC §9.1, §9.3, DR-5). A result over the cap is
+// prompt_too_large and names the size it measured.
 func BuildContract(in ContractInput) (Contract, error) {
 	if err := checkBound(in); err != nil {
 		return Contract{}, err
@@ -77,9 +81,13 @@ func checkBound(in ContractInput) error {
 func contractText(in ContractInput) string {
 	var b strings.Builder
 	writeSection(&b, "ROLE", in.Card)
-	writeSection(&b, "UNIT", in.Unit)
-	writeSection(&b, "SCOPE", scopeText(in))
 	writeSection(&b, "RULES", rulesText())
+	writeSection(&b, "SCOPE", scopeText(in))
+	if in.Fix != "" {
+		writeSection(&b, "FIX", in.Fix)
+	} else {
+		writeSection(&b, "UNIT", in.Unit)
+	}
 	writeSection(&b, "VERIFY", verifyText())
 	writeSection(&b, "EVIDENCE", evidenceText())
 	writeSection(&b, "RETURN", returnText(in))

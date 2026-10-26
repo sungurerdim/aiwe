@@ -14,9 +14,11 @@ import (
 // same card and unit produce the same text under every cap that accepts them.
 const defaultContractCap = 32 << 10
 
-// contractHeadings returns the fixed sections of every prompt contract, in order (SPEC §9.2).
+// contractHeadings returns the fixed sections of a writer's prompt contract, in order (SPEC §9.2):
+// the stable system sections first, then the unit the run works, so a fix round keeps the same
+// prefix and swaps only its task section (SPEC §7.3 step 10).
 func contractHeadings() []string {
-	return []string{"ROLE", "UNIT", "SCOPE", "RULES", "VERIFY", "EVIDENCE", "RETURN"}
+	return []string{"ROLE", "RULES", "SCOPE", "UNIT", "VERIFY", "EVIDENCE", "RETURN"}
 }
 
 const (
@@ -217,6 +219,53 @@ func measureContract(t *testing.T, in ContractInput) Contract {
 	return mustContract(t, in)
 }
 
+// TestContractFixRoundKeepsTheSystemPrefix proves a fix round's prompt keeps the writer's ROLE,
+// RULES and SCOPE prefix and carries the FIX delta instead of the unit, so the prefix cache hits
+// and the fix task is the red record only (SPEC §9.2, §7.3 step 10, K9).
+func TestContractFixRoundKeepsTheSystemPrefix(t *testing.T) {
+	t.Parallel()
+	writerIn := withRunScope(ContractInput{RunID: "01J8Z3K7Q5W0H8N4P2R6T1V9YA",
+		Role: "engineer", Card: engineerCard, Unit: unitText()})
+	fixIn := writerIn
+	fixIn.Unit = ""
+	fixIn.Fix = "Failing: the verify test exited 1\nDiff stat:\n1 file changed"
+	writer, err := BuildContract(writerIn)
+	if err != nil {
+		t.Fatalf("writer contract: %v", err)
+	}
+	fix, err := BuildContract(fixIn)
+	if err != nil {
+		t.Fatalf("fix contract: %v", err)
+	}
+	if !strings.Contains(fix.Text, "\nFIX\n") || !strings.Contains(fix.Text, fixIn.Fix) {
+		t.Fatalf("fix contract carries no FIX section with its delta:\n%s", fix.Text)
+	}
+	if strings.Contains(fix.Text, "\nUNIT\n") {
+		t.Fatalf("fix contract carries the unit instead of the delta only:\n%s", fix.Text)
+	}
+	prev := -1
+	for _, heading := range []string{"ROLE", "RULES", "SCOPE", "FIX", "VERIFY", "EVIDENCE", "RETURN"} {
+		at := headingIndex(fix.Text, heading)
+		if at < 0 || at <= prev {
+			t.Fatalf("fix contract writes %s missing or out of order:\n%s", heading, fix.Text)
+		}
+		prev = at
+	}
+	if taskPrefix(writer.Text) != taskPrefix(fix.Text) {
+		t.Fatalf("fix contract does not keep the writer's system prefix:\n%s\n---\n%s", writer.Text, fix.Text)
+	}
+}
+
+// taskPrefix returns the stable system prefix of a contract: everything before its task section.
+func taskPrefix(text string) string {
+	for _, task := range []string{"UNIT", "FIX"} {
+		if at := headingIndex(text, task); at >= 0 {
+			return text[:at]
+		}
+	}
+	return text
+}
+
 // mustContract calls the production builder and requires a contract that embeds the
 // card and the unit under the caller's cap.
 func mustContract(t *testing.T, in ContractInput) Contract {
@@ -354,5 +403,33 @@ func namesInt(s string, n int) bool {
 			return true
 		}
 		rest = rest[i+1:]
+	}
+}
+
+// headingIndex returns the byte index of one contract heading, or -1 when the prompt has none.
+func headingIndex(prompt, heading string) int {
+	if strings.HasPrefix(prompt, heading+"\n") {
+		return 0
+	}
+	if i := strings.Index(prompt, "\n"+heading+"\n"); i >= 0 {
+		return i + 1
+	}
+	return -1
+}
+
+// assertSystemThenTask requires the stable system sections first and the task next, in the order
+// §7.3 step 10 gives the prompt: card, RULES, stable SCOPE, then UNIT or FIX (SPEC §9.2, K9).
+func assertSystemThenTask(t *testing.T, prompt, task string) {
+	t.Helper()
+	prev := -1
+	for _, heading := range []string{"ROLE", "RULES", "SCOPE", task, "VERIFY", "EVIDENCE", "RETURN"} {
+		i := headingIndex(prompt, heading)
+		if i < 0 {
+			t.Fatalf("prompt has no %s section:\n%s", heading, prompt)
+		}
+		if i <= prev {
+			t.Fatalf("prompt writes %s out of order:\n%s", heading, prompt)
+		}
+		prev = i
 	}
 }
