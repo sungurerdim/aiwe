@@ -2,6 +2,7 @@ package gates
 
 import (
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -36,7 +37,7 @@ func TestRedClassRuleTable(t *testing.T) {
 		{"pytest collected nothing", 5, []string{"collected 0 items"}, "real_bug.no_tests"},
 		{"wrong working directory", 1, []string{"go: go.mod file not found in current directory or any parent directory; see 'go help modules'"}, "environment.workdir"},
 		{"custom linter without its config", 3, []string{"custom-gcl: configuration file not found"}, "environment.workdir"},
-		{"windows ACL read", 1, []string{"read the ACL of C" + `:\Users\RUNNER~1\AppData\Local\Temp\x: exit status 1`}, "environment.permission"},
+		{"windows ACL read", 1, []string{"read the ACL of " + filepath.Join(t.TempDir(), "x") + ": exit status 1"}, "environment.permission"},
 		{"permission denied", 1, []string{"open /var/x: permission denied"}, "environment.permission"},
 		{"dns failure", 1, []string{"dial tcp: lookup proxy.golang.org: no such host"}, "environment.network"},
 		{"connection refused", 1, []string{"dial tcp 127.0.0.1:5432: connect: connection refused"}, "environment.network"},
