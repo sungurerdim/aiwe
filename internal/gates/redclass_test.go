@@ -1,6 +1,7 @@
 package gates
 
 import (
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -54,6 +55,14 @@ func TestRedClassRuleTable(t *testing.T) {
 		{"build output missing", 1, []string{"Error: Could not find a production build in the '.next' directory."}, "stale.build-output"},
 		{"stale pyc", 1, []string{"RuntimeError: bad magic number in 'x'"}, "stale.cache"},
 		{"environment wins over a later assertion", 1, []string{"dial tcp: lookup x: no such host", "--- FAIL: TestFetch (0.00s)"}, "environment.network"},
+		{"toolchain pin beats a later setup failure", 1, []string{"go: go.mod requires go >= 1.27.3 (running go 1.26.1)", "FAIL\tgithub.com/x/core [setup failed]"}, "stale.toolchain"},
+		{"stale build cache beats a later build failure", 1, []string{"go: build cache is corrupt: stale object", "FAIL\tgithub.com/x/core [build failed]"}, "stale.build_cache"},
+		{"permission beats a later assertion", 1, []string{"open /var/x: permission denied", "--- FAIL: TestWrite (0.00s)"}, "environment.permission"},
+		{"disk full beats a later panic", 2, []string{"write /tmp/x: no space left on device", "panic: write failed"}, "environment.disk"},
+		{"a name before the phrase is not a variable name", 1, []string{"HOME environment variable is not set"}, "unknown"},
+		{"a lower-case word after the phrase is not a variable name", 1, []string{"the environment variable is required"}, "unknown"},
+		{"signature inside the 4096-byte scan limit", 1, []string{strings.Repeat("x", 4000) + " no space left on device"}, "environment.disk"},
+		{"signature past the 4096-byte scan limit is not read", 1, []string{strings.Repeat("x", 5000) + " no space left on device"}, "unknown"},
 		{"green summary has no rule", 1, []string{"ok  \tgithub.com/x/core\t0.012s"}, "unknown"},
 		{"repocheck finding has no rule", 1, []string{"missing_repo_file ci.yml", "exit status 1"}, "unknown"},
 		{"no output at all", 1, nil, "unknown"},
@@ -165,6 +174,11 @@ func TestEverySubclassCarriesAFixHint(t *testing.T) {
 	if hint, ok := RedFixHint("environment.missing-env:PORT"); !ok || !strings.Contains(hint, "PORT") {
 		t.Errorf("RedFixHint(missing-env:PORT) = %q, %v, want a hint naming PORT", hint, ok)
 	}
+	for _, bad := range []string{"environment.missing-env:A\nB", "environment.missing-env:A\x00B", "environment.missing-env:port", "environment.missing-env:", "environment.missing-env:A B"} {
+		if hint, ok := RedFixHint(bad); ok {
+			t.Errorf("RedFixHint(%q) = %q, want a refusal: the name is not an environment variable name", bad, hint)
+		}
+	}
 	got := ClassifyRed(RedRun{Step: "test", Exit: 1, Output: []string{"panic: x"}})
 	if want, _ := RedFixHint("real_bug.panic"); got.Hint != want || want == "" {
 		t.Errorf("verdict hint = %q, want the hint of real_bug.panic %q", got.Hint, want)
@@ -247,4 +261,81 @@ func FuzzClassifyRed(f *testing.F) {
 			t.Fatalf("matched line has %d runes, want at most %d", len([]rune(got.Line)), redShowMax)
 		}
 	})
+}
+
+// TestRedHintsMatchContracts pins that the rule table and the red-class table of
+// docs/SPEC-contracts.md 8.5 hold the same subclasses with the same hints. A subclass or a hint
+// that is only in one of them, or that differs, fails.
+func TestRedHintsMatchContracts(t *testing.T) {
+	raw, err := os.ReadFile("../../docs/SPEC-contracts.md")
+	if err != nil {
+		t.Fatalf("read SPEC-contracts: %v", err)
+	}
+	spec := contractHints(string(raw))
+	if len(spec) == 0 {
+		t.Fatal("no subclass rows found under the heading \"Subclasses and default fix hints (L64):\"")
+	}
+	code := map[string]string{}
+	for _, s := range RedSubclasses() {
+		hint, _ := RedFixHint(s)
+		code[s] = hint
+	}
+	for s, hint := range code {
+		got, ok := spec[s]
+		switch {
+		case !ok:
+			t.Errorf("subclass %q is in the rule table and not in SPEC-contracts 8.5", s)
+		case got != hint:
+			t.Errorf("hint of %q differs: SPEC-contracts %q, rule table %q", s, got, hint)
+		}
+	}
+	for s := range spec {
+		if _, ok := code[s]; !ok {
+			t.Errorf("subclass %q is in SPEC-contracts 8.5 and not in the rule table", s)
+		}
+	}
+}
+
+// TestContractHintsParse pins the reader of the contract table: the rows after the heading,
+// and nothing past the table.
+func TestContractHintsParse(t *testing.T) {
+	doc := "x\nSubclasses and default fix hints (L64):\n\n| Class and subclass | Default fix hint |\n|---|---|\n" +
+		"| `a.b` | Do it with `c`. |\n| `d.e:<NAME>` | Set `<NAME>`. |\n\nafter\n| `z.z` | not a row |\n"
+	got := contractHints(doc)
+	want := map[string]string{"a.b": "Do it with `c`.", "d.e:<NAME>": "Set `<NAME>`."}
+	if len(got) != len(want) || got["a.b"] != want["a.b"] || got["d.e:<NAME>"] != want["d.e:<NAME>"] {
+		t.Fatalf("contractHints = %v, want %v", got, want)
+	}
+}
+
+// contractHints reads the subclass rows (| `subclass` | hint |) that follow the heading of the
+// L64 table, up to the first line that is not a table line after the rows began.
+func contractHints(doc string) map[string]string {
+	rows := map[string]string{}
+	in := false
+	for _, line := range strings.Split(doc, "\n") {
+		if strings.HasPrefix(line, "Subclasses and default fix hints (L64)") {
+			in = true
+			continue
+		}
+		if !in {
+			continue
+		}
+		if !strings.HasPrefix(line, "|") {
+			if len(rows) > 0 {
+				break
+			}
+			continue
+		}
+		rest, ok := strings.CutPrefix(line, "| `")
+		if !ok {
+			continue
+		}
+		sub, hint, ok := strings.Cut(rest, "` | ")
+		if !ok {
+			continue
+		}
+		rows[sub] = strings.TrimSuffix(strings.TrimSpace(hint), " |")
+	}
+	return rows
 }
