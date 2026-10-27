@@ -1,10 +1,10 @@
 # Status
 
 <!-- auto:start -->
-<!-- generated 2026-10-27T00:55:56Z by go run ./internal/cmd/records from git, gh issue list and gh run list; do not edit by hand -->
-- HEAD: e506448b856b docs(spec): align four findings with the code
-- Branch: main, ahead 3, behind 0 of the upstream
-- Issues: 258 open, 235 closed
+<!-- generated 2026-10-27T07:58:36Z by go run ./internal/cmd/records from git, gh issue list and gh run list; do not edit by hand -->
+- HEAD: 16be7ad83970 docs(evidence): add the test-system baseline
+- Branch: main, ahead 5, behind 0 of the upstream
+- Issues: 288 open, 235 closed
 - CI (main, workflow ci): success, 2026-10-21T01:12:42Z, sha d130d8fce30c
 <!-- auto:end -->
 
@@ -22,4 +22,6 @@
 
 - Work is still tracked in GitHub issues; the work store under `work/` takes over at the G1 cutover (SPEC L61).
 - The owner runs up to 10 agents in parallel (2026-10-27); agents run no tests, gates or builds, the lead runs each check in sequence; release, the full gate and CI wait for a batch of 25-30 issues.
+- First work since 2026-10-27 (owner): the test-system goal #587, units #588–#616 plus #522 and #257, in the order phase 0 → 1 → 5 → 4 → 3 → 2 → 6. Its decisions land in SPEC §16 with #589. Baseline: `docs/evidence/2026-10-27-test-baseline.md`.
+- Owner rules for this goal (2026-10-27): every piece of work has an issue; GitHub Actions is used as little as possible (the repository is private, so minutes are metered); everything sensible runs locally and efficiently.
 - The D1 wave of M-Usable (#263) is planned in `aiwe-wt/runs/d1-plan.md`: 8 items, 19 units; the item records and blocked-by links are not yet rewritten except #59.
