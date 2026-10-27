@@ -15,7 +15,9 @@ committed to this repository in English (DR-18).
    deleted when `aiwe item list`, `ready`, `archive` and `aiwe status` land (L41, K32).
 3. Run `python ../aiwe-wt/runs/order.py --limit 20 --why`: the derived work order.
 4. Run `python ../aiwe-wt/runs/status.py --needs-lead`: the unit states.
-5. An external agent then reads `../aiwe-wt/HANDOFF.md`, the contract of the bridge.
+5. Read the owner's current preferences and first work in `STATUS.md` "Live configuration"; they bind every session.
+6. Read `../aiwe-wt/runs/lead-tools/pending-dispatch.md`: the next step of every unit in flight, newest section last.
+7. An external agent then reads `../aiwe-wt/HANDOFF.md`, the contract of the bridge.
 
 ## 2. Where each fact lives
 
@@ -58,7 +60,10 @@ Every fact has one owner below. Link to it; copy nothing.
 | Role cards | `~/.claude/agents/*.md`; the bridge reads its own copy in `aiwe-wt/roles/` |
 | Machine tools: load measurement, heavy-job queue | `~/.agents/araclar/` (the bridge still reads the old folder until #429) |
 | Unattended mode, past subagent reports, rule rationale (tr) | skill `otopilot` in `~/.claude/skills/`; `~/.claude/raporlar/`; `~/.claude/olcumler.md` |
-| Host memory | Owner preferences and host working notes only (section 4) |
+| Owner's current preferences: parallel width, who runs checks, batch size, CI use, first work | `STATUS.md` "Live configuration" |
+| Units in flight: tip SHA, open findings, next step | `aiwe-wt/runs/lead-tools/pending-dispatch.md` |
+| Lead check logs and audit reports of the bridge | `aiwe-wt/evidence/<topic>-<date>/`, `aiwe-wt/evidence/audit-<N>.md` |
+| Host memory | Host working notes only (section 4); nothing in it binds an agent |
 
 ## 3. Project rules
 
@@ -89,6 +94,28 @@ gate must exit 0 before a batch lands.
 - Source, docs and commit messages are in English (DR-18); commit messages follow SPEC §12.3. A breaking marker needs
   the owner's approval.
 - Every element must be necessary (DR-22).
+
+**Lead workflow until `aiwe verify` lands.** The steps the engine will take over; each names its source.
+
+- Fix before check (L79, #617): in the unit clone, run `gofmt -w` on the unit's Go files and
+  `golangci-lint run --fix` on its package first; commit what they change as a `style` commit. Only what remains is
+  a finding. Never pass `--unsafe-fixes`.
+- Verify, one command at a time through the machine slot queue
+  (`python3 ~/.agents/araclar/agir-is-kuyrugu.py -- <command>`): the unit's narrow `go test ./internal/<pkg>/ -run
+  '<tests of the change>' -count=1`, `go vet ./internal/<pkg>/`, `go run ./cmd/aiwe gates gate --repo . --step lint`
+  (read its `lint:` line; the gate exits 1 as `incomplete` when one step runs) and
+  `go run ./internal/cmd/repocheck all --repo .`. Write each output to the evidence folder (section 2) with the SHA.
+- A source-rules finding is fixed at its cause: build the value at run time or from its one constant. Splitting a
+  string to slip past a rule is a defect.
+- Land a unit by `git cherry-pick` onto local `main`. Cherry-pick skips the commit-msg hook, so run
+  `go run ./internal/cmd/repocheck commit-msg --repo .` on every landed message. This repository refuses a `Refs`
+  line; the header is at most 50 characters, a body line at most 72, and a `Closes` commit carries
+  `Effect: <before> → <after>` on one line. Reword with `git cherry-pick -n` and `git commit -F <explicit path>`.
+- Push, CI and release wait for a batch (`STATUS.md` "Live configuration").
+- Write an issue only with `aiwe-wt/issue.py ac|guncelle`, from a JSON body file (SPEC-contracts §8.4). The body needs
+  a `key`. A path not yet on `main` goes in both `scope.in` and `scope.new`. An overlap refusal (`#N scope-in`,
+  `out-in`) is answered with a factual `--distinct N:<reason>` or a narrower scope, never by dropping a real path.
+  `--ust <N>` links the parent.
 
 **What the global rules leave to this project.** `~/.agents/AGENTS.md` binds here; it names these as project settings:
 
@@ -128,7 +155,7 @@ DR-20 stand: `todo_write` and `taskboard_*` are scratch state for one session, n
 
 - Hooks in `~/.claude/hooks/` run only in the lead host; the Known traps above list what they enforce.
 - RTK (`~/.claude/RTK.md`, imported by `~/.claude/CLAUDE.md`) is a token proxy; ignore it in other hosts.
-- Memory: `~/.claude/projects/D--GitHub-aiwe/memory/` (`MEMORY.md` indexes it). It holds owner preferences and host
-  working notes; a rule or decision that binds every agent lives in SPEC §16.
+- Memory: `~/.claude/projects/D--GitHub-aiwe/memory/` (`MEMORY.md` indexes it). It holds host working notes only; a
+  preference lives in `STATUS.md` "Live configuration" and a rule or decision in SPEC §16.
 
 @docs/standards.md

@@ -1,10 +1,10 @@
 # Status
 
 <!-- auto:start -->
-<!-- generated 2026-10-27T10:22:42Z by go run ./internal/cmd/records from git, gh issue list and gh run list; do not edit by hand -->
-- HEAD: 544095c68ebd test(gates): build the ACL test path at run time
-- Branch: main, ahead 27, behind 0 of the upstream
-- Issues: 288 open, 235 closed
+<!-- generated 2026-10-27T10:54:44Z by go run ./internal/cmd/records from git, gh issue list and gh run list; do not edit by hand -->
+- HEAD: e4f82cde73e4 docs(spec): L79 fix before check at gate points
+- Branch: main, ahead 29, behind 0 of the upstream
+- Issues: 289 open, 235 closed
 - CI (main, workflow ci): success, 2026-10-21T01:12:42Z, sha d130d8fce30c
 <!-- auto:end -->
 
@@ -24,6 +24,7 @@
 
 - Work is still tracked in GitHub issues; the work store under `work/` takes over at the G1 cutover (SPEC L61).
 - The owner runs up to 10 agents in parallel (2026-10-27); agents run no tests, gates or builds, the lead runs each check in sequence; release, the full gate and CI wait for a batch of 25-30 issues.
-- First work since 2026-10-27 (owner): the test-system goal #587, units #588–#616 plus #522 and #257, in the order phase 0 → 1 → 5 → 4 → 3 → 2 → 6. Its decisions are SPEC §16 L63–L78. Baseline: `docs/evidence/2026-10-27-test-baseline.md`.
+- First work since 2026-10-27 (owner): the test-system goal #587, units #588–#616 plus #522 and #257, in the order phase 0 → 1 → 5 → 4 → 3 → 2 → 6. Its decisions are SPEC §16 L63–L79. Baseline: `docs/evidence/2026-10-27-test-baseline.md`.
 - Owner rules for this goal (2026-10-27): every piece of work has an issue; GitHub Actions is used as little as possible (the repository is private, so minutes are metered); everything sensible runs locally and efficiently.
+- Every tool fix that is safe runs before its check, so a fixable finding never reaches anyone (owner 2026-10-27, SPEC L79, unit #617). Until #617 lands, the lead applies it by hand (`AGENTS.md` section 3, "Lead workflow").
 - The D1 wave of M-Usable (#263) is planned in `aiwe-wt/runs/d1-plan.md`: 8 items, 19 units; the item records and blocked-by links are not yet rewritten except #59.
