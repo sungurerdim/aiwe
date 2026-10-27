@@ -1,21 +1,19 @@
 # Status
 
 <!-- auto:start -->
-<!-- generated 2026-10-26T20:34:03Z by go run ./internal/cmd/records from git, gh issue list and gh run list; do not edit by hand -->
-- HEAD: debf13b05c59 docs: regenerate STATUS after the 7b0c154 ship
-- Branch: main, ahead 1, behind 0 of the upstream
-- Issues: 244 open, 235 closed
+<!-- generated 2026-10-27T00:55:56Z by go run ./internal/cmd/records from git, gh issue list and gh run list; do not edit by hand -->
+- HEAD: e506448b856b docs(spec): align four findings with the code
+- Branch: main, ahead 3, behind 0 of the upstream
+- Issues: 258 open, 235 closed
 - CI (main, workflow ci): success, 2026-10-21T01:12:42Z, sha d130d8fce30c
 <!-- auto:end -->
 
 ## Broken
 
-- Measured 2026-10-26. The batch clone `aiwe-wt/batch` holds 11 staged units on top of origin/main 7b0c154: #432 #433 #437 #471 #524 #532 #539 #528 #435 #365 #323. Each passed a narrow lead verify and an audit; the batch has had no integration run and no CI run.
-- Four units are fixed but not verified (the owner holds tests while other load runs; commands in `aiwe-wt/runs/lead-tools/pending-verify.md`):
-  - #521 at `u521` 52a8048: full engine green at 17684b6; 3f03f87 red under full CPU load (a take gave up after 40 ms), fixed by a backoff.
-  - #332 at `u332` 82eaa6e: full gates hung for 10 min at dfa0ee4 (a test fake never acted); fixed in 925e983, narrow run green; audit F1 (two clones replace each other's changed-tree program) fixed.
-  - #535 at `u535` e5615ce: security RED at 6da2bff (M1, M2, S1, S2), fixed; needs a security re-review by a separate run.
-  - #518 at `u518` 29e9e64: security RED at 1342b30 (M4, S1), fixed; needs a security re-review, then the records fix.
+- Measured 2026-10-27. The batch clone `aiwe-wt/batch` holds 17 staged units on top of origin/main 7b0c154: #432 #433 #437 #471 #524 #532 #539 #528 #435 #365 #323 #332 #73 #580 #586 #518 #535. Each passed a narrow lead verify and an audit; the batch has had no integration run and no CI run.
+- core `TestOutcomes` is red on the batch (not on main): outcome strings used in staged code have no row in the outcome table (conflict, landed, claim_missing, claim_schema_unsupported and three run-spec messages). Needs its own issue before ship.
+- Units in flight, each with its next step in `aiwe-wt/runs/lead-tools/pending-dispatch.md` (2026-10-27 sections): #521 audit RED (N1 cancel test, N3 stuck reclaimer); #270 security RED (multi-line paste reaches the shell); #583 audit RED (lows); #290 audit RED (fake gh differs from gh); #585 fixed, needs re-audit; #292 #581 #584 green, need audit; #430 root cause proven (slots.run passes no stdin), fix pending.
+- Review of 95 issues closed since 2026-10-19 by external or unknown closers: 3 of 16 review runs done (17 issues: 6 OK, 11 with gaps, 1 high: #372 is fixed only for the Cursor writer). Ledger `aiwe-wt/runs/lead-tools/closed-review/PLAN.md`; test run `closed-review/tests.md` (main: go test, full gate, repocheck green; `aiwe item lint` named by #438 does not exist; the bridge pytest suite needs `PYTHONUTF8=1`).
 - #59 is blocked by #526: SPEC §7.4 retries an environment red in another leased slot, and the lifecycle leases no slot yet.
 - main's commits ahead of origin (the Branch line above) are docs only and not pushed.
 - The CI line above shows the last `ci.yml` run on main; the fast-forward of 45f760b after PR #511 started no new run.
@@ -23,5 +21,5 @@
 ## Live configuration
 
 - Work is still tracked in GitHub issues; the work store under `work/` takes over at the G1 cutover (SPEC L61).
-- The owner runs the lead in the main session only (2026-10-26): no subagents, no tests or gates while the owner's load runs; release, the full gate and CI wait for a batch of 25-30 issues.
+- The owner runs up to 10 agents in parallel (2026-10-27); agents run no tests, gates or builds, the lead runs each check in sequence; release, the full gate and CI wait for a batch of 25-30 issues.
 - The D1 wave of M-Usable (#263) is planned in `aiwe-wt/runs/d1-plan.md`: 8 items, 19 units; the item records and blocked-by links are not yet rewritten except #59.
