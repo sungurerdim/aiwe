@@ -10,7 +10,8 @@ import (
 	"github.com/sungurerdim/aiwe/internal/core"
 )
 
-// goListLimit bounds one `go list` run (DR-1); a cold module cache is read from disk, not fetched.
+// goListLimit bounds one `go list` run (DR-1). The run is offline (offlineGoEnv): a cold module
+// cache fails closed within the limit instead of spending it on downloads.
 const goListLimit = 2 * time.Minute
 
 // goListArgv is the command that prints the import graph (SPEC L66).
@@ -54,7 +55,7 @@ func runGoList(ctx context.Context, dir string) ([]byte, error) {
 	argv := goListArgv()
 	var stdout, stderr bytes.Buffer
 	child, err := core.Start(ctx, core.ChildSpec{Argv: argv, Dir: dir,
-		Env: core.CleanEnv(core.Environ(), nil), Stdout: &stdout, Stderr: &stderr})
+		Env: offlineGoEnv(core.CleanEnv(core.Environ(), nil)), Stdout: &stdout, Stderr: &stderr})
 	if err != nil {
 		return nil, goListError("`"+strings.Join(argv, " ")+"` started in "+dir, err.Error(), err)
 	}
@@ -68,4 +69,26 @@ func runGoList(ctx context.Context, dir string) ([]byte, error) {
 		return nil, goListError("`"+strings.Join(argv, " ")+"` to leave no child", stopErr.Error(), stopErr)
 	}
 	return stdout.Bytes(), nil
+}
+
+// offlineGoEnv returns parent for a go run that never fetches: GOPROXY is off, and -mod=readonly
+// is the last flag of GOFLAGS, so a missing module or a go.mod that needs an edit is an error. The
+// other GOFLAGS (for example -tags) stay, because they change the import graph. The names match
+// without case, as Windows does. It runs after CleanEnv, which drops proxy variables.
+func offlineGoEnv(parent []string) []string {
+	flags := ""
+	env := make([]string, 0, len(parent)+2)
+	for _, kv := range parent {
+		name, value, _ := strings.Cut(kv, "=")
+		switch strings.ToUpper(name) {
+		case "GOPROXY":
+			continue
+		case "GOFLAGS":
+			flags = value
+			continue
+		}
+		env = append(env, kv)
+	}
+	flags = strings.TrimSpace(flags + " -mod=readonly")
+	return append(env, "GOPROXY=off", "GOFLAGS="+flags)
 }

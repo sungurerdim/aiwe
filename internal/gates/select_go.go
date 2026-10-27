@@ -55,11 +55,9 @@ type GoGraph struct {
 
 // goNode is one package of the graph.
 type goNode struct {
-	importPath  string
-	dir         string
-	hasTests    bool
-	imports     []string
-	testImports []string
+	importPath string
+	dir        string
+	hasTests   bool
 }
 
 // goOwner is the package that owns a file and whether the file is a test file.
@@ -171,25 +169,31 @@ func (g *GoGraph) add(rec goListRecord, dir string) {
 func (g *GoGraph) link(recs []goListRecord) {
 	g.rev, g.testRev = map[string][]string{}, map[string][]string{}
 	for _, rec := range recs {
-		if g.nodes[rec.ImportPath] == nil || !graphRecord(rec) {
-			continue
+		if g.nodes[rec.ImportPath] != nil && graphRecord(rec) {
+			g.addEdges(g.rev, rec.ImportPath, rec.Imports)
+			g.addEdges(g.testRev, rec.ImportPath, rec.TestImports, rec.XTestImports)
 		}
-		for _, dep := range rec.Imports {
+	}
+	sortEdges(g.rev)
+	sortEdges(g.testRev)
+}
+
+// addEdges records from as an importer, in into, of each package of the lists that the graph holds.
+func (g *GoGraph) addEdges(into map[string][]string, from string, lists ...[]string) {
+	for _, list := range lists {
+		for _, dep := range list {
 			if g.nodes[dep] != nil {
-				g.rev[dep] = append(g.rev[dep], rec.ImportPath)
-			}
-		}
-		for _, dep := range append(slices.Clone(rec.TestImports), rec.XTestImports...) {
-			if g.nodes[dep] != nil {
-				g.testRev[dep] = append(g.testRev[dep], rec.ImportPath)
+				into[dep] = append(into[dep], from)
 			}
 		}
 	}
-	for _, m := range []map[string][]string{g.rev, g.testRev} {
-		for dep, list := range m {
-			slices.Sort(list)
-			m[dep] = slices.Compact(list)
-		}
+}
+
+// sortEdges sorts each list of edges and drops the duplicates.
+func sortEdges(edges map[string][]string) {
+	for dep, list := range edges {
+		slices.Sort(list)
+		edges[dep] = slices.Compact(list)
 	}
 }
 
