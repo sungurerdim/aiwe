@@ -29,12 +29,11 @@ const (
 // RedClass is the class of a red run (SPEC decision L64).
 type RedClass string
 
-// The classes of a red run. RedFlaky is read from history by FlakyTests and is never returned by
-// ClassifyRed; RedUnknown is the verdict of a run that no rule matches.
+// The classes a rule table returns; RedUnknown is the verdict of a run that no rule matches.
+// flaky is not here: it is read from history, and FlakyTests returns test ids, not a class.
 const (
 	RedRealBug     RedClass = "real_bug"
 	RedEnvironment RedClass = "environment"
-	RedFlaky       RedClass = "flaky"
 	RedStale       RedClass = "stale"
 	RedUnknown     RedClass = "unknown"
 )
@@ -64,6 +63,10 @@ type redRule struct {
 	re       *regexp.Regexp
 }
 
+// redEnvName is the shape of an environment variable name that a subclass may carry. It keeps a
+// line break or a control character out of a hint.
+var redEnvName = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
+
 func newRule(subclass, hint, pattern string) redRule {
 	return redRule{subclass: subclass, hint: hint, re: regexp.MustCompile(pattern)}
 }
@@ -92,8 +95,8 @@ var redRules = []redRule{
 		`(?i)index\.lock|database is locked|another git process seems to be running`),
 	newRule("environment.memory", "Free memory, or run with fewer workers.",
 		`(?i)out of memory|cannot allocate memory|\bENOMEM\b`),
-	newRule("environment.missing-env:"+redNamePlaceholder, "Set the environment variable "+redNamePlaceholder+".",
-		`(?i)environment variable ([A-Za-z_][A-Za-z0-9_]*) (?:is |was )?(?:not set|required|missing|undefined|unset)`),
+	newRule("environment.missing-env:"+redNamePlaceholder, "Set the environment variable `"+redNamePlaceholder+"`.",
+		`(?i:environment variable )([A-Z_][A-Z0-9_]*)(?i: (?:is |was )?(?:not set|required|missing|undefined|unset))`),
 	newRule("stale.toolchain", "Install the toolchain version that the repository pins.",
 		`(?i)requires go >= |go\.mod requires go|compiled with go\d|different version of go`),
 	newRule("stale.build_cache", "Clear the build cache and run again.",
@@ -206,7 +209,7 @@ func lookupSubclass(subclass string) (sub, hint string, ok bool) {
 			return r.subclass, r.hint, true
 		}
 		if head, found := strings.CutSuffix(r.subclass, redNamePlaceholder); found {
-			if name, has := strings.CutPrefix(subclass, head); has && name != "" {
+			if name, has := strings.CutPrefix(subclass, head); has && redEnvName.MatchString(name) {
 				return subclass, strings.Replace(r.hint, redNamePlaceholder, name, 1), true
 			}
 		}

@@ -134,6 +134,7 @@ Subclasses and default fix hints (L64):
 | `real_bug.timeout` | A single test over its own limit: find the wait that does not end; raise the limit only with a measured reason. |
 | `real_bug.setup` | Fix the test setup or fixture that the failure names. |
 | `real_bug.no_tests` | Add the test or fix the selection; a run with no test is red (DR-6). |
+| `real_bug.finding` | Fix the finding at its file:line, or remove the dead code it names. |
 | `environment.network` | Restore the network and run again. |
 | `environment.missing_tool` | Install the tool that the log names and run again. |
 | `environment.disk` | Free disk space and run again. |
@@ -144,6 +145,7 @@ Subclasses and default fix hints (L64):
 | `environment.port-busy` | Free the port, or end the process that holds it. |
 | `environment.memory` | Free memory, or run with fewer workers. |
 | `environment.missing-env:<NAME>` | Set the environment variable `<NAME>`. |
+| `environment.workdir` | Run the command from the directory that holds the file the log names, or restore the file. |
 | `stale.build_cache` | Clear the build cache and run again. |
 | `stale.generated` | Regenerate the generated files. |
 | `stale.toolchain` | Install the toolchain version that the repository pins. |
