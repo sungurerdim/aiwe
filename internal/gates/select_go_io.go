@@ -71,12 +71,14 @@ func runGoList(ctx context.Context, dir string) ([]byte, error) {
 	return stdout.Bytes(), nil
 }
 
-// offlineGoEnv returns parent for a go run that never fetches: GOPROXY is off, and -mod=readonly
-// is the last flag of GOFLAGS, so a missing module or a go.mod that needs an edit is an error. The
-// other GOFLAGS (for example -tags) stay, because they change the import graph. The names match
-// without case, as Windows does. It runs after CleanEnv, which drops proxy variables.
+// offlineGoEnv returns parent for a go run that never fetches: GOPROXY is off, so a module that is
+// not in the cache is an error. No mod flag is added, because -mod=readonly would ignore vendor/;
+// the GOFLAGS of the user stay as they are (for example -tags and -mod=vendor, which change the
+// import graph), and only -mod=mod, which may edit go.mod and fetch, becomes -mod=readonly. The
+// names match without case, as Windows does. It runs after CleanEnv, which drops a GOPROXY value
+// only when it carries a password or a token.
 func offlineGoEnv(parent []string) []string {
-	flags := ""
+	var flags []string
 	env := make([]string, 0, len(parent)+2)
 	for _, kv := range parent {
 		name, value, _ := strings.Cut(kv, "=")
@@ -84,11 +86,19 @@ func offlineGoEnv(parent []string) []string {
 		case "GOPROXY":
 			continue
 		case "GOFLAGS":
-			flags = value
+			flags = strings.Fields(value)
 			continue
 		}
 		env = append(env, kv)
 	}
-	flags = strings.TrimSpace(flags + " -mod=readonly")
-	return append(env, "GOPROXY=off", "GOFLAGS="+flags)
+	env = append(env, "GOPROXY=off")
+	for i, flag := range flags {
+		if flag == "-mod=mod" {
+			flags[i] = "-mod=readonly"
+		}
+	}
+	if len(flags) > 0 {
+		env = append(env, "GOFLAGS="+strings.Join(flags, " "))
+	}
+	return env
 }
