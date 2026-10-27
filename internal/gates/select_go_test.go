@@ -288,12 +288,14 @@ func TestOfflineGoEnvFailsClosed(t *testing.T) {
 		parent []string
 		want   []string
 	}{
-		{"a proxy and a mod flag are overridden", []string{"PATH=/bin", "GOPROXY=https://proxy.example", "GOFLAGS=-mod=mod"},
-			[]string{"PATH=/bin", "GOPROXY=off", "GOFLAGS=-mod=mod -mod=readonly"}},
-		{"other flags are kept", []string{"GOFLAGS=-tags=x"}, []string{"GOPROXY=off", "GOFLAGS=-tags=x -mod=readonly"}},
-		{"no go variable at all", []string{"PATH=/bin"}, []string{"PATH=/bin", "GOPROXY=off", "GOFLAGS=-mod=readonly"}},
-		{"the names match without case, as Windows does", []string{"goproxy=direct"},
-			[]string{"GOPROXY=off", "GOFLAGS=-mod=readonly"}},
+		{"a proxy is replaced and -mod=mod becomes readonly", []string{"PATH=/bin", "GOPROXY=https://proxy.example", "GOFLAGS=-mod=mod"},
+			[]string{"PATH=/bin", "GOPROXY=off", "GOFLAGS=-mod=readonly"}},
+		{"-mod=vendor is kept, so a vendored module still lists", []string{"GOFLAGS=-mod=vendor"},
+			[]string{"GOPROXY=off", "GOFLAGS=-mod=vendor"}},
+		{"other flags are kept and only -mod=mod is rewritten", []string{"GOFLAGS=-tags=x -mod=mod -v"},
+			[]string{"GOPROXY=off", "GOFLAGS=-tags=x -mod=readonly -v"}},
+		{"no GOFLAGS gets no mod flag", []string{"PATH=/bin"}, []string{"PATH=/bin", "GOPROXY=off"}},
+		{"the names match without case, as Windows does", []string{"goproxy=direct"}, []string{"GOPROXY=off"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
