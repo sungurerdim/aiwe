@@ -71,60 +71,63 @@ func newRule(subclass, hint, pattern string) redRule {
 	return redRule{subclass: subclass, hint: hint, re: regexp.MustCompile(pattern)}
 }
 
-// redRules is the rule table. A rule decides before the rules after it: the cause that sits
-// outside the code (environment, stale) comes before the failure it can produce, and a specific
-// real_bug signature comes before the plain assertion line.
-var redRules = []redRule{
-	newRule("environment.workdir", "Run the command from the directory that holds the file the log names, or restore the file.",
-		`go\.mod file not found|configuration file not found`),
-	newRule("environment.container-missing", "Start the container that the row declares.",
-		`(?i)cannot connect to the docker daemon|no such container|is the docker daemon running`),
-	newRule("environment.permission", "Give the process the permission that the log names.",
-		`(?i)permission denied|access is denied|read the ACL of|\bEACCES\b`),
-	newRule("environment.db-missing", "Start the database, or run the project's setup script.",
-		`(?i)\bdatabase\b.{0,80}\bdoes not exist|unknown database`),
-	newRule("environment.port-busy", "Free the port, or end the process that holds it.",
-		`(?i)address already in use|\bEADDRINUSE\b`),
-	newRule("environment.network", "Restore the network and run again.",
-		`(?i)no such host|connection refused|network is unreachable|i/o timeout|TLS handshake timeout|could not resolve host|\bECONNREFUSED\b|\bENOTFOUND\b`),
-	newRule("environment.missing_tool", "Install the tool that the log names and run again.",
-		`(?i)executable file not found|command not found|is not recognized as an internal or external command`),
-	newRule("environment.disk", "Free disk space and run again.",
-		`(?i)no space left on device|\bENOSPC\b|disk quota exceeded`),
-	newRule("environment.lock_wait", "Wait for the holder of the lock, or end it.",
-		`(?i)index\.lock|database is locked|another git process seems to be running`),
-	newRule("environment.memory", "Free memory, or run with fewer workers.",
-		`(?i)out of memory|cannot allocate memory|\bENOMEM\b`),
-	newRule("environment.missing-env:"+redNamePlaceholder, "Set the environment variable `"+redNamePlaceholder+"`.",
-		`(?i:environment variable )([A-Z_][A-Z0-9_]*)(?i: (?:is |was )?(?:not set|required|missing|undefined|unset))`),
-	newRule("stale.toolchain", "Install the toolchain version that the repository pins.",
-		`(?i)requires go >= |go\.mod requires go|compiled with go\d|different version of go`),
-	newRule("stale.build_cache", "Clear the build cache and run again.",
-		`(?i)build cache is (?:corrupt|trimmed)|stale object|object is stale|export data is out of date`),
-	newRule("stale.generated", "Regenerate the generated files.",
-		"(?i)generated\\b.*\\b(?:out of date|stale)|run .?go generate"),
-	newRule("stale.build-output", "Rebuild the output and run again.",
-		`(?i)could not find a production build|(?:\.next|dist|build)[/\\].*(?:no such file|ENOENT)`),
-	newRule("stale.cache", "Clear the cache that the log names and run again.",
-		`(?i)bad magic number|(?:corrupt|stale|invalid) cache|cache (?:is )?(?:corrupt|stale|invalid)`),
-	newRule("real_bug.timeout", "A single test over its own limit: find the wait that does not end; raise the limit only with a measured reason.",
-		`(?i)test timed out after|exceeded timeout of \d+ ?ms for a test|test timeout of \d+ ?ms exceeded`),
-	newRule("real_bug.race", "Guard the shared data that the race report names.",
-		`WARNING: DATA RACE`),
-	newRule("real_bug.panic", "Fix the nil value, index or conversion at `sourceLocation`.",
-		`^panic: `),
-	newRule("real_bug.compile", "Fix the compiler error at its file:line:col.",
-		`\.go:\d+:\d+: .*(?:undefined:|syntax error|cannot use|declared and not used|imported and not used|missing return|not enough arguments|too many arguments)`),
-	newRule("real_bug.build", "Fix the build error and run the build step alone.",
-		`\[build failed\]`),
-	newRule("real_bug.setup", "Fix the test setup or fixture that the failure names.",
-		`\[setup failed\]|^ERROR collecting |^ERROR at setup of `),
-	newRule("real_bug.no_tests", "Add the test or fix the selection; a run with no test is red (DR-6).",
-		`(?i)no tests to run|no tests ran|collected 0 items`),
-	newRule("real_bug.finding", "Fix the finding at its file:line, or remove the dead code it names.",
-		`unreachable func:|^\S+\.go:\d+:\d+: .*\([a-z][a-z0-9_-]*\)$`),
-	newRule("real_bug.assertion", "Fix the product code at `sourceLocation`, or declare the behaviour change in the test and the commit body.",
-		`^--- FAIL|AssertionError|^FAILED |^Error Trace:|^FAIL\b`),
+// redRules returns the rule table; the repository allows no package-level table (repocheck
+// package_var), so each caller builds it once per use. A rule decides before the rules after it:
+// the cause that sits outside the code (environment, stale) comes before the failure it can
+// produce, and a specific real_bug signature comes before the plain assertion line.
+func redRules() []redRule {
+	return []redRule{
+		newRule("environment.workdir", "Run the command from the directory that holds the file the log names, or restore the file.",
+			`go\.mod file not found|configuration file not found`),
+		newRule("environment.container-missing", "Start the container that the row declares.",
+			`(?i)cannot connect to the docker daemon|no such container|is the docker daemon running`),
+		newRule("environment.permission", "Give the process the permission that the log names.",
+			`(?i)permission denied|access is denied|read the ACL of|\bEACCES\b`),
+		newRule("environment.db-missing", "Start the database, or run the project's setup script.",
+			`(?i)\bdatabase\b.{0,80}\bdoes not exist|unknown database`),
+		newRule("environment.port-busy", "Free the port, or end the process that holds it.",
+			`(?i)address already in use|\bEADDRINUSE\b`),
+		newRule("environment.network", "Restore the network and run again.",
+			`(?i)no such host|connection refused|network is unreachable|i/o timeout|TLS handshake timeout|could not resolve host|\bECONNREFUSED\b|\bENOTFOUND\b`),
+		newRule("environment.missing_tool", "Install the tool that the log names and run again.",
+			`(?i)executable file not found|command not found|is not recognized as an internal or external command`),
+		newRule("environment.disk", "Free disk space and run again.",
+			`(?i)no space left on device|\bENOSPC\b|disk quota exceeded`),
+		newRule("environment.lock_wait", "Wait for the holder of the lock, or end it.",
+			`(?i)index\.lock|database is locked|another git process seems to be running`),
+		newRule("environment.memory", "Free memory, or run with fewer workers.",
+			`(?i)out of memory|cannot allocate memory|\bENOMEM\b`),
+		newRule("environment.missing-env:"+redNamePlaceholder, "Set the environment variable `"+redNamePlaceholder+"`.",
+			`(?i:environment variable )([A-Z_][A-Z0-9_]*)(?i: (?:is |was )?(?:not set|required|missing|undefined|unset))`),
+		newRule("stale.toolchain", "Install the toolchain version that the repository pins.",
+			`(?i)requires go >= |go\.mod requires go|compiled with go\d|different version of go`),
+		newRule("stale.build_cache", "Clear the build cache and run again.",
+			`(?i)build cache is (?:corrupt|trimmed)|stale object|object is stale|export data is out of date`),
+		newRule("stale.generated", "Regenerate the generated files.",
+			"(?i)generated\\b.*\\b(?:out of date|stale)|run .?go generate"),
+		newRule("stale.build-output", "Rebuild the output and run again.",
+			`(?i)could not find a production build|(?:\.next|dist|build)[/\\].*(?:no such file|ENOENT)`),
+		newRule("stale.cache", "Clear the cache that the log names and run again.",
+			`(?i)bad magic number|(?:corrupt|stale|invalid) cache|cache (?:is )?(?:corrupt|stale|invalid)`),
+		newRule("real_bug.timeout", "A single test over its own limit: find the wait that does not end; raise the limit only with a measured reason.",
+			`(?i)test timed out after|exceeded timeout of \d+ ?ms for a test|test timeout of \d+ ?ms exceeded`),
+		newRule("real_bug.race", "Guard the shared data that the race report names.",
+			`WARNING: DATA RACE`),
+		newRule("real_bug.panic", "Fix the nil value, index or conversion at `sourceLocation`.",
+			`^panic: `),
+		newRule("real_bug.compile", "Fix the compiler error at its file:line:col.",
+			`\.go:\d+:\d+: .*(?:undefined:|syntax error|cannot use|declared and not used|imported and not used|missing return|not enough arguments|too many arguments)`),
+		newRule("real_bug.build", "Fix the build error and run the build step alone.",
+			`\[build failed\]`),
+		newRule("real_bug.setup", "Fix the test setup or fixture that the failure names.",
+			`\[setup failed\]|^ERROR collecting |^ERROR at setup of `),
+		newRule("real_bug.no_tests", "Add the test or fix the selection; a run with no test is red (DR-6).",
+			`(?i)no tests to run|no tests ran|collected 0 items`),
+		newRule("real_bug.finding", "Fix the finding at its file:line, or remove the dead code it names.",
+			`unreachable func:|^\S+\.go:\d+:\d+: .*\([a-z][a-z0-9_-]*\)$`),
+		newRule("real_bug.assertion", "Fix the product code at `sourceLocation`, or declare the behaviour change in the test and the commit body.",
+			`^--- FAIL|AssertionError|^FAILED |^Error Trace:|^FAIL\b`),
+	}
 }
 
 // ClassifyRed returns the class of a red run from the rule table and never from a rerun
@@ -132,7 +135,7 @@ var redRules = []redRule{
 // verdict names the first line it matched. A run that no rule matches is unknown, except a
 // run that ended with exit 127, which is a tool that was not found. A pure function.
 func ClassifyRed(run RedRun) RedVerdict {
-	for _, r := range redRules {
+	for _, r := range redRules() {
 		for _, raw := range run.Output {
 			line := strings.TrimSpace(clipBytes(raw, redScanMax))
 			m := r.re.FindStringSubmatch(line)
@@ -187,8 +190,9 @@ func showLine(s string) string {
 // RedSubclasses lists the subclasses of the table in table order. The subclass that takes a
 // captured name is listed with redNamePlaceholder in place of the name.
 func RedSubclasses() []string {
-	subs := make([]string, len(redRules))
-	for i, r := range redRules {
+	rules := redRules()
+	subs := make([]string, len(rules))
+	for i, r := range rules {
 		subs[i] = r.subclass
 	}
 	return subs
@@ -204,7 +208,7 @@ func RedFixHint(subclass string) (string, bool) {
 
 // lookupSubclass finds a subclass, or a named subclass with its name filled in, in the table.
 func lookupSubclass(subclass string) (sub, hint string, ok bool) {
-	for _, r := range redRules {
+	for _, r := range redRules() {
 		if r.subclass == subclass {
 			return r.subclass, r.hint, true
 		}
