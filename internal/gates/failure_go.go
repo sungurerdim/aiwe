@@ -106,8 +106,7 @@ func (r *goReport) add(ev goEvent) {
 // event names its test. A line that is not a JSON event is skipped.
 func FailuresFromGoJSON(data []byte, scope RepoScope) []Failure {
 	var r goReport
-	for _, line := range bytes.Split(data, []byte("
-")) {
+	for _, line := range bytes.Split(data, []byte("\n")) {
 		var ev goEvent
 		if line = bytes.TrimSpace(line); len(line) == 0 || line[0] != '{' || json.Unmarshal(line, &ev) != nil {
 			continue
