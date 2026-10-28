@@ -174,6 +174,10 @@ func posInt(s string) (int, bool) {
 	return n, err == nil && n >= 0 && n < 1<<31 && !strings.HasPrefix(s, "+")
 }
 
+// sarifVersion is the one SARIF version the reader accepts (SPEC §7.9). Any
+// other string, a prefix such as "2.1" included, is an error (fail closed).
+const sarifVersion = "2.1.0"
+
 // sarifLog is the part of SARIF 2.1.0 (SPEC §7.9) that a finding reads.
 type sarifLog struct {
 	Version string
@@ -206,9 +210,9 @@ type sarifResult struct {
 // ParseGolangciSARIF reads the SARIF 2.1.0 file of `golangci-lint run
 // --output.sarif.path`. A result without a location keeps empty File and 0 for
 // Line and Col; a missing level is "warning" as SARIF defines. Fail closed
-// (DR-6): empty input, null, an object that is not a SARIF 2.1.0 log with a
-// runs array, and a result with no message text are errors, because
-// golangci-lint writes a full log even for a clean run.
+// (DR-6): empty input, null, an object that is not a SARIF log of exactly
+// sarifVersion with a runs array, and a result with no message text are
+// errors, because golangci-lint writes a full log even for a clean run.
 func ParseGolangciSARIF(data []byte) ([]StaticFinding, error) {
 	if len(bytes.TrimSpace(data)) == 0 {
 		return nil, errors.New("golangci-lint SARIF is empty (the tool wrote no report)")
@@ -217,9 +221,9 @@ func ParseGolangciSARIF(data []byte) ([]StaticFinding, error) {
 	if err := json.Unmarshal(data, &log); err != nil {
 		return nil, fmt.Errorf("golangci-lint SARIF: %w", err)
 	}
-	if !sarifVersionOK(log.Version) || log.Runs == nil {
-		return nil, fmt.Errorf("golangci-lint SARIF: not a SARIF 2.1.0 log (version %q, runs present: %t)",
-			log.Version, log.Runs != nil)
+	if log.Version != sarifVersion || log.Runs == nil {
+		return nil, fmt.Errorf("golangci-lint SARIF: not a SARIF %s log (version %q, runs present: %t)",
+			sarifVersion, log.Version, log.Runs != nil)
 	}
 	var out []StaticFinding
 	for _, run := range log.Runs {
@@ -292,10 +296,4 @@ func sarifPath(uri string) string {
 		return p
 	}
 	return uri
-}
-
-// sarifVersionOK accepts SARIF 2.1 (SPEC §7.9, OASIS Standard; 2.1.0 is its
-// only release) without a version literal in the code.
-func sarifVersionOK(v string) bool {
-	return v == "2.1" || strings.HasPrefix(v, "2.1.")
 }
