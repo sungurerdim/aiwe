@@ -23,9 +23,11 @@ const formatVersion = 1
 type Definition struct {
 	FormatVersion int        `json:"formatVersion"`
 	Steps         []GateStep `json:"steps"`
-	Origin        string     `json:"origin,omitempty"`
-	InputHash     string     `json:"inputHash,omitempty"`
-	Proof         *Proof     `json:"proof,omitempty"`
+	// DeclaredDeps are the non-code dependencies of the tests and the packages each selects (L70).
+	DeclaredDeps []DeclaredDep `json:"declaredDeps,omitempty"`
+	Origin       string        `json:"origin,omitempty"`
+	InputHash    string        `json:"inputHash,omitempty"`
+	Proof        *Proof        `json:"proof,omitempty"`
 }
 
 // GateStep is one step of a gate. Command is an argv array, never a shell string.
@@ -65,8 +67,9 @@ type ProofStep struct {
 }
 
 // ParseDefinition reads a gate.json. It refuses invalid UTF-8, an unknown field, a format other
-// than version 1, an empty gate, and a step without an id, with a duplicate id, without an argv
-// command or with a when that is not a change class (fail-closed, SPEC §4).
+// than version 1, an empty gate, a step without an id, with a duplicate id, without an argv
+// command or with a when that is not a change class, and a declaredDeps row without a path, or
+// without tests and without a reason (fail-closed, SPEC §4).
 func ParseDefinition(data []byte) (Definition, error) {
 	if _, err := core.ReadText(data); err != nil {
 		return Definition{}, fmt.Errorf("parse gate definition: %w", err)
@@ -97,6 +100,9 @@ func checkDefinition(def Definition) error {
 	}
 	if def.Origin != "" && !validOrigin(def.Origin) {
 		return invalidGate("origin project, derived or synthesized", fmt.Sprintf("origin %q", def.Origin), nil)
+	}
+	if err := checkDeclaredDeps(def.DeclaredDeps); err != nil {
+		return err
 	}
 	seen := make(map[string]bool, len(def.Steps))
 	for i, s := range def.Steps {
@@ -138,6 +144,48 @@ func checkStep(s GateStep) *core.Error {
 		}
 	}
 	return nil
+}
+
+// checkDeclaredDeps refuses a declaredDeps row that declares nothing a selector could use: no path
+// glob, a glob that can never match, an empty test name, or no tests and no reason. A row that
+// selects no test is a stated gap, so it must say why (SPEC L70).
+func checkDeclaredDeps(rows []DeclaredDep) *core.Error {
+	for i, r := range rows {
+		if fault := declaredDepFault(r); fault != "" {
+			return invalidGate("a declaredDeps row with path globs, and with tests or a reason",
+				fmt.Sprintf("declaredDeps row %d: %s", i+1, fault), nil)
+		}
+	}
+	return nil
+}
+
+// declaredDepFault names what is wrong with a declaredDeps row, or returns "".
+func declaredDepFault(r DeclaredDep) string {
+	switch {
+	case len(r.Paths) == 0:
+		return "no path"
+	case slices.ContainsFunc(r.Paths, badGlob):
+		return "an empty or malformed path glob"
+	case slices.Contains(r.Tests, ""):
+		return "an empty test name"
+	case len(r.Tests) == 0 && strings.TrimSpace(r.Reason) == "":
+		return fmt.Sprintf("%s has no tests and no reason", strings.Join(r.Paths, ", "))
+	default:
+		return ""
+	}
+}
+
+// badGlob reports a glob that is empty or that path.Match refuses in one of its segments.
+func badGlob(glob string) bool {
+	if glob == "" {
+		return true
+	}
+	for _, seg := range strings.Split(glob, "/") {
+		if _, err := path.Match(seg, ""); err != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // validOrigin reports whether origin is one of the origins of SPEC §8.3.

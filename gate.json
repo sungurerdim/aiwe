@@ -1,5 +1,11 @@
 {
   "formatVersion": 1,
+  "declaredDeps": [
+    { "paths": ["docs/SPEC-contracts.md"], "tests": ["./internal/roles"],
+      "reason": "the roles test reads the method sentences of SPEC-contracts §9.1" },
+    { "paths": ["docs/SPEC.md", "docs/standards.md"], "tests": ["./internal/repocheck"],
+      "reason": "the live registry test compares both documents with the rule registry" }
+  ],
   "steps": [
     { "id": "format", "command": ["gofmt", "-l", "."], "required": true,
       "inputs": ["**/*.go"], "when": ["source", "test-only"],
