@@ -64,10 +64,9 @@ type declaredIndex struct {
 	reasons map[string][]string
 	// selected is the set of files some row with tests declares.
 	selected map[string]bool
-	// exempt holds, per file no row with tests declares, the reason of each row without tests.
+	// exempt holds, per file, the reason of each row without tests that declares it. A file in
+	// selected ignores it.
 	exempt map[string][]string
-	// known is the set of files some row declares.
-	known map[string]bool
 }
 
 // SelectDeclared returns the packages whose tests a change of the files in changed (paths relative
@@ -84,7 +83,7 @@ func SelectDeclared(rows []DeclaredDep, changed []string) DeclaredSelectResult {
 	for _, f := range files {
 		switch {
 		case idx.selected[f]: // already in Selected through its package
-		case idx.known[f]:
+		case len(idx.exempt[f]) > 0:
 			res.Exempt = append(res.Exempt, DeclaredExempt{File: f, Reason: strings.Join(idx.exempt[f], "; ")})
 		default:
 			res.Unmapped = append(res.Unmapped, f)
@@ -96,7 +95,7 @@ func SelectDeclared(rows []DeclaredDep, changed []string) DeclaredSelectResult {
 // indexDeclared reads the rows against the sorted changed files.
 func indexDeclared(rows []DeclaredDep, files []string) declaredIndex {
 	idx := declaredIndex{reasons: map[string][]string{}, selected: map[string]bool{},
-		exempt: map[string][]string{}, known: map[string]bool{}}
+		exempt: map[string][]string{}}
 	for _, row := range rows {
 		hit := slices.DeleteFunc(slices.Clone(files), func(f string) bool { return !rowDeclares(row, f) })
 		idx.addFiles(row, hit)
@@ -109,7 +108,6 @@ func indexDeclared(rows []DeclaredDep, files []string) declaredIndex {
 // with the reason of the row.
 func (idx declaredIndex) addFiles(row DeclaredDep, hit []string) {
 	for _, f := range hit {
-		idx.known[f] = true
 		if len(row.Tests) > 0 {
 			idx.selected[f] = true
 		} else {
@@ -137,13 +135,10 @@ func rowDeclares(row DeclaredDep, file string) bool {
 }
 
 // declaredReason is the reason a row gives for selecting its packages after the files in hit
-// changed.
+// changed. ParseDefinition refuses a row without a reason, so the row reason is always there.
 func declaredReason(row DeclaredDep, hit []string) string {
-	reason := "declared: " + strings.Join(hit, ", ") + " match " + strings.Join(row.Paths, ", ")
-	if why := strings.TrimSpace(row.Reason); why != "" {
-		reason += " (" + why + ")"
-	}
-	return reason
+	return "declared: " + strings.Join(hit, ", ") + " match " + strings.Join(row.Paths, ", ") +
+		" (" + strings.TrimSpace(row.Reason) + ")"
 }
 
 // cleanChanged returns the changed files as clean slash paths, sorted and free of duplicates.
