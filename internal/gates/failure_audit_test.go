@@ -2,6 +2,7 @@ package gates
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -33,25 +34,25 @@ func TestFailureReportThatReadsNothingIsAnError(t *testing.T) {
 		"text only": []byte("FAIL\nsomething broke\n"),
 		"no action": []byte("{\"Package\":\"p\"}\n"),
 	} {
-		if got, err := FailuresFromGoJSON(data, failureScope); err == nil {
+		if got, err := FailuresFromGoJSON(data, failureScope()); err == nil {
 			t.Errorf("go %s: want an error, got %+v", name, got)
 		}
 	}
-	if got, err := FailuresFromJUnit([]byte("<html><body/></html>"), failureScope); err == nil {
+	if got, err := FailuresFromJUnit([]byte("<html><body/></html>"), failureScope()); err == nil {
 		t.Errorf("a non-JUnit XML root must be an error, got %+v", got)
 	}
-	if got, err := FailuresFromPlaywright([]byte("{}"), failureScope); err == nil {
+	if got, err := FailuresFromPlaywright([]byte("{}"), failureScope()); err == nil {
 		t.Errorf("a JSON object without suites must be an error, got %+v", got)
 	}
 	// A readable report with no failure is a result, not an error.
 	green := goJSON(t, fixEvent{Action: "pass", Package: pkgCalc})
-	if got, err := FailuresFromGoJSON(green, failureScope); err != nil || len(got) != 0 {
+	if got, err := FailuresFromGoJSON(green, failureScope()); err != nil || len(got) != 0 {
 		t.Errorf("green go stream = %+v, %v", got, err)
 	}
-	if got := junitFailures(t, `<testsuite><testcase name="a"/></testsuite>`, failureScope); len(got) != 0 {
+	if got := junitFailures(t, `<testsuite><testcase name="a"/></testsuite>`, failureScope()); len(got) != 0 {
 		t.Errorf("green JUnit = %+v", got)
 	}
-	if got, err := FailuresFromPlaywright([]byte(`{"suites":[]}`), failureScope); err != nil || len(got) != 0 {
+	if got, err := FailuresFromPlaywright([]byte(`{"suites":[]}`), failureScope()); err != nil || len(got) != 0 {
 		t.Errorf("green Playwright = %+v, %v", got, err)
 	}
 }
@@ -63,7 +64,7 @@ func TestFailureBuildErrorGivesOneRecord(t *testing.T) {
 		fixEvent{Action: "output", Package: pkgCalc, Output: "FAIL\t" + pkgCalc + " [build failed]\n"},
 		fixEvent{Action: "fail", Package: pkgCalc, FailedBuild: xtestIm},
 	)
-	f := onlyFailure(t, goFailures(t, external, failureScope))
+	f := onlyFailure(t, goFailures(t, external, failureScope()))
 	if f.Kind != FailureCompile || f.Test != pkgCalc || f.TestLocation != "internal/calc/x_test.go:4:2" {
 		t.Errorf("external test package build = %+v", f)
 	}
@@ -73,7 +74,7 @@ func TestFailureBuildErrorGivesOneRecord(t *testing.T) {
 		fixEvent{Action: "fail", Package: pkgCalc, FailedBuild: pkgDep},
 		fixEvent{Action: "fail", Package: pkgWeb, FailedBuild: pkgDep},
 	)
-	f = onlyFailure(t, goFailures(t, dependency, failureScope))
+	f = onlyFailure(t, goFailures(t, dependency, failureScope()))
 	if f.Kind != FailureCompile || f.Test != pkgDep {
 		t.Errorf("a dependency that does not build must give its own record only: %+v", f)
 	}
@@ -90,7 +91,7 @@ func TestFailureLogLineBeforeTheAssertionIsNotTheLocation(t *testing.T) {
 			evs = append(evs, testOut("TestRows", l))
 		}
 		evs = append(evs, fixEvent{Action: "fail", Package: pkgCalc, Test: "TestRows"})
-		f := onlyFailure(t, goFailures(t, goJSON(t, evs...), failureScope))
+		f := onlyFailure(t, goFailures(t, goJSON(t, evs...), failureScope()))
 		if f.TestLocation != "internal/calc/rows_test.go:9" || strings.Contains(f.Message, "case 3") {
 			t.Errorf("%s: location/message = %q/%q", name, f.TestLocation, f.Message)
 		}
@@ -104,21 +105,22 @@ func TestFailureParentWithItsOwnEvidenceKeepsItsRecord(t *testing.T) {
 		testOut("TestP", "    p_test.go:15: parent check failed\n"),
 		fixEvent{Action: "fail", Package: pkgCalc, Test: "TestP"},
 	)
-	if got := goFailures(t, data, failureScope); len(got) != 2 {
+	if got := goFailures(t, data, failureScope()); len(got) != 2 {
 		t.Fatalf("want the child and the parent, got %+v", got)
 	}
 }
 
 func TestFailureRecordHoldsPackageOutputDurationAndFrames(t *testing.T) {
+	dir := filepath.ToSlash(filepath.Join(t.TempDir(), "internal", "calc"))
 	var b strings.Builder
 	b.WriteString("panic: deep\n\ngoroutine 7 [running]:\n")
 	for i := 1; i <= 12; i++ {
-		fmt.Fprintf(&b, "%s.f%d(0xc000)\n\tD:/GitHub/aiwe/internal/calc/deep.go:%d +0x1c\n", pkgCalc, i, i)
+		fmt.Fprintf(&b, "%s.f%d(0xc000)\n\t%s/deep.go:%d +0x1c\n", pkgCalc, i, dir, i)
 	}
 	evs := goStackEvents("TestDeep", b.String())
 	evs = append(evs, testOut("TestOther", "    o_test.go:1: other-only\n"),
 		fixEvent{Action: "fail", Package: pkgCalc, Test: "TestDeep", Elapsed: 0.25})
-	f := onlyFailure(t, goFailures(t, goJSON(t, evs...), failureScope))
+	f := onlyFailure(t, goFailures(t, goJSON(t, evs...), failureScope()))
 	if f.Package != pkgCalc || f.DurationMs != 250 {
 		t.Errorf("package/duration = %q/%d", f.Package, f.DurationMs)
 	}
@@ -138,7 +140,7 @@ func TestFailureOwnOutputIsCappedAtTwoHundredLines(t *testing.T) {
 	}
 	evs = append(evs, testOut("TestOther", "    o_test.go:1: other-only\n"),
 		fixEvent{Action: "fail", Package: pkgCalc, Test: "TestChatty"})
-	f := onlyFailure(t, goFailures(t, goJSON(t, evs...), failureScope))
+	f := onlyFailure(t, goFailures(t, goJSON(t, evs...), failureScope()))
 	if len(f.Output) != 200 {
 		t.Fatalf("Output has %d lines, want the 200 nearest the failure", len(f.Output))
 	}
@@ -151,12 +153,12 @@ func TestFailureOwnOutputIsCappedAtTwoHundredLines(t *testing.T) {
 }
 
 func TestFailureDurationAndOutputComeFromEachReport(t *testing.T) {
-	j := junitFailures(t, `<testsuite><testcase classname="c" name="n" time="1.5"><failure message="assert 1 == 2">E  assert 1 == 2</failure></testcase></testsuite>`, failureScope)
+	j := junitFailures(t, `<testsuite><testcase classname="c" name="n" time="1.5"><failure message="assert 1 == 2">E  assert 1 == 2</failure></testcase></testsuite>`, failureScope())
 	if len(j) != 1 || j[0].DurationMs != 1500 || len(j[0].Output) != 1 {
 		t.Errorf("junit = %+v", j)
 	}
 	const pw = `{"config":{},"suites":[{"title":"a.spec.ts","file":"a.spec.ts","specs":[{"title":"t","file":"a.spec.ts","line":3,"tests":[{"status":"unexpected","results":[{"status":"failed","duration":2000,"error":{"message":"Error: expect(x)"},"stdout":[{"text":"hello\n"}]}]}]}]}]}`
-	p, err := FailuresFromPlaywright([]byte(pw), failureScope)
+	p, err := FailuresFromPlaywright([]byte(pw), failureScope())
 	if err != nil || len(p) != 1 || p[0].DurationMs != 2000 || len(p[0].Output) != 1 || p[0].Output[0] != "hello" {
 		t.Errorf("playwright = %+v, %v", p, err)
 	}
@@ -166,7 +168,7 @@ func TestFailureDurationAndOutputComeFromEachReport(t *testing.T) {
 }
 
 func TestFailureLibraryFrameAtTheDeepestPositionIsRemoved(t *testing.T) {
-	f := onlyFailure(t, junitFailures(t, junitLibraryDeepest, failureScope))
+	f := onlyFailure(t, junitFailures(t, junitLibraryDeepest, failureScope()))
 	if f.SourceLocation != "src/app.js:4" || f.TestLocation != "src/app.test.js:9" {
 		t.Errorf("js locations = %q/%q", f.SourceLocation, f.TestLocation)
 	}
@@ -179,7 +181,7 @@ func TestFailureLibraryFrameAtTheDeepestPositionIsRemoved(t *testing.T) {
 src/calc.py:20: in total
 .venv/lib/python3.12/site-packages/dep/core.py:3: in call
 .venv/lib/python3.12/site-packages/dep/core.py:3: ValueError</failure></testcase></testsuite>`
-	p := onlyFailure(t, junitFailures(t, py, failureScope))
+	p := onlyFailure(t, junitFailures(t, py, failureScope()))
 	if p.SourceLocation != "src/calc.py:20" || p.Kind != "exception:ValueError" {
 		t.Errorf("python source/kind = %q/%q", p.SourceLocation, p.Kind)
 	}
@@ -193,17 +195,17 @@ func TestFailureAbsolutePathWithoutRootIsNotARepoFrame(t *testing.T) {
 }
 
 func TestFailureDoesNotInventWhatTheReportOmits(t *testing.T) {
-	e := onlyFailure(t, junitFailures(t, `<testsuite><testcase classname="c" name="n"><error message="boom"/></testcase></testsuite>`, failureScope))
+	e := onlyFailure(t, junitFailures(t, `<testsuite><testcase classname="c" name="n"><error message="boom"/></testcase></testsuite>`, failureScope()))
 	if e.Kind != "exception:unknown" {
 		t.Errorf("an unknown exception type must not be invented: %q", e.Kind)
 	}
 	const pw = `{"suites":[{"title":"a.spec.ts","file":"a.spec.ts","specs":[{"title":"t","file":"a.spec.ts","line":3,"tests":[{"status":"unexpected","results":[{"status":"failed","error":{"message":"net down"}}]}]}]}]}`
-	p, err := FailuresFromPlaywright([]byte(pw), failureScope)
+	p, err := FailuresFromPlaywright([]byte(pw), failureScope())
 	if err != nil || len(p) != 1 || p[0].Kind != "exception:unknown" {
 		t.Errorf("playwright kind = %+v, %v", p, err)
 	}
 	one := onlyFailure(t, junitFailures(t, `<testsuite><testcase classname="c" name="n"><failure>Error: expect(x)
-Expected: 4</failure></testcase></testsuite>`, failureScope))
+Expected: 4</failure></testcase></testsuite>`, failureScope()))
 	if !strings.Contains(one.Message, "want 4") || strings.Contains(one.Message, "got") {
 		t.Errorf("a side that is missing must not be shown: %q", one.Message)
 	}
@@ -211,7 +213,7 @@ Expected: 4</failure></testcase></testsuite>`, failureScope))
 
 func TestFailurePytestLineAttributeIsZeroBased(t *testing.T) {
 	// pytest junitxml writes location[1] from reportinfo(), which counts lines from 0.
-	f := onlyFailure(t, junitFailures(t, `<testsuite><testcase classname="tests.test_a" name="test_x" file="tests/test_a.py" line="11"><failure message="assert 1 == 2"/></testcase></testsuite>`, failureScope))
+	f := onlyFailure(t, junitFailures(t, `<testsuite><testcase classname="tests.test_a" name="test_x" file="tests/test_a.py" line="11"><failure message="assert 1 == 2"/></testcase></testsuite>`, failureScope()))
 	if f.TestLocation != "tests/test_a.py:12" {
 		t.Errorf("TestLocation = %q", f.TestLocation)
 	}
@@ -219,20 +221,22 @@ func TestFailurePytestLineAttributeIsZeroBased(t *testing.T) {
 
 func TestFailureESMFileURLFramesAreRead(t *testing.T) {
 	esm := strings.ReplaceAll(junitLibraryDeepest, "(/repo/", "(file:///repo/")
-	f := onlyFailure(t, junitFailures(t, esm, failureScope))
+	f := onlyFailure(t, junitFailures(t, esm, failureScope()))
 	if f.SourceLocation != "src/app.js:4" || f.TestLocation != "src/app.test.js:9" {
 		t.Errorf("esm locations = %q/%q", f.SourceLocation, f.TestLocation)
 	}
 }
 
 func TestFailureGoFullpathLocationStaysInTheRepo(t *testing.T) {
+	// A path of this machine outside the repository root: the location comes from the package.
+	elsewhere := filepath.ToSlash(filepath.Join(t.TempDir(), "calc", "add_test.go"))
 	cases := map[string]string{
 		"    /repo/internal/calc/add_test.go:14: got 3, want 4\n": "internal/calc/add_test.go:14",
-		"    C:/other/work/calc/add_test.go:14: got 3, want 4\n":  "internal/calc/add_test.go:14",
+		"    " + elsewhere + ":14: got 3, want 4\n":               "internal/calc/add_test.go:14",
 	}
 	for line, want := range cases {
 		data := goJSON(t, testOut("TestAdd", line), fixEvent{Action: "fail", Package: pkgCalc, Test: "TestAdd"})
-		if f := onlyFailure(t, goFailures(t, data, failureScope)); f.TestLocation != want {
+		if f := onlyFailure(t, goFailures(t, data, failureScope())); f.TestLocation != want {
 			t.Errorf("%q: TestLocation = %q, want %q", line, f.TestLocation, want)
 		}
 	}
