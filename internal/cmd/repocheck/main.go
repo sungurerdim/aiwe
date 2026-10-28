@@ -23,9 +23,6 @@ const (
 	outcomeRed        core.Outcome = "red"
 	outcomeIncomplete core.Outcome = "incomplete"
 
-	// ruleIntegrityNotMeasured is the warning of a commit-msg run that could not read a staged diff.
-	ruleIntegrityNotMeasured = "test_integrity_not_measured"
-
 	// productFile is the one file that may hold the product name (DR-17).
 	productFile = "internal/core/platform.go"
 )
@@ -233,16 +230,15 @@ func runCommitMsg(ctx context.Context, in core.Input) (core.Result[any], error) 
 // result carries a not-measured warning, never a silent green (DR-6); a staged diff that cannot be
 // read is an error.
 func stagedIntegrity(ctx context.Context, repo, msg string) (repocheck.Integrity, error) {
-	notMeasured := repocheck.Integrity{Warnings: []repocheck.Finding{{Rule: ruleIntegrityNotMeasured, Path: "commit-message"}}}
 	if repo == "" {
-		return notMeasured, nil
+		return repocheck.IntegrityNotMeasured(), nil
 	}
 	diff, err := repocheck.StagedDiff(ctx, repo)
 	if err != nil {
 		return repocheck.Integrity{}, fmt.Errorf("commit-msg: staged diff: %w", err)
 	}
 	if strings.TrimSpace(diff) == "" {
-		return notMeasured, nil
+		return repocheck.IntegrityNotMeasured(), nil
 	}
 	return repocheck.CommitIntegrity(msg, diff), nil
 }

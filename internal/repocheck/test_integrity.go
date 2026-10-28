@@ -13,12 +13,19 @@ import (
 const (
 	ruleBehaviorChangeMissing = "behavior_change_missing"
 	ruleTestDeletionUnproven  = "test_deletion_unproven"
+	ruleIntegrityNotMeasured  = "test_integrity_not_measured"
 )
 
 // Integrity is what the test integrity check found: Warnings never refuse a commit, Findings do.
 type Integrity struct {
 	Warnings []Finding
 	Findings []Finding
+}
+
+// IntegrityNotMeasured is the result of a run that could not read a staged diff: one warning, never a
+// refusal, so the check is not taken for a silent green (DR-6).
+func IntegrityNotMeasured() Integrity {
+	return Integrity{Warnings: []Finding{{Rule: ruleIntegrityNotMeasured, Path: commitMessagePath}}}
 }
 
 // behaviorChangePattern matches the Behavior change line a commit that changes product code and an
