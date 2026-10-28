@@ -230,9 +230,15 @@ func RepoSlug(remoteURL string) string {
 	return ""
 }
 
+// exemptCoveredByPattern matches the Covered-by line SPEC §5.13 defines, Covered-by: <test>, whose
+// line ends after the one test name; the 72-rune exemption takes this shape only, while the
+// counting rule keeps the looser coveredByPattern.
+var exemptCoveredByPattern = regexp.MustCompile(`^Covered-by: \S+$`)
+
 // checkBodyLines returns a finding for each body line over 72 runes that is not exempt: a line of
 // the closing trailer block other than a BREAKING CHANGE footer, which is prose, a line that matches
-// coveredByPattern or mutationPattern in full (a malformed one stays checked), a line between a
+// exemptCoveredByPattern or mutationPattern in full (a malformed one stays checked, and so does
+// prose that only starts with Covered-by: ), a line between a
 // matched opening and closing ``` fence line, a line that is 72 runes or less once its URLs are
 // removed, or a quoted command or output line (indented by four spaces or a tab, or one back-quoted
 // code span). Fence lines themselves are checked.
@@ -243,7 +249,7 @@ func checkBodyLines(body []messageLine) []Finding {
 	for i, l := range body {
 		prose := urlPattern.ReplaceAllString(l.text, "")
 		trailer := i >= trailers && !breakingFooterPattern.MatchString(l.text)
-		proof := coveredByPattern.MatchString(l.text) || mutationPattern.MatchString(l.text)
+		proof := exemptCoveredByPattern.MatchString(l.text) || mutationPattern.MatchString(l.text)
 		if fenced[i] || trailer || proof || utf8.RuneCountInString(prose) <= maxBodyLineRunes || isQuoted(l.text) {
 			continue
 		}
