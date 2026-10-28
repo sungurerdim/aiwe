@@ -38,8 +38,9 @@ const (
 	// fileLockBlockWindow is how long a second holder must stay waiting to count as blocked.
 	fileLockBlockWindow = 200 * time.Millisecond
 	// fileLockWakeBound bounds the wake of a waiter after a release: the 500 ms poll the lock
-	// replaces (internal/engine/slot.go defaultSlotPoll); a waiter woken only by a poll or a
-	// timeout misses it.
+	// replaces (internal/engine/slot.go defaultSlotPoll). A waiter woken only by its context
+	// timeout, or by a poll slower than 500 ms, misses it; a faster poll passes, so "no polling"
+	// rests on reading the code.
 	fileLockWakeBound = 500 * time.Millisecond
 )
 
@@ -227,6 +228,23 @@ func readReleasedAt(t *testing.T, dir string) time.Time {
 	return time.Unix(0, ns)
 }
 
+// requireFreeAfterTheHolderEnds ends the holder and requires a fresh AcquireFileLock to take the
+// lock within processBound: a wait that gave up when its context ended must not keep it.
+func requireFreeAfterTheHolderEnds(t *testing.T, h *fileLockHolder) {
+	t.Helper()
+	_ = h.stdin.Close() // tells the holder to end
+	select {
+	case <-h.exited:
+	case <-time.After(processBound):
+		t.Fatalf("the holder did not end within %v", processBound)
+	}
+	w := waitForLock(t, h.lockPath(), processBound)
+	requireReturned(t, w, processBound, "after the holder ended and the earlier wait gave up")
+	if w.err != nil || w.lock == nil {
+		t.Fatalf("AcquireFileLock = %v, %v, want the lock: the wait that gave up keeps it", w.lock, w.err)
+	}
+}
+
 // TestFileLockBlocksASecondHolder checks that a second holder waits in the OS while another
 // process holds the lock, wakes promptly when it is released and gives up when its context ends.
 func TestFileLockBlocksASecondHolder(t *testing.T) {
@@ -241,13 +259,13 @@ func TestFileLockBlocksASecondHolder(t *testing.T) {
 	}{
 		{
 			name:    "a waiter wakes when the holder releases",
-			catches: "a second holder takes a held lock, or wakes only by a poll or a timeout",
+			catches: "a second holder takes a held lock, or wakes only by its context timeout or a poll slower than 500 ms",
 			role:    "release",
 			limit:   processOuterBound,
 		},
 		{
 			name:    "a waiter whose context ends returns without the lock",
-			catches: "a wait ignores its context and hangs while the lock is held",
+			catches: "a wait ignores its context and hangs while the lock is held, or keeps the lock after it gave up",
 			role:    "keep",
 			limit:   fileLockBlockWindow,
 			wantErr: context.DeadlineExceeded,
@@ -262,16 +280,20 @@ func TestFileLockBlocksASecondHolder(t *testing.T) {
 				if !errors.Is(w.err, tc.wantErr) || w.lock != nil {
 					t.Fatalf("AcquireFileLock = %v, %v, want nil and an error wrapping %v", w.lock, w.err, tc.wantErr)
 				}
+				requireFreeAfterTheHolderEnds(t, h)
 				return
 			}
 			requireStillWaiting(t, w, fileLockBlockWindow)
+			closed := time.Now()
 			_ = h.stdin.Close() // tells the holder to release
 			requireReturned(t, w, processBound, "of the holder releasing")
 			if w.err != nil || w.lock == nil {
 				t.Fatalf("AcquireFileLock = %v, %v, want a lock once the holder released", w.lock, w.err)
 			}
+			// The release time comes from another process's wall clock, whose tick is coarse, so
+			// only the monotonic span from the close of stdin is logged: an upper bound of the wake.
+			t.Logf("wake within %v of telling the holder to release (an upper bound)", w.at.Sub(closed))
 			latency := w.at.Sub(readReleasedAt(t, h.dir))
-			t.Logf("wake latency after the release: %v", latency)
 			if latency < 0 {
 				t.Errorf("the waiter took the lock %v before the holder released it", -latency)
 			}
