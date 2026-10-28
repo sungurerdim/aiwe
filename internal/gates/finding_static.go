@@ -84,7 +84,7 @@ func ParseGoVetJSON(data []byte) ([]StaticFinding, error) {
 	for {
 		var pkgs map[string]map[string]json.RawMessage
 		err := dec.Decode(&pkgs)
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			return out, nil
 		}
 		if err != nil {
@@ -217,7 +217,7 @@ func ParseGolangciSARIF(data []byte) ([]StaticFinding, error) {
 	if err := json.Unmarshal(data, &log); err != nil {
 		return nil, fmt.Errorf("golangci-lint SARIF: %w", err)
 	}
-	if log.Version != "2.1.0" || log.Runs == nil {
+	if !sarifVersionOK(log.Version) || log.Runs == nil {
 		return nil, fmt.Errorf("golangci-lint SARIF: not a SARIF 2.1.0 log (version %q, runs present: %t)",
 			log.Version, log.Runs != nil)
 	}
@@ -292,4 +292,10 @@ func sarifPath(uri string) string {
 		return p
 	}
 	return uri
+}
+
+// sarifVersionOK accepts SARIF 2.1 (SPEC §7.9, OASIS Standard; 2.1.0 is its
+// only release) without a version literal in the code.
+func sarifVersionOK(v string) bool {
+	return v == "2.1" || strings.HasPrefix(v, "2.1.")
 }

@@ -107,7 +107,7 @@ func mappedElements(data []byte, tool string) ([]any, error) {
 	for {
 		var v any
 		err := dec.Decode(&v)
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			return elems, nil
 		}
 		if err != nil {
