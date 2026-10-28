@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"path"
 	"regexp"
 	"slices"
@@ -68,8 +69,8 @@ type ProofStep struct {
 
 // ParseDefinition reads a gate.json. It refuses invalid UTF-8, an unknown field, a format other
 // than version 1, an empty gate, a step without an id, with a duplicate id, without an argv
-// command or with a when that is not a change class, and a declaredDeps row without a path, or
-// without tests and without a reason (fail-closed, SPEC §4).
+// command or with a when that is not a change class, and a declaredDeps row without a path,
+// with a tests entry that is not ./<dir>, or without a reason (fail-closed, SPEC §4).
 func ParseDefinition(data []byte) (Definition, error) {
 	if _, err := core.ReadText(data); err != nil {
 		return Definition{}, fmt.Errorf("parse gate definition: %w", err)
@@ -147,12 +148,12 @@ func checkStep(s GateStep) *core.Error {
 }
 
 // checkDeclaredDeps refuses a declaredDeps row that declares nothing a selector could use: no path
-// glob, a glob that can never match, an empty test name, or no tests and no reason. A row that
-// selects no test is a stated gap, so it must say why (SPEC L70).
+// glob, a glob that can never match, a tests entry that is not ./<dir>, or no reason. Every row
+// says why it exists, and a row that selects no test is a stated exemption (SPEC-contracts §8.3).
 func checkDeclaredDeps(rows []DeclaredDep) *core.Error {
 	for i, r := range rows {
 		if fault := declaredDepFault(r); fault != "" {
-			return invalidGate("a declaredDeps row with path globs, and with tests or a reason",
+			return invalidGate("a declaredDeps row with path globs, ./dir tests and a reason",
 				fmt.Sprintf("declaredDeps row %d: %s", i+1, fault), nil)
 		}
 	}
@@ -166,13 +167,25 @@ func declaredDepFault(r DeclaredDep) string {
 		return "no path"
 	case slices.ContainsFunc(r.Paths, badGlob):
 		return "an empty or malformed path glob"
-	case slices.Contains(r.Tests, ""):
-		return "an empty test name"
-	case len(r.Tests) == 0 && strings.TrimSpace(r.Reason) == "":
-		return fmt.Sprintf("%s has no tests and no reason", strings.Join(r.Paths, ", "))
+	case slices.ContainsFunc(r.Tests, func(e string) bool { return !validTestDir(e) }):
+		return "a tests entry that is not ./<relative directory>"
+	case strings.TrimSpace(r.Reason) == "":
+		return fmt.Sprintf("%s has no reason", strings.Join(r.Paths, ", "))
 	default:
 		return ""
 	}
+}
+
+// validTestDir reports whether a tests entry is `.` or `./<dir>`, a clean slash directory relative
+// to the repository root, so one package has one spelling and joins GoSelection.Dir. A pattern
+// (`./...`), an import path, a trailing slash, a dot or parent segment and a wildcard are not.
+func validTestDir(entry string) bool {
+	if entry == "." {
+		return true
+	}
+	dir, ok := strings.CutPrefix(entry, "./")
+	return ok && dir != "." && fs.ValidPath(dir) && !strings.Contains(dir, "...") &&
+		!strings.ContainsAny(dir, `\*?[`)
 }
 
 // badGlob reports a glob that is empty or that path.Match refuses in one of its segments.
