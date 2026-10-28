@@ -1,4 +1,4 @@
-//go:build unix
+//go:build darwin || dragonfly || freebsd || linux || netbsd || openbsd || solaris
 
 package core
 
@@ -22,7 +22,9 @@ type lockHandle struct {
 // close of the descriptor does not wake it. So the call runs in a goroutine that owns the
 // descriptor until it hands it over. When ctx ends first, lockFile returns at once and the
 // goroutine, once flock returns, closes the descriptor, which frees a lock taken after the
-// cancel; until then it stays blocked in the OS, not polling.
+// cancel; until then it stays blocked in the OS, not polling. That goroutine has no waiting
+// owner: SPEC §16 L78 records this exception to §5.18, and the lane (#596) bounds it to one OS
+// waiter per resource per process.
 func lockFile(ctx context.Context, path string) (lockHandle, error) {
 	fd, err := unix.Open(path, unix.O_RDWR|unix.O_CREAT|unix.O_CLOEXEC, 0o600)
 	if err != nil {

@@ -1,3 +1,5 @@
+//go:build windows
+
 package core
 
 import (
@@ -8,9 +10,10 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// lockShare lets every holder open the lock file while another holds the lock, and lets the file
-// be removed; the lock, not the share mode, decides who holds it.
-const lockShare = windows.FILE_SHARE_READ | windows.FILE_SHARE_WRITE | windows.FILE_SHARE_DELETE
+// lockShare lets every holder open the lock file while another holds the lock; the lock, not the
+// share mode, decides who holds it. It leaves out FILE_SHARE_DELETE, so the file cannot be removed
+// while open: a removed file would let the next open create a new one and take a second lock.
+const lockShare = windows.FILE_SHARE_READ | windows.FILE_SHARE_WRITE
 
 // lockHandle is the open lock file and the overlapped record its lock calls share. The record is
 // a pointer, so it stays on the heap at one address: the kernel writes it after LockFileEx

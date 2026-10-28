@@ -6,15 +6,17 @@ import (
 	"fmt"
 )
 
-// The OS file lock (#591): this file holds the type and its contract; filelock_windows.go and
-// filelock_unix.go make the OS calls through golang.org/x/sys and import no os (SPEC §5.6).
+// The OS file lock (#591): this file holds the type and its contract and does no IO; the OS calls
+// live in filelock_windows_io.go and filelock_unix_io.go (SPEC §5.6).
 
-// errFileLockReleased is returned by a second Release of one lock.
+// errFileLockReleased is returned by a second Release of one lock; it is informative only, as a
+// second Release is a programmer error no caller handles.
 var errFileLockReleased = errors.New("file lock already released")
 
 // FileLock is an exclusive lock the operating system holds on one file: LockFileEx on Windows,
 // flock on Unix. The OS frees it when its holder dies, because it closes the holder's handle, so
-// no sweep is needed. A FileLock is used by one goroutine.
+// no sweep is needed. A FileLock is used by one goroutine. The lock file must never be removed
+// while in use: the next open would create a new file and take a second lock.
 type FileLock struct {
 	path     string
 	handle   lockHandle
