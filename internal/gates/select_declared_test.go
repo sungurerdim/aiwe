@@ -18,8 +18,10 @@ func declaredRows() []DeclaredDep {
 	return []DeclaredDep{
 		{Paths: []string{"docs/SPEC.md", "docs/standards.md"}, Tests: []string{"./internal/repocheck"},
 			Reason: "the registry test reads both"},
-		{Paths: []string{"testdata/**/*.json"}, Tests: []string{"./internal/item", "./internal/core"}},
-		{Paths: []string{"schema/*.json"}, Tests: []string{"./internal/core"}},
+		{Paths: []string{"testdata/**/*.json"}, Tests: []string{"./internal/item", "./internal/core"},
+			Reason: "the fixtures feed both"},
+		{Paths: []string{"schema/*.json"}, Tests: []string{"./internal/core"},
+			Reason: "the schema feeds core"},
 		{Paths: []string{"docs/guide.md"}, Reason: "read by no test"},
 	}
 }
@@ -47,14 +49,14 @@ func TestDeclaredRowSelectsItsPackages(t *testing.T) {
 		{"a deep data file matches a ** glob and selects both packages of the row, sorted",
 			[]string{"testdata/a/b/rules.json"},
 			[]DeclaredSelection{
-				{Package: "./internal/core", Reason: "declared: testdata/a/b/rules.json match testdata/**/*.json"},
-				{Package: "./internal/item", Reason: "declared: testdata/a/b/rules.json match testdata/**/*.json"}},
+				{Package: "./internal/core", Reason: "declared: testdata/a/b/rules.json match testdata/**/*.json (the fixtures feed both)"},
+				{Package: "./internal/item", Reason: "declared: testdata/a/b/rules.json match testdata/**/*.json (the fixtures feed both)"}},
 			nil},
 		{"a ** glob also matches a file at the top level of its directory",
 			[]string{"testdata/rules.json"},
 			[]DeclaredSelection{
-				{Package: "./internal/core", Reason: "declared: testdata/rules.json match testdata/**/*.json"},
-				{Package: "./internal/item", Reason: "declared: testdata/rules.json match testdata/**/*.json"}},
+				{Package: "./internal/core", Reason: "declared: testdata/rules.json match testdata/**/*.json (the fixtures feed both)"},
+				{Package: "./internal/item", Reason: "declared: testdata/rules.json match testdata/**/*.json (the fixtures feed both)"}},
 			nil},
 		{"a single * glob does not reach a file in a deeper directory, so the file is unmapped",
 			[]string{"schema/deep/x.json"}, nil, []string{"schema/deep/x.json"}},
@@ -62,8 +64,8 @@ func TestDeclaredRowSelectsItsPackages(t *testing.T) {
 			[]string{"schema/s.json", "testdata/t.json"},
 			[]DeclaredSelection{
 				{Package: "./internal/core",
-					Reason: "declared: testdata/t.json match testdata/**/*.json; declared: schema/s.json match schema/*.json"},
-				{Package: "./internal/item", Reason: "declared: testdata/t.json match testdata/**/*.json"}},
+					Reason: "declared: testdata/t.json match testdata/**/*.json (the fixtures feed both); declared: schema/s.json match schema/*.json (the schema feeds core)"},
+				{Package: "./internal/item", Reason: "declared: testdata/t.json match testdata/**/*.json (the fixtures feed both)"}},
 			nil},
 		{"a file no row declares is unmapped, never selected and never dropped",
 			[]string{"README.md"}, nil, []string{"README.md"}},
@@ -219,6 +221,7 @@ func TestDeclaredTestEntryIsARelativeDir(t *testing.T) {
 		{"a trailing slash gives a second spelling", "./internal/roles/", false},
 		{"a doubled separator", "./internal//roles", false},
 		{"a dot segment", "./internal/./roles", false},
+		{"dot after the prefix", "./.", false},
 		{"a parent segment leaves the repository", "./internal/../../x", false},
 		{"only the prefix", "./", false},
 		{"dot dot", "..", false},
