@@ -211,10 +211,9 @@ type Timed struct {
 type Check struct {
 	Header
 
-	DurationMS  core.Measured[int64] `json:"durationMs"`
-	ExitCode    core.Measured[int64] `json:"exitCode"`
-	SelectMS    core.Measured[int64] `json:"selectMs"`
-	QueueWaitMS core.Measured[int64] `json:"queueWaitMs"`
+	DurationMS core.Measured[int64] `json:"durationMs"`
+	ExitCode   core.Measured[int64] `json:"exitCode"`
+	SelectMS   core.Measured[int64] `json:"selectMs"`
 
 	Key    string `json:"key"`
 	StepID string `json:"stepId"`
@@ -232,15 +231,30 @@ type Check struct {
 	RedClass   Field[string]           `json:"redClass"`
 	TailPath   Field[string]           `json:"tailPath"`
 	MapGaps    Field[[]string]         `json:"mapGaps"`
+
+	// QueueWaitMS is the time spent waiting, per resource name (L63, SPEC-contracts §8.5); a resource
+	// whose wait was not measured reads unknown, and so does a record that names no resource.
+	QueueWaitMS Field[map[string]core.Measured[int64]] `json:"queueWaitMs"`
 }
 
 // isRecord marks a Check as a ledger record.
 func (Check) isRecord() {}
 
+// CommitUncommitted is the commit of a check that ran on work not yet committed (SPEC-contracts §8.5).
+const CommitUncommitted = "uncommitted"
+
 // validate refuses a check that is not one record of the schema: a header that is not a check
-// header. A check that never ran leaves its duration and exit code unknown, so unlike a run it names
-// no reason for them (SPEC §8.5).
-func (c Check) validate() error { return c.Header.validate(KindCheck) }
+// header, or an empty commit (a sha or CommitUncommitted, DR-6). A check that never ran leaves its
+// duration and exit code unknown, so unlike a run it names no reason for them (SPEC §8.5).
+func (c Check) validate() error {
+	if err := c.Header.validate(KindCheck); err != nil {
+		return err
+	}
+	if c.Commit == "" {
+		return refuse(fmt.Sprintf("a commit sha or %q", CommitUncommitted), "an empty commit")
+	}
+	return nil
+}
 
 // Record is one record of the ledger: a Run or a Check (SPEC §8.5). The unexported method keeps the
 // set closed, so no other type enters the ledger.
