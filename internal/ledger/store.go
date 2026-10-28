@@ -197,8 +197,9 @@ func isOwnedDirLine(line []byte) bool {
 }
 
 // Read returns the records of the JSONL ledger in r, oldest first; an empty ledger holds no record
-// (SPEC §8.5). It passes over the owned_dir lines core writes into the ledger, which are no record. A last line that was never finished is ErrTornLine, and a line that is not a record
-// of the schema is refused: no line is ever dropped silently (SPEC §4).
+// (SPEC §8.5). It passes over the owned_dir lines core writes into the ledger, which are no record.
+// A last line that was never finished is ErrTornLine, and a line that is not a record of the schema
+// is refused: no line is ever dropped silently (SPEC §4).
 func Read(r io.Reader) ([]Record, error) {
 	br := bufio.NewReader(r)
 	var out []Record
