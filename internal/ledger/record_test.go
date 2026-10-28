@@ -215,7 +215,8 @@ func ledgerTestRunFields(c Check) Check {
 	c.Selected = knownField([]Selected{{ID: "ledger.TestAppendReadCheck", Reason: "import"}})
 	c.Slowest = knownField([]Timed{{ID: "ledger.TestAppendIsAppendOnly", DurationMS: 812}})
 	c.SelectMS = core.Measured[int64]{Value: 37, Known: true}
-	c.QueueWaitMS = core.Measured[int64]{Value: 0, Known: true}
+	c.QueueWaitMS = knownField(map[string]core.Measured[int64]{
+		"cpu": {Value: 0, Known: true}, "gpu": {}})
 	c.Counts = knownField(map[string]int64{"fail": 1, "pass": 41, "skip": 0})
 	c.RedClass = knownField("real_bug")
 	c.TailPath = knownField("tails/test-2f7c1a9b4e6d.txt")
@@ -273,7 +274,7 @@ func TestCheckRecordCarriesTestRunFields(t *testing.T) {
 		want.MapGaps = knownField([]string{})
 		want.Counts = knownField(map[string]int64{})
 		raw, got := appendLine(t, want)
-		for _, frag := range []string{`"queueWaitMs":0`, `"mapGaps":[]`, `"counts":{}`} {
+		for _, frag := range []string{`"queueWaitMs":{"cpu":0,"gpu":"unknown"}`, `"mapGaps":[]`, `"counts":{}`} {
 			if !strings.Contains(raw, frag) {
 				t.Errorf("check line %s does not hold %s", raw, frag)
 			}
@@ -281,6 +282,29 @@ func TestCheckRecordCarriesTestRunFields(t *testing.T) {
 		check := got.(Check)
 		if !check.QueueWaitMS.Known || !check.MapGaps.Known || !check.Counts.Known {
 			t.Errorf("measured 0 and empty lists read back %+v, want measured", testRunFieldsOf(check))
+		}
+		if cpu := check.QueueWaitMS.Value["cpu"]; !cpu.Known || cpu.Value != 0 {
+			t.Errorf("queueWaitMs cpu read back %+v, want a measured 0", cpu)
+		}
+		if gpu, ok := check.QueueWaitMS.Value["gpu"]; !ok || gpu.Known {
+			t.Errorf("queueWaitMs gpu read back %+v (present %v), want an unknown wait kept per resource", gpu, ok)
+		}
+	})
+	t.Run("a check with an empty commit is refused", func(t *testing.T) {
+		// catches a check record whose commit was never set being written as ""
+		c := ledgerTestCheck()
+		c.Commit = ""
+		var buf bytes.Buffer
+		if err := Append(&buf, c); err == nil || buf.Len() != 0 {
+			t.Fatalf("Append of an empty commit = %v with %d bytes written, want a refusal and none", err, buf.Len())
+		}
+	})
+	t.Run("a check on uncommitted work is accepted", func(t *testing.T) {
+		// catches the literal uncommitted of SPEC-contracts §8.5 being refused along with ""
+		c := ledgerTestCheck()
+		c.Commit = "uncommitted"
+		if _, got := appendLine(t, c); got.(Check).Commit != "uncommitted" {
+			t.Errorf("commit read back %q, want uncommitted", got.(Check).Commit)
 		}
 	})
 	t.Run("a measured list that is nil is refused", func(t *testing.T) {
