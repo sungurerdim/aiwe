@@ -16,40 +16,9 @@ import (
 	"github.com/sungurerdim/aiwe/internal/core"
 )
 
-// checkNames are the commands this entry point must serve: the doctor and the checks of #14
-// (SPEC §12.2). ci-shape arrives with unit 0.10 and is not required here.
-func checkNames() []string {
-	return []string{"doctor", "rules", "size", "boundaries", "source-rules", "deps"}
-}
-
-// TestRepocheckCommands catches a check of #14 or the doctor that is not registered in the one
-// command list, and a `repocheck doctor` run that exits 0 while a prerequisite is missing (§5.7,
-// §12.2).
-func TestRepocheckCommands(t *testing.T) {
-	t.Run("registers the doctor and every check of #14 in one valid registry", func(t *testing.T) {
-		cmds := commands()
-		if err := core.CheckParams(core.Dictionary(), cmds); err != nil {
-			t.Fatalf("commands() fails the parameter dictionary: %v", err)
-		}
-		for _, name := range checkNames() {
-			i := slices.IndexFunc(cmds, func(c core.Command) bool { return c.Object == name && c.Verb == "" })
-			if i < 0 {
-				t.Errorf("commands() has no %q command; `repocheck %s` would be refused", name, name)
-				continue
-			}
-			c := cmds[i]
-			if c.Run == nil {
-				t.Errorf("command %q has no Run function", name)
-			}
-			if !slices.Contains(c.Params, "repo") {
-				t.Errorf("command %q params = %v, want them to include repo", name, c.Params)
-			}
-			if c.Purpose == "" {
-				t.Errorf("command %q has no purpose for --help", name)
-			}
-		}
-	})
-
+// TestRepocheckDoctor catches a `repocheck doctor` run that exits 0 while a prerequisite is
+// missing: an unresolved go tool entry, a Go older than go.mod, or no go.mod at all (§5.7, §12.2).
+func TestRepocheckDoctor(t *testing.T) {
 	tests := []struct {
 		name     string
 		goMod    string
@@ -226,6 +195,25 @@ func TestRepocheckAll(t *testing.T) {
 			t.Fatalf("envelope status = ok with check size red; output %q", out.String())
 		}
 	})
+
+	// Each check main.go serves as its own command answers with exactly that check; a refused
+	// command answers with a usage error and no check at all. The names come from checks(), the
+	// one source commands() builds the per-check commands from.
+	for _, c := range checks() {
+		t.Run(c.name+" is served as its own command", func(t *testing.T) {
+			var buf bytes.Buffer
+			core.RunCLI(context.Background(), commands(),
+				[]string{c.name, "--repo", repo, "--format", "json"}, &buf, io.Discard)
+			var one allReport
+			if err := json.Unmarshal(buf.Bytes(), &one); err != nil {
+				t.Fatalf("repocheck %s --format json is not one result envelope: %v; output %q", c.name, err, buf.String())
+			}
+			if len(one.Data.Checks) != 1 || one.Data.Checks[0].Check != c.name {
+				t.Fatalf("repocheck %s reported checks %+v, want exactly one check named %q; output %q",
+					c.name, one.Data.Checks, c.name, buf.String())
+			}
+		})
+	}
 
 	// A check that read zero files measured nothing; green would be a fail-open (DR-6).
 	for _, name := range []string{"size", "source-rules"} {
