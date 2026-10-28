@@ -4,6 +4,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -14,19 +15,22 @@ var (
 	pytestFrameRe = regexp.MustCompile(`^((?:[A-Za-z]:)?[^:\s][^:]*\.py):(\d+): (.+)$`)
 	jsFrameRe     = regexp.MustCompile(`^\s*at (?:(.+?) \()?` + jsPathPat + `:(\d+)(?::\d+)?\)?\s*$`)
 	vitestFrameRe = regexp.MustCompile(`^\s*❯\s+(?:[\w$.<>]+\s+)?` + jsPathPat + `:(\d+)(?::\d+)?\s*$`)
+	fileURLRe     = regexp.MustCompile(`file://(?:/([A-Za-z]:))?`)
 	excTypeRe     = regexp.MustCompile(`^((?:[A-Za-z_][\w.]*)?(?:Error|Exception))\b`)
 	timeoutRe     = regexp.MustCompile(`(?i)(^|: )(timeout\b|timed out)|timeout of \d+\s*ms exceeded|exceeded.*timeout`)
 )
 
 type junitSuite struct {
-	Suites []junitSuite `xml:"testsuite"`
-	Cases  []junitCase  `xml:"testcase"`
+	XMLName xml.Name
+	Suites  []junitSuite `xml:"testsuite"`
+	Cases   []junitCase  `xml:"testcase"`
 }
 
 type junitCase struct {
 	Name      string        `xml:"name,attr"`
 	Classname string        `xml:"classname,attr"`
 	File      string        `xml:"file,attr"`
+	Time      string        `xml:"time,attr"`
 	Line      string        `xml:"line,attr"`
 	Failure   *junitProblem `xml:"failure"`
 	Error     *junitProblem `xml:"error"`
@@ -40,11 +44,15 @@ type junitProblem struct {
 
 // FailuresFromJUnit reads the failing tests out of a JUnit XML report (pytest, jest, vitest): a
 // testcase with a failure or an error element is one record. A report that is not well formed
-// XML is an error, never an empty result.
+// XML is an error, never an empty result; so is a document whose root is not testsuites or
+// testsuite.
 func FailuresFromJUnit(data []byte, scope RepoScope) ([]Failure, error) {
 	var root junitSuite
 	if err := xml.Unmarshal(data, &root); err != nil {
 		return nil, fmt.Errorf("gates: read the JUnit report: %w", err)
+	}
+	if n := root.XMLName.Local; n != "testsuites" && n != "testsuite" {
+		return nil, fmt.Errorf("gates: the JUnit report root is <%s>, want testsuites or testsuite", n)
 	}
 	var out []Failure
 	var walk func(s junitSuite)
@@ -79,10 +87,11 @@ func junitFailure(c junitCase, scope RepoScope) (Failure, bool) {
 	}
 	msg, body := cleanText(p.Message), cleanText(p.Body)
 	f := newFailure(junitID(c), junitKind(elem, p.Type, msg, body))
+	f.DurationMs, f.Output = durationMs(parseSeconds(c.Time)), ownOutput(strings.Split(body, "\n"))
 	frames, innermostFirst := stackFrames(body)
-	f.TestLocation, f.SourceLocation = scope.locate(frames, innermostFirst)
-	if rel, ok := scope.relPath(c.File); ok && f.TestLocation == "" {
-		f.TestLocation = formatLocation(rel, atoi(c.Line))
+	f.TestLocation, f.SourceLocation, f.Frames = scope.locate(frames, innermostFirst)
+	if f.TestLocation == "" {
+		f.TestLocation = junitCaseLocation(c, scope)
 	}
 	first := firstLine(msg)
 	if first == "" {
@@ -119,7 +128,7 @@ func junitKind(elem, typ, msg, body string) string {
 		return FailureAssertion
 	}
 	if t == "" {
-		t = "Error"
+		t = FailureUnknownType
 	}
 	return FailureExceptionPrefix + t
 }
@@ -133,8 +142,23 @@ func containsAny(s string, subs ...string) bool {
 	return false
 }
 
+// junitCaseLocation is the file and line attributes of a testcase. pytest's junitxml writes
+// location[1] of the test report, which reportinfo() counts from 0, so the line is that value + 1.
+func junitCaseLocation(c junitCase, scope RepoScope) string {
+	rel, ok := scope.relPath(c.File)
+	if !ok {
+		return ""
+	}
+	line := 0
+	if n, err := strconv.Atoi(strings.TrimSpace(c.Line)); err == nil && n >= 0 {
+		line = n + 1
+	}
+	return formatLocation(rel, line)
+}
+
 // frameOf reads one stack line: py tells a Python frame from a JavaScript one.
 func frameOf(line string) (fr frame, py, ok bool) {
+	line = fileURLRe.ReplaceAllString(line, "$1") // ESM frames name files as file:// URLs
 	if m := pyFrameRe.FindStringSubmatch(line); m != nil {
 		return frame{Func: m[3], Path: m[1], Line: atoi(m[2])}, true, true
 	}
