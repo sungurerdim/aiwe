@@ -3,23 +3,30 @@ package gates
 import (
 	"path"
 	"regexp"
+	"slices"
 	"strings"
 )
 
 var goCompileRe = regexp.MustCompile(`^(?:vet: )?((?:[A-Za-z]:)?[^:\s][^:]*\.go):(\d+):(\d+): (.+)$`)
 
 // goBuildPackage names the package a build import path stands for: the external test package
-// "p_test [p.test]" is built for p, and "d [p.test]" is d itself, built for the tests of p.
+// "p_test [p.test]" is built for p, and "d [p.test]" is d itself, built for the tests of p. Only
+// the "[<pkg>.test]" form of its own package drops the "_test" suffix.
 func goBuildPackage(importPath string) string {
-	first, _, bracket := strings.Cut(importPath, " [")
-	if bracket {
-		return strings.TrimSuffix(first, "_test")
+	first, rest, bracket := strings.Cut(importPath, " [")
+	if !bracket {
+		return first
+	}
+	if base, ok := strings.CutSuffix(first, "_test"); ok && rest == base+".test]" {
+		return base
 	}
 	return first
 }
 
-// buildFailures gives one record per build that failed. built is filled with the build import
-// paths reported, so a package whose FailedBuild names one gets no second record.
+// buildFailures gives one record per build error. A package built twice (alone, and for its own
+// tests) fails twice with the same error: the record that is already listed is not repeated.
+// built is filled with the build import paths reported, so a package whose FailedBuild names one
+// gets no second record.
 func (r *goReport) buildFailures(scope RepoScope, built, covered map[string]bool) []Failure {
 	var out []Failure
 	for _, a := range r.builds.list() {
@@ -27,7 +34,12 @@ func (r *goReport) buildFailures(scope RepoScope, built, covered map[string]bool
 			continue
 		}
 		pkg := goBuildPackage(a.pkg)
-		out = append(out, goBuildFailure(pkg, a.lines(), scope))
+		f := goBuildFailure(pkg, a.lines(), scope)
+		if !slices.ContainsFunc(out, func(o Failure) bool {
+			return o.Package == f.Package && o.TestLocation == f.TestLocation && o.Message == f.Message
+		}) {
+			out = append(out, f)
+		}
 		built[a.pkg] = true
 		covered[pkg] = true
 	}

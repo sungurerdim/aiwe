@@ -120,6 +120,8 @@ func decodeGoEvent(line []byte) (goEvent, bool) {
 // (test2json events): one record per failing test, with the test's own output only, since every
 // event names its test. A line that is not a JSON event is skipped. A stream that holds no event
 // at all (empty, killed before it wrote, not test2json) is an error: it is not "no failures".
+// A stream cut off partway returns no error and no record for the unfinished tests: the #594
+// contract point is that go test's exit code decides, so `[]` with a non-zero exit is not a pass.
 func FailuresFromGoJSON(data []byte, scope RepoScope) ([]Failure, error) {
 	var r goReport
 	events := 0
