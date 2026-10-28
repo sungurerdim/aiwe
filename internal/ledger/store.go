@@ -88,78 +88,118 @@ type fileLedger interface {
 	io.Seeker
 }
 
-// tailChunk is how many bytes fileTail reads at a time from the end of a ledger file.
+// kindOwnedDir and ownedFormatVersion name the owned_dir lines of internal/core (SPEC §8.5), which
+// share the ledger file and sit outside the hash chain.
+const (
+	kindOwnedDir       = "owned_dir"
+	ownedFormatVersion = 1
+)
+
+// tailChunk is how many bytes headOfFile reads at a time from the end of a ledger file.
 const tailChunk = 4096
 
 // headOf returns the head of the ledger in w, the hash of its last record, and whether it holds a
-// record; the head of an empty ledger is the genesis value (L59, SPEC §8.5). A ledger Append cannot
-// read back, a torn last line and a last line that is not a record are refused: a record is never
-// linked to a head that was not read (fail closed).
+// record; the head of an empty ledger is the genesis value (L59, SPEC §8.5). The owned_dir lines core
+// writes into the ledger are no record and no link of the chain, so the head is the last line before
+// them. A ledger Append cannot read back, a torn last line and a last line that is not a record are
+// refused: a record is never linked to a head that was not read (fail closed).
 func headOf(w io.Writer) (string, bool, error) {
-	var tail []byte
-	var err error
 	switch l := w.(type) {
 	case bufferLedger:
-		tail = l.Bytes()
+		head, held, _, err := headOfTail(l.Bytes(), true)
+		return head, held, err
 	case fileLedger:
-		tail, err = fileTail(l)
-	default:
-		return "", false, refuse("a ledger Append can read back: a file opened for reading or a buffer",
-			fmt.Sprintf("%T", w))
+		return headOfFile(l)
 	}
-	if err != nil {
-		return "", false, err
-	}
-	return headOfTail(tail)
+	return "", false, refuse("a ledger Append can read back: a file opened for reading or a buffer",
+		fmt.Sprintf("%T", w))
 }
 
-// headOfTail returns the head of a ledger whose last bytes are tail, which hold its whole last line,
-// and whether the ledger holds a record. The last line is read as a record, so a line Read refuses is
-// never a head, and its RFC 8785 bytes are hashed.
-func headOfTail(tail []byte) (string, bool, error) {
-	if len(tail) == 0 {
-		return genesis, false, nil
-	}
-	body, complete := bytes.CutSuffix(tail, []byte{'\n'})
-	if !complete {
-		return "", true, fmt.Errorf("ledger last line: %w", tornLine())
-	}
-	line := body[bytes.LastIndexByte(body, '\n')+1:]
-	if _, err := parseRecord(string(line)); err != nil {
-		return "", true, fmt.Errorf("ledger last line: %w", err)
-	}
-	head, err := hashLine(line)
-	return head, true, err
-}
-
-// fileTail returns the last bytes of the ledger file f, enough to hold its whole last line. It reads
-// back from the end, so an append reads about one line, never the whole file.
-func fileTail(f fileLedger) ([]byte, error) {
+// headOfFile returns the head of the ledger file f and whether it holds a record. It reads back from
+// the end until it holds the last record line, so an append reads about one line when the ledger ends
+// in a record, never the whole file.
+func headOfFile(f fileLedger) (string, bool, error) {
 	end, err := f.Seek(0, io.SeekEnd)
 	if err != nil {
-		return nil, fmt.Errorf("ledger head: %w", err)
+		return "", false, fmt.Errorf("ledger head: %w", err)
 	}
 	var tail []byte
-	for end > 0 && !holdsLastLine(tail) {
+	for {
+		head, held, more, err := headOfTail(tail, end == 0)
+		if err != nil || !more {
+			return head, held, err
+		}
 		chunk := make([]byte, min(end, tailChunk))
 		end -= int64(len(chunk))
 		if n, err := f.ReadAt(chunk, end); n < len(chunk) {
-			return nil, fmt.Errorf("ledger head: %w", cmp.Or(err, io.ErrUnexpectedEOF))
+			return "", false, fmt.Errorf("ledger head: %w", cmp.Or(err, io.ErrUnexpectedEOF))
 		}
 		tail = append(chunk, tail...)
 	}
-	return tail, nil
 }
 
-// holdsLastLine reports whether tail holds the whole last line of a ledger: a newline before the one
-// that ends it, or no newline at its end, which is a torn line headOfTail refuses.
-func holdsLastLine(tail []byte) bool {
-	body, complete := bytes.CutSuffix(tail, []byte{'\n'})
-	return len(tail) > 0 && (!complete || bytes.IndexByte(body, '\n') >= 0)
+// headOfTail returns the head of a ledger whose last bytes are tail, and whether the ledger holds a
+// record. whole says tail starts at the first byte of the ledger; when it does not and the last record
+// line may begin before tail, more is true and the head is not known yet. The last record line is read
+// as a record, so a line Read refuses is never a head, and its RFC 8785 bytes are hashed.
+func headOfTail(tail []byte, whole bool) (head string, held, more bool, err error) {
+	line, found, more, err := lastRecordLine(tail, whole)
+	switch {
+	case err != nil:
+		return "", true, false, err
+	case more:
+		return "", false, true, nil
+	case !found:
+		return genesis, false, false, nil
+	}
+	if _, err := parseRecord(string(line)); err != nil {
+		return "", true, false, fmt.Errorf("ledger last line: %w", err)
+	}
+	head, err = hashLine(line)
+	return head, true, false, err
+}
+
+// lastRecordLine returns the last line of tail that is not an owned_dir line. found is false when
+// tail holds no such line; more is true when that line may begin before tail, which is not the first
+// byte of the ledger unless whole. A tail whose last line was never finished is a torn line.
+func lastRecordLine(tail []byte, whole bool) (line []byte, found, more bool, err error) {
+	if len(tail) == 0 {
+		return nil, false, !whole, nil
+	}
+	body, complete := bytes.CutSuffix(tail, []byte{'
+'})
+	if !complete {
+		return nil, false, false, fmt.Errorf("ledger last line: %w", tornLine())
+	}
+	for {
+		start := bytes.LastIndexByte(body, '
+') + 1
+		switch {
+		case start == 0 && !whole:
+			return nil, false, true, nil
+		case !isOwnedDirLine(body[start:]):
+			return body[start:], true, false, nil
+		case start == 0:
+			return nil, false, false, nil
+		}
+		body = body[:start-1]
+	}
+}
+
+// isOwnedDirLine reports whether line is an owned_dir line, the line core writes for a directory it
+// owns (SPEC §8.5). It is no record of this package and carries no prev; core alone checks its HMAC.
+// A line of another format version is not passed over, so it is refused as a line of unknown kind.
+func isOwnedDirLine(line []byte) bool {
+	var probe struct {
+		FormatVersion int    `json:"format_version"`
+		Kind          string `json:"kind"`
+	}
+	return json.Unmarshal(line, &probe) == nil && probe.Kind == kindOwnedDir &&
+		probe.FormatVersion == ownedFormatVersion
 }
 
 // Read returns the records of the JSONL ledger in r, oldest first; an empty ledger holds no record
-// (SPEC §8.5). A last line that was never finished is ErrTornLine, and a line that is not a record
+// (SPEC §8.5). It passes over the owned_dir lines core writes into the ledger, which are no record. A last line that was never finished is ErrTornLine, and a line that is not a record
 // of the schema is refused: no line is ever dropped silently (SPEC §4).
 func Read(r io.Reader) ([]Record, error) {
 	br := bufio.NewReader(r)

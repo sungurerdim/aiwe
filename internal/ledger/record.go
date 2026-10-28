@@ -3,6 +3,8 @@
 package ledger
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -145,18 +147,91 @@ func isUnknownReason(reason string) bool {
 	return false
 }
 
+// unknownJSON is the JSON form of a field that was not measured (DR-6).
+const unknownJSON = `"unknown"`
+
+// Field is a text, list or table of a record that is either measured or unknown (DR-6, SPEC §8.5),
+// as core.Measured is for a number: the zero Field is unknown, written "unknown" and never as an
+// empty value or 0. A measured list or table is never nil, because null reads as nothing.
+type Field[T any] struct {
+	Value T
+	Known bool
+}
+
+// MarshalJSON writes a known value as JSON and an unknown one as "unknown"; a known value that
+// encodes as null is refused.
+func (f Field[T]) MarshalJSON() ([]byte, error) {
+	if !f.Known {
+		return []byte(unknownJSON), nil
+	}
+	data, err := json.Marshal(f.Value)
+	if err != nil {
+		return nil, err
+	}
+	if bytes.Equal(data, []byte("null")) {
+		return nil, fmt.Errorf("measured field: expected a value that is not null, found %s", data)
+	}
+	return data, nil
+}
+
+// UnmarshalJSON reads "unknown" as an unknown field and any other JSON as a known value; null is
+// refused (fail closed, SPEC §4), never read as unknown or as empty.
+func (f *Field[T]) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(data, []byte(unknownJSON)) {
+		*f = Field[T]{}
+		return nil
+	}
+	if bytes.Equal(data, []byte("null")) {
+		return fmt.Errorf("measured field: expected a value or %s, found null", unknownJSON)
+	}
+	var v T
+	if err := json.Unmarshal(data, &v); err != nil {
+		return fmt.Errorf("measured field: %w", err)
+	}
+	*f = Field[T]{Value: v, Known: true}
+	return nil
+}
+
+// Selected is one test a check ran and the reason it was selected: import, coverage, declared,
+// stale, infra or toolchain (L67, SPEC-contracts §8.5).
+type Selected struct {
+	ID     string `json:"id"`
+	Reason string `json:"reason"`
+}
+
+// Timed is one test of a check and how long it took (L67).
+type Timed struct {
+	ID         string `json:"id"`
+	DurationMS int64  `json:"durationMs"`
+}
+
 // Check is one check record: a gate step run against one commit, with the duration and exit code it
-// measured (SPEC §8.5).
+// measured, and the test-run fields of L67 (SPEC §8.5). A test-run field that was not measured reads
+// "unknown", never 0 (DR-6); a record written before the fields reads them unknown.
 type Check struct {
 	Header
 
-	DurationMS core.Measured[int64] `json:"durationMs"`
-	ExitCode   core.Measured[int64] `json:"exitCode"`
+	DurationMS  core.Measured[int64] `json:"durationMs"`
+	ExitCode    core.Measured[int64] `json:"exitCode"`
+	SelectMS    core.Measured[int64] `json:"selectMs"`
+	QueueWaitMS core.Measured[int64] `json:"queueWaitMs"`
 
 	Key    string `json:"key"`
 	StepID string `json:"stepId"`
 	Commit string `json:"commit"`
 	Killed bool   `json:"killed"`
+
+	TreeHash   Field[string]           `json:"treeHash"`
+	Toolchain  Field[string]           `json:"toolchain"`
+	OS         Field[string]           `json:"os"`
+	BaseSha    Field[string]           `json:"baseSha"`
+	BaseReason Field[string]           `json:"baseReason"`
+	Selected   Field[[]Selected]       `json:"selected"`
+	Slowest    Field[[]Timed]          `json:"slowest"`
+	Counts     Field[map[string]int64] `json:"counts"`
+	RedClass   Field[string]           `json:"redClass"`
+	TailPath   Field[string]           `json:"tailPath"`
+	MapGaps    Field[[]string]         `json:"mapGaps"`
 }
 
 // isRecord marks a Check as a ledger record.
