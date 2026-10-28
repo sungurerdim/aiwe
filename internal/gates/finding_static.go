@@ -186,7 +186,9 @@ type sarifRun struct {
 	Tool struct {
 		Driver struct{ Name string }
 	}
-	Results []sarifResult
+	// Results is a pointer: absent and null (no results produced) differ
+	// from [] (the tool ran and found none).
+	Results *[]sarifResult
 }
 
 type sarifResult struct {
@@ -209,8 +211,9 @@ type sarifResult struct {
 // --output.sarif.path`. A result without a location keeps empty File and 0 for
 // Line and Col; a missing level is "warning" as SARIF defines. Fail closed
 // (DR-6): empty input, null, an object that is not a SARIF log of exactly
-// core.SarifVersion with a runs array, and a result with no message text are
-// errors, because golangci-lint writes a full log even for a clean run.
+// core.SarifVersion with a non-empty runs array, a run whose results array is
+// absent or null, and a result with no message text are errors, because
+// golangci-lint writes a full log even for a clean run.
 func ParseGolangciSARIF(data []byte) ([]StaticFinding, error) {
 	if len(bytes.TrimSpace(data)) == 0 {
 		return nil, errors.New("golangci-lint SARIF is empty (the tool wrote no report)")
@@ -219,13 +222,13 @@ func ParseGolangciSARIF(data []byte) ([]StaticFinding, error) {
 	if err := json.Unmarshal(data, &log); err != nil {
 		return nil, fmt.Errorf("golangci-lint SARIF: %w", err)
 	}
-	if log.Version != core.SarifVersion || log.Runs == nil {
-		return nil, fmt.Errorf("golangci-lint SARIF: not a SARIF %s log (version %q, runs present: %t)",
-			core.SarifVersion, log.Version, log.Runs != nil)
+	if log.Version != core.SarifVersion || len(log.Runs) == 0 {
+		return nil, fmt.Errorf("golangci-lint SARIF: not a SARIF %s log (version %q, runs: %d)",
+			core.SarifVersion, log.Version, len(log.Runs))
 	}
 	var out []StaticFinding
-	for _, run := range log.Runs {
-		fs, err := sarifRunFindings(run)
+	for i, run := range log.Runs {
+		fs, err := sarifRunFindings(i, run)
 		if err != nil {
 			return nil, err
 		}
@@ -234,13 +237,16 @@ func ParseGolangciSARIF(data []byte) ([]StaticFinding, error) {
 	return out, nil
 }
 
-func sarifRunFindings(run sarifRun) ([]StaticFinding, error) {
+func sarifRunFindings(n int, run sarifRun) ([]StaticFinding, error) {
+	if run.Results == nil {
+		return nil, fmt.Errorf("golangci-lint SARIF: run %d has no results array (the tool produced no results)", n)
+	}
 	tool := run.Tool.Driver.Name
 	if tool == "" {
 		tool = "golangci-lint"
 	}
 	var out []StaticFinding
-	for i, r := range run.Results {
+	for i, r := range *run.Results {
 		if strings.TrimSpace(r.Message.Text) == "" {
 			return nil, fmt.Errorf("golangci-lint SARIF: result %d (%s) has no message text", i, r.RuleID)
 		}
