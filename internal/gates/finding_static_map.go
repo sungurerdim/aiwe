@@ -30,6 +30,9 @@ type StaticMapping struct {
 	// string that is already one of the three needs no entry.
 	Levels       map[string]string
 	DefaultLevel string
+	// ColOffset is added to a column the tool gave (not to a missing or
+	// negative one): StaticFinding columns are 1-based, mypy's are 0-based.
+	ColOffset int
 	// FixHint is used when the tool gives no fix text; FixWhenSet is used
 	// when the Fix field holds a non-string value, such as an eslint fix
 	// object, which means the tool can apply the fix itself.
@@ -62,62 +65,101 @@ func RuffMapping() StaticMapping {
 func MypyMapping() StaticMapping {
 	return StaticMapping{
 		Tool: "mypy", File: "file", Line: "line", Col: "column", Rule: "code",
-		Message: "message", Level: "severity", DefaultLevel: levelError,
-		FixHint: "fix the reported type error",
+		Message: "message", Level: "severity", Fix: "hint", DefaultLevel: levelError,
+		// mypy's JSON column is 0-based (its text output prints column+1).
+		ColOffset: 1, FixHint: "fix the reported type error",
 	}
 }
 
 // ParseMappedJSON reads JSON tool output (one array, one object, or one value
-// per line) into findings through a profile row. A mapping without a File
-// path is refused. An element that is not an object is skipped.
+// per line) into findings through a profile row. It fails closed (DR-6): a
+// row without a File or Message path, empty input, a top-level scalar or
+// null, an element that is not an object, an element with no list at Items,
+// and an item whose File or Message path gives nothing are errors that name
+// what is wrong. An empty array is a clean run.
 func ParseMappedJSON(data []byte, m StaticMapping) ([]StaticFinding, error) {
-	if m.File == "" {
-		return nil, errors.New("static mapping has no file field")
+	if m.File == "" || m.Message == "" {
+		return nil, errors.New("static mapping needs a file field and a message field")
+	}
+	elems, err := mappedElements(data, m.Tool)
+	if err != nil {
+		return nil, err
 	}
 	var out []StaticFinding
+	for i, e := range elems {
+		fs, err := mapElement(e, m)
+		if err != nil {
+			return nil, fmt.Errorf("%s output element %d: %w", m.Tool, i, err)
+		}
+		out = append(out, fs...)
+	}
+	return out, nil
+}
+
+// mappedElements flattens the top-level values: an array gives its elements,
+// an object is one element.
+func mappedElements(data []byte, tool string) ([]any, error) {
+	if len(bytes.TrimSpace(data)) == 0 {
+		return nil, fmt.Errorf("%s output is empty (the tool wrote no JSON)", tool)
+	}
 	dec := json.NewDecoder(bytes.NewReader(data))
+	var elems []any
 	for {
 		var v any
-		if err := dec.Decode(&v); err == io.EOF {
-			return out, nil
-		} else if err != nil {
-			return nil, fmt.Errorf("%s output: %w", m.Tool, err)
+		err := dec.Decode(&v)
+		if err == io.EOF {
+			return elems, nil
 		}
-		elems, _ := v.([]any)
-		if _, isObj := v.(map[string]any); isObj {
-			elems = []any{v}
+		if err != nil {
+			return nil, fmt.Errorf("%s output: %w", tool, err)
 		}
-		for _, e := range elems {
-			out = appendMapped(out, e, m)
+		switch x := v.(type) {
+		case []any:
+			elems = append(elems, x...)
+		case map[string]any:
+			elems = append(elems, x)
+		default:
+			return nil, fmt.Errorf("%s output: top-level value is %s, want an array or an object", tool, jsonKind(v))
 		}
 	}
 }
 
-func appendMapped(out []StaticFinding, e any, m StaticMapping) []StaticFinding {
+func jsonKind(v any) string {
+	if v == nil {
+		return "null"
+	}
+	return fmt.Sprintf("%T", v)
+}
+
+func mapElement(e any, m StaticMapping) ([]StaticFinding, error) {
 	obj, ok := e.(map[string]any)
 	if !ok {
-		return out
+		return nil, fmt.Errorf("is %s, want an object", jsonKind(e))
 	}
 	if m.Items == "" {
-		return appendIfFinding(out, mapFinding(obj, nil, m))
+		f, err := mapFinding(obj, nil, m)
+		return []StaticFinding{f}, err
 	}
-	items, _ := lookupPath(obj, m.Items).([]any)
-	for _, it := range items {
-		if inner, ok := it.(map[string]any); ok {
-			out = appendIfFinding(out, mapFinding(inner, obj, m))
+	items, ok := lookupPath(obj, m.Items).([]any)
+	if !ok {
+		return nil, fmt.Errorf("has no list at %q", m.Items)
+	}
+	out := make([]StaticFinding, 0, len(items))
+	for i, it := range items {
+		inner, ok := it.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("%s[%d] is %s, want an object", m.Items, i, jsonKind(it))
 		}
+		f, err := mapFinding(inner, obj, m)
+		if err != nil {
+			return nil, fmt.Errorf("%s[%d]: %w", m.Items, i, err)
+		}
+		out = append(out, f)
 	}
-	return out
+	return out, nil
 }
 
-func appendIfFinding(out []StaticFinding, f StaticFinding) []StaticFinding {
-	if f.Rule == "" && f.Message == "" {
-		return out
-	}
-	return append(out, f)
-}
-
-func mapFinding(in, outer map[string]any, m StaticMapping) StaticFinding {
+func mapFinding(in, outer map[string]any, m StaticMapping) (StaticFinding, error) {
 	get := func(path string) any {
 		if path == "" {
 			return nil
@@ -127,11 +169,15 @@ func mapFinding(in, outer map[string]any, m StaticMapping) StaticFinding {
 		}
 		return lookupPath(outer, path)
 	}
+	col, colOK := anyPos(get(m.Col))
+	if colOK {
+		col += m.ColOffset
+	}
 	f := StaticFinding{
 		Tool:    m.Tool,
 		File:    anyString(get(m.File)),
 		Line:    anyInt(get(m.Line)),
-		Col:     anyInt(get(m.Col)),
+		Col:     col,
 		Rule:    anyString(get(m.Rule)),
 		Message: shortMessage(anyString(get(m.Message))),
 		Level:   mappedLevel(anyString(get(m.Level)), m),
@@ -146,7 +192,13 @@ func mapFinding(in, outer map[string]any, m StaticMapping) StaticFinding {
 	if strings.TrimSpace(f.Fix) == "" {
 		f.Fix = m.FixHint
 	}
-	return f
+	if f.File == "" {
+		return f, fmt.Errorf("mapped path %q (file) is missing or empty", m.File)
+	}
+	if f.Message == "" {
+		return f, fmt.Errorf("mapped path %q (message) is missing or empty", m.Message)
+	}
+	return f, nil
 }
 
 func mappedLevel(raw string, m StaticMapping) string {
@@ -156,6 +208,8 @@ func mappedLevel(raw string, m StaticMapping) string {
 	switch l := strings.ToLower(raw); l {
 	case levelError, levelWarning, levelNote:
 		return l
+	case "none": // SARIF: below note
+		return levelNote
 	}
 	if m.DefaultLevel != "" {
 		return m.DefaultLevel
@@ -188,20 +242,26 @@ func anyString(v any) string {
 	return ""
 }
 
-// anyInt reads a JSON number or numeric string as a position; anything else,
-// a negative number or one beyond 2^31 is 0 ("no position").
-func anyInt(v any) int {
+// anyPos reads a JSON number or numeric string as a position; anything else,
+// a negative number or one beyond 2^31 is not a position (false).
+func anyPos(v any) (int, bool) {
 	switch x := v.(type) {
 	case float64:
 		if x >= 0 && x < 1<<31 {
-			return int(x)
+			return int(x), true
 		}
 	case string:
 		if n, err := strconv.Atoi(x); err == nil && n >= 0 && n < 1<<31 {
-			return n
+			return n, true
 		}
 	}
-	return 0
+	return 0, false
+}
+
+// anyInt is anyPos with 0 ("no position") for a value that is not one.
+func anyInt(v any) int {
+	n, _ := anyPos(v)
+	return n
 }
 
 // shortMessage keeps the first line of a message, cut to maxStaticMessage runes.

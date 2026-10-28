@@ -3,31 +3,36 @@ package gates
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/url"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 )
 
-// StaticFinding is one lint, type or format finding in the shape of a test
-// failure record (L76, SPEC §7.9, SPEC-contracts §8.5): file:line:col, rule
-// code, message and a one-line fix hint, read from a tool's machine output
-// and never from its text.
+// StaticFinding is one lint, type or format finding: file:line:col, rule
+// code, message and a one-line fix hint (L76, SPEC §7.9, SPEC-contracts
+// §8.5), read from a tool's machine output (tsc: its fixed text format).
 //
-// Shared shape: the failure record of #608 (failure.go) carries the same
-// fields File, Line, Col, Rule, Message and Fix for a build or compile error.
-// The wiring unit (#594) unifies the two types; until then this type stands
-// alone and depends on nothing in failure.go.
+// The failure record of a test (#608, failure.go) is a different shape: it
+// holds the test id, one "file:line" string for testLocation and
+// sourceLocation, a kind, got and want, a rerun command and attachments, and
+// it has no column, rule or fix. Here the position is three fields and the
+// rule and fix are present. #594 maps both onto the one entry of
+// SPEC-contracts §8.5; until then this type stands alone.
 //
-// Line and Col are 0 when the tool gives no position (a gofmt file entry has
-// no line). Level is "error", "warning" or "note".
+// Line and Col are 0 when the tool gives no position (a gofmt entry has no
+// line, a tsc global error has none): 0 means "not given by the tool", never
+// a position, and a 0 is left out of the JSON. Level is "error", "warning"
+// or "note".
 type StaticFinding struct {
 	Tool    string `json:"tool"`
 	File    string `json:"file"`
-	Line    int    `json:"line"`
-	Col     int    `json:"col"`
+	Line    int    `json:"line,omitempty"`
+	Col     int    `json:"col,omitempty"`
 	Rule    string `json:"rule"`
 	Level   string `json:"level"`
 	Message string `json:"message"`
@@ -43,8 +48,10 @@ const (
 	levelNote    = "note"
 )
 
-// ParseGofmtList reads `gofmt -l` output: one unformatted file per line, one
-// finding per file. A gofmt file entry has no line, so Line and Col are 0.
+// ParseGofmtList reads the stdout of `gofmt -l`: one unformatted file per
+// line, one finding per file. Empty output means every file is formatted, so
+// it is the one reader here that returns no findings for empty input. A gofmt
+// file entry has no line, so Line and Col are 0.
 func ParseGofmtList(data []byte) []StaticFinding {
 	var out []StaticFinding
 	for _, line := range strings.Split(string(data), "\n") {
@@ -64,33 +71,58 @@ func ParseGofmtList(data []byte) []StaticFinding {
 // ParseGoVetJSON reads `go vet -json` output: one JSON object per package,
 // {"<pkg>": {"<analyzer>": [{"posn": "file:line:col", "message": "..."}]}},
 // with "# pkg" comment lines in between. An analyzer that failed to run
-// ({"error": "..."}) becomes a finding with no position.
+// ({"error": "..."}) becomes a finding with no position. Empty input, only
+// comment lines and a null value are errors (fail closed); an empty object
+// is an empty tree with no diagnostics.
 func ParseGoVetJSON(data []byte) ([]StaticFinding, error) {
+	text := stripVetComments(string(data))
+	if strings.TrimSpace(text) == "" {
+		return nil, errors.New("go vet output is empty (the tool wrote no JSON)")
+	}
+	var out []StaticFinding
+	dec := json.NewDecoder(strings.NewReader(text))
+	for {
+		var pkgs map[string]map[string]json.RawMessage
+		err := dec.Decode(&pkgs)
+		if err == io.EOF {
+			return out, nil
+		}
+		if err != nil {
+			return nil, fmt.Errorf("go vet output: %w", err)
+		}
+		if pkgs == nil {
+			return nil, errors.New("go vet output: null instead of an object")
+		}
+		fs, err := vetPackages(pkgs)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, fs...)
+	}
+}
+
+func stripVetComments(s string) string {
 	var kept []string
-	for _, line := range strings.Split(string(data), "\n") {
+	for _, line := range strings.Split(s, "\n") {
 		if !strings.HasPrefix(strings.TrimSpace(line), "#") {
 			kept = append(kept, line)
 		}
 	}
+	return strings.Join(kept, "\n")
+}
+
+func vetPackages(pkgs map[string]map[string]json.RawMessage) ([]StaticFinding, error) {
 	var out []StaticFinding
-	dec := json.NewDecoder(strings.NewReader(strings.Join(kept, "\n")))
-	for {
-		var pkgs map[string]map[string]json.RawMessage
-		if err := dec.Decode(&pkgs); err == io.EOF {
-			return out, nil
-		} else if err != nil {
-			return nil, fmt.Errorf("go vet output: %w", err)
-		}
-		for _, pkg := range sortedKeys(pkgs) {
-			for _, analyzer := range sortedKeys(pkgs[pkg]) {
-				fs, err := vetAnalyzer(analyzer, pkgs[pkg][analyzer])
-				if err != nil {
-					return nil, fmt.Errorf("go vet output: %s %s: %w", pkg, analyzer, err)
-				}
-				out = append(out, fs...)
+	for _, pkg := range slices.Sorted(maps.Keys(pkgs)) {
+		for _, analyzer := range slices.Sorted(maps.Keys(pkgs[pkg])) {
+			fs, err := vetAnalyzer(analyzer, pkgs[pkg][analyzer])
+			if err != nil {
+				return nil, fmt.Errorf("go vet output: %s %s: %w", pkg, analyzer, err)
 			}
+			out = append(out, fs...)
 		}
 	}
+	return out, nil
 }
 
 func vetAnalyzer(name string, raw json.RawMessage) ([]StaticFinding, error) {
@@ -115,15 +147,6 @@ func vetAnalyzer(name string, raw json.RawMessage) ([]StaticFinding, error) {
 		})
 	}
 	return out, nil
-}
-
-func sortedKeys[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 // splitPosn splits "file:line:col" from the right, so a Windows drive colon
@@ -153,12 +176,15 @@ func posInt(s string) (int, bool) {
 
 // sarifLog is the part of SARIF 2.1.0 (SPEC §7.9) that a finding reads.
 type sarifLog struct {
-	Runs []struct {
-		Tool struct {
-			Driver struct{ Name string }
-		}
-		Results []sarifResult
+	Version string
+	Runs    []sarifRun
+}
+
+type sarifRun struct {
+	Tool struct {
+		Driver struct{ Name string }
 	}
+	Results []sarifResult
 }
 
 type sarifResult struct {
@@ -179,24 +205,44 @@ type sarifResult struct {
 
 // ParseGolangciSARIF reads the SARIF 2.1.0 file of `golangci-lint run
 // --output.sarif.path`. A result without a location keeps empty File and 0 for
-// Line and Col; a missing level is "warning" as SARIF defines.
+// Line and Col; a missing level is "warning" as SARIF defines. Fail closed
+// (DR-6): empty input, null, an object that is not a SARIF 2.1.0 log with a
+// runs array, and a result with no message text are errors, because
+// golangci-lint writes a full log even for a clean run.
 func ParseGolangciSARIF(data []byte) ([]StaticFinding, error) {
 	if len(bytes.TrimSpace(data)) == 0 {
-		return nil, nil
+		return nil, errors.New("golangci-lint SARIF is empty (the tool wrote no report)")
 	}
 	var log sarifLog
 	if err := json.Unmarshal(data, &log); err != nil {
 		return nil, fmt.Errorf("golangci-lint SARIF: %w", err)
 	}
+	if log.Version != "2.1.0" || log.Runs == nil {
+		return nil, fmt.Errorf("golangci-lint SARIF: not a SARIF 2.1.0 log (version %q, runs present: %t)",
+			log.Version, log.Runs != nil)
+	}
 	var out []StaticFinding
 	for _, run := range log.Runs {
-		tool := run.Tool.Driver.Name
-		if tool == "" {
-			tool = "golangci-lint"
+		fs, err := sarifRunFindings(run)
+		if err != nil {
+			return nil, err
 		}
-		for _, r := range run.Results {
-			out = append(out, sarifFinding(tool, r))
+		out = append(out, fs...)
+	}
+	return out, nil
+}
+
+func sarifRunFindings(run sarifRun) ([]StaticFinding, error) {
+	tool := run.Tool.Driver.Name
+	if tool == "" {
+		tool = "golangci-lint"
+	}
+	var out []StaticFinding
+	for i, r := range run.Results {
+		if strings.TrimSpace(r.Message.Text) == "" {
+			return nil, fmt.Errorf("golangci-lint SARIF: result %d (%s) has no message text", i, r.RuleID)
 		}
+		out = append(out, sarifFinding(tool, r))
 	}
 	return out, nil
 }
