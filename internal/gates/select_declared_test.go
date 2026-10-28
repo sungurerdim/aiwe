@@ -214,7 +214,7 @@ func TestDeclaredTestEntryIsARelativeDir(t *testing.T) {
 		{"the root package", ".", true},
 		{"the pattern that names the whole tree", "./...", false},
 		{"a pattern below a directory", "./internal/...", false},
-		{"an import path", "github.com/sungurerdim/aiwe/internal/roles", false},
+		{"an import path", durationsTestModule + "/internal/roles", false},
 		{"a directory without the ./ prefix", "internal/roles", false},
 		{"a trailing slash gives a second spelling", "./internal/roles/", false},
 		{"a doubled separator", "./internal//roles", false},
