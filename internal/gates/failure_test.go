@@ -19,21 +19,23 @@ var failureScope = RepoScope{Module: failureModule, Root: "/repo"}
 
 // fixEvent is one test2json event as `go test -json` writes it.
 type fixEvent struct {
-	Action      string `json:"Action"`
-	Package     string `json:"Package,omitempty"`
-	Test        string `json:"Test,omitempty"`
-	Output      string `json:"Output,omitempty"`
-	ImportPath  string `json:"ImportPath,omitempty"`
-	FailedBuild string `json:"FailedBuild,omitempty"`
+	Action      string  `json:"Action"`
+	Package     string  `json:"Package,omitempty"`
+	Test        string  `json:"Test,omitempty"`
+	Output      string  `json:"Output,omitempty"`
+	ImportPath  string  `json:"ImportPath,omitempty"`
+	FailedBuild string  `json:"FailedBuild,omitempty"`
+	Elapsed     float64 `json:"Elapsed,omitempty"`
 }
 
 // goJSON renders events as the line-per-event stream of `go test -json`.
-func goJSON(evs ...fixEvent) []byte {
+func goJSON(tb testing.TB, evs ...fixEvent) []byte {
+	tb.Helper()
 	var b bytes.Buffer
 	for _, e := range evs {
 		line, err := json.Marshal(e)
 		if err != nil {
-			panic(err)
+			tb.Fatalf("marshal fixture event: %v", err)
 		}
 		b.Write(append(line, '\n'))
 	}
@@ -56,6 +58,16 @@ func goStackEvents(test, text string) []fixEvent {
 	return evs
 }
 
+// goFailures parses a go test stream that must be readable.
+func goFailures(t *testing.T, data []byte, scope RepoScope) []Failure {
+	t.Helper()
+	got, err := FailuresFromGoJSON(data, scope)
+	if err != nil {
+		t.Fatalf("FailuresFromGoJSON: %v", err)
+	}
+	return got
+}
+
 func onlyFailure(t *testing.T, got []Failure) Failure {
 	t.Helper()
 	if len(got) != 1 {
@@ -73,7 +85,7 @@ func attachmentText(f Failure) string {
 }
 
 func TestFailureFromGoJSONNamesFileLineGotWant(t *testing.T) {
-	data := goJSON(
+	data := goJSON(t,
 		fixEvent{Action: "start", Package: pkgCalc},
 		fixEvent{Action: "run", Package: pkgCalc, Test: "TestAdd"},
 		testOut("TestAdd", "=== RUN   TestAdd\n"),
@@ -87,7 +99,7 @@ func TestFailureFromGoJSONNamesFileLineGotWant(t *testing.T) {
 		fixEvent{Action: "output", Package: pkgCalc, Output: "FAIL\t" + pkgCalc + "\t0.003s\n"},
 		fixEvent{Action: "fail", Package: pkgCalc},
 	)
-	f := onlyFailure(t, FailuresFromGoJSON(data, failureScope))
+	f := onlyFailure(t, goFailures(t, data, failureScope))
 	if f.Test != pkgCalc+".TestAdd" || f.Kind != FailureAssertion {
 		t.Fatalf("test/kind = %q/%q", f.Test, f.Kind)
 	}
@@ -103,7 +115,7 @@ func TestFailureFromGoJSONNamesFileLineGotWant(t *testing.T) {
 }
 
 func TestFailureKeepsOnlyTheTestsOwnOutput(t *testing.T) {
-	data := goJSON(
+	data := goJSON(t,
 		testOut("TestA", "=== RUN   TestA\n"),
 		testOut("TestA", "=== PAUSE TestA\n"),
 		testOut("TestB", "=== RUN   TestB\n"),
@@ -121,7 +133,7 @@ func TestFailureKeepsOnlyTheTestsOwnOutput(t *testing.T) {
 		fixEvent{Action: "pass", Package: pkgCalc, Test: "TestC"},
 		fixEvent{Action: "fail", Package: pkgCalc},
 	)
-	got := FailuresFromGoJSON(data, failureScope)
+	got := goFailures(t, data, failureScope)
 	if len(got) != 2 {
 		t.Fatalf("want 2 failures, got %+v", got)
 	}
@@ -141,7 +153,7 @@ func TestFailureKeepsOnlyTheTestsOwnOutput(t *testing.T) {
 }
 
 func TestFailureSubtestReportsChildOnly(t *testing.T) {
-	data := goJSON(
+	data := goJSON(t,
 		testOut("TestTable", "=== RUN   TestTable\n"),
 		testOut("TestTable/neg", "=== RUN   TestTable/neg\n"),
 		testOut("TestTable/neg", "        table_test.go:9: got -1, want 1\n"),
@@ -151,7 +163,7 @@ func TestFailureSubtestReportsChildOnly(t *testing.T) {
 		fixEvent{Action: "fail", Package: pkgCalc, Test: "TestTable"},
 		fixEvent{Action: "fail", Package: pkgCalc},
 	)
-	f := onlyFailure(t, FailuresFromGoJSON(data, failureScope))
+	f := onlyFailure(t, goFailures(t, data, failureScope))
 	if f.Test != pkgCalc+".TestTable/neg" || f.Got != "-1" || f.Want != "1" {
 		t.Fatalf("failure = %+v", f)
 	}
@@ -180,15 +192,15 @@ created by testing.(*T).Run in goroutine 1
 	C:/Program Files/Go/src/testing/testing.go:1742 +0x390
 `
 
-func goPanicJSON(test, text string) []byte {
+func goPanicJSON(tb testing.TB, test, text string) []byte {
 	evs := goStackEvents(test, text)
 	evs = append(evs, fixEvent{Action: "fail", Package: pkgCalc, Test: test},
 		fixEvent{Action: "fail", Package: pkgCalc})
-	return goJSON(evs...)
+	return goJSON(tb, evs...)
 }
 
 func TestPanicFailureKeepsRepoFramesOnly(t *testing.T) {
-	f := onlyFailure(t, FailuresFromGoJSON(goPanicJSON("TestCompute", goPanicText), failureScope))
+	f := onlyFailure(t, goFailures(t, goPanicJSON(t, "TestCompute", goPanicText), failureScope))
 	if f.Kind != FailurePanic {
 		t.Fatalf("Kind = %q", f.Kind)
 	}
@@ -210,7 +222,7 @@ func TestPanicFailureKeepsRepoFramesOnly(t *testing.T) {
 }
 
 func TestCompileErrorNamesFileLineCol(t *testing.T) {
-	built := goJSON(
+	built := goJSON(t,
 		fixEvent{Action: "build-output", ImportPath: buildImport, Output: "# " + buildImport + "\n"},
 		fixEvent{Action: "build-output", ImportPath: buildImport, Output: "internal/calc/calc.go:7:9: undefined: missing\n"},
 		fixEvent{Action: "build-output", ImportPath: buildImport, Output: "internal/calc/calc.go:9:2: declared and not used: x\n"},
@@ -218,14 +230,14 @@ func TestCompileErrorNamesFileLineCol(t *testing.T) {
 		fixEvent{Action: "output", Package: pkgCalc, Output: "FAIL\t" + pkgCalc + " [build failed]\n"},
 		fixEvent{Action: "fail", Package: pkgCalc, FailedBuild: buildImport},
 	)
-	old := goJSON(
+	old := goJSON(t,
 		fixEvent{Action: "output", Package: pkgCalc, Output: "# " + pkgCalc + "\n"},
 		fixEvent{Action: "output", Package: pkgCalc, Output: "./calc.go:7:9: undefined: missing\n"},
 		fixEvent{Action: "output", Package: pkgCalc, Output: "FAIL\t" + pkgCalc + " [build failed]\n"},
 		fixEvent{Action: "fail", Package: pkgCalc, FailedBuild: pkgCalc},
 	)
 	for name, data := range map[string][]byte{"build events": built, "package output": old} {
-		f := onlyFailure(t, FailuresFromGoJSON(data, failureScope))
+		f := onlyFailure(t, goFailures(t, data, failureScope))
 		if f.Kind != FailureCompile || f.Test != pkgCalc {
 			t.Errorf("%s: kind/test = %q/%q", name, f.Kind, f.Test)
 		}
@@ -308,7 +320,7 @@ github.com/sungurerdim/aiwe/internal/calc.helper(0xc000)
 github.com/sungurerdim/aiwe/internal/calc.TestX(0xc000)
 	D:/GitHub/aiwe/internal/calc/calc_test.go:20 +0x65
 `
-	f := onlyFailure(t, FailuresFromGoJSON(goPanicJSON("TestX", goStack), failureScope))
+	f := onlyFailure(t, goFailures(t, goPanicJSON(t, "TestX", goStack), failureScope))
 	if f.SourceLocation != "internal/calc/calc.go:30" || f.TestLocation != "internal/calc/calc_test.go:8" {
 		t.Errorf("go locations = %q/%q", f.SourceLocation, f.TestLocation)
 	}
@@ -330,33 +342,33 @@ src/util.py:7: IndexError</failure></testcase></testsuite>`
 		t.Errorf("python failure = %+v", p)
 	}
 	other := RepoScope{Module: "github.com/someone/else"}
-	g := onlyFailure(t, FailuresFromGoJSON(goPanicJSON("TestX", goStack), other))
+	g := onlyFailure(t, goFailures(t, goPanicJSON(t, "TestX", goStack), other))
 	if g.SourceLocation != "" || g.TestLocation != "" {
 		t.Errorf("frames of another module must not count: %q/%q", g.SourceLocation, g.TestLocation)
 	}
 }
 
 func TestFailureRerunRunsOnlyThisTest(t *testing.T) {
-	cases := map[string]string{
-		"pkg.TestA":        "aiwe check verify --test pkg.TestA",
-		"a b":              "aiwe check verify --test 'a b'",
-		"it's":             `aiwe check verify --test 'it'\''s'`,
-		"x; rm -rf /":      "aiwe check verify --test 'x; rm -rf /'",
-		"--all":            "aiwe check verify --test '--all'",
-		"login.spec > one": "aiwe check verify --test 'login.spec > one'",
-	}
-	for id, want := range cases {
-		if got := RerunCommand(id); got != want {
-			t.Errorf("RerunCommand(%q) = %q, want %q", id, got, want)
+	want := func(id string) []string { return []string{"aiwe", "check", "verify", "--test", id} }
+	for _, id := range []string{"pkg.TestA", "a b", "it's \"x\"", "x; rm -rf /", "--all", "login.spec > one"} {
+		if got := RerunCommand(id); !slices.Equal(got, want(id)) {
+			t.Errorf("RerunCommand(%q) = %q, want %q", id, got, want(id))
 		}
 	}
-	f := onlyFailure(t, FailuresFromGoJSON(goPanicJSON("TestCompute", goPanicText), failureScope))
-	if f.Rerun != RerunCommand(f.Test) {
+	f := onlyFailure(t, goFailures(t, goPanicJSON(t, "TestCompute", goPanicText), failureScope))
+	if !slices.Equal(f.Rerun, want(f.Test)) {
 		t.Errorf("Rerun = %q for %q", f.Rerun, f.Test)
+	}
+	pw, err := FailuresFromPlaywright([]byte(playwrightReport), failureScope)
+	if err != nil || len(pw) == 0 {
+		t.Fatalf("playwright fixture: %v %v", pw, err)
+	}
+	if !slices.Equal(pw[0].Rerun, want("login.spec.ts > shows dashboard [chromium]")) {
+		t.Errorf("an id with spaces and brackets must stay one argument: %q", pw[0].Rerun)
 	}
 }
 
-const playwrightReport = `{"config":{},"suites":[{"title":"login.spec.ts","file":"login.spec.ts","specs":[
+const playwrightReport = `{"config":{"rootDir":"/repo/tests"},"suites":[{"title":"login.spec.ts","file":"login.spec.ts","specs":[
 {"title":"shows dashboard","ok":false,"file":"login.spec.ts","line":10,"column":5,"tests":[{"projectName":"chromium","status":"unexpected","results":[
 {"status":"failed","error":{"message":"\u001b[31mError: \u001b[39mexpect(locator).toBeVisible()\n\nLocator: getByText('Dashboard')\nExpected: visible\nReceived: hidden","stack":"Error: expect(locator).toBeVisible()\n    at /repo/tests/login.spec.ts:14:42","location":{"file":"/repo/tests/login.spec.ts","line":14,"column":42}},
 "attachments":[{"name":"screenshot","contentType":"image/png","path":"/repo/test-results/login/test-failed-1.png"},{"name":"trace","contentType":"application/zip","path":"/repo/test-results/login/trace.zip"},{"name":"note","contentType":"text/plain","body":"aGk="}]}]}]},
@@ -390,7 +402,7 @@ func TestFailureFromPlaywrightJSONKeepsAttachments(t *testing.T) {
 	if !slices.Equal(f.Attachments, want) {
 		t.Errorf("Attachments = %+v, want %+v", f.Attachments, want)
 	}
-	if got[1].Kind != FailureTimeout || got[1].TestLocation != "login.spec.ts:40" {
+	if got[1].Kind != FailureTimeout || got[1].TestLocation != "tests/login.spec.ts:40" {
 		t.Errorf("timed out test = %+v", got[1])
 	}
 	if _, err := FailuresFromPlaywright([]byte(`{"suites":`), failureScope); err == nil {
@@ -400,11 +412,11 @@ func TestFailureFromPlaywrightJSONKeepsAttachments(t *testing.T) {
 
 func TestFailureMessageIsShortened(t *testing.T) {
 	long := strings.Repeat("é", 1000)
-	data := goJSON(
+	data := goJSON(t,
 		testOut("TestLong", "    long_test.go:3: "+long+": got "+long+", want "+long+"\n"),
 		fixEvent{Action: "fail", Package: pkgCalc, Test: "TestLong"},
 	)
-	f := onlyFailure(t, FailuresFromGoJSON(data, failureScope))
+	f := onlyFailure(t, goFailures(t, data, failureScope))
 	checkFailures(t, []Failure{f})
 	if utf8.RuneCountInString(f.Got) > failureValueMax || utf8.RuneCountInString(f.Want) > failureValueMax {
 		t.Errorf("got/want not shortened: %d/%d runes", utf8.RuneCountInString(f.Got), utf8.RuneCountInString(f.Want))
@@ -418,8 +430,11 @@ func checkFailures(t *testing.T, fs []Failure) {
 		if f.Test == "" || f.Kind == "" {
 			t.Fatalf("record without test or kind: %+v", f)
 		}
-		if f.Rerun != RerunCommand(f.Test) {
+		if !slices.Equal(f.Rerun, RerunCommand(f.Test)) {
 			t.Fatalf("Rerun %q does not run only %q", f.Rerun, f.Test)
+		}
+		if len(f.Output) > 200 || len(f.Frames) > 10 {
+			t.Fatalf("output %d lines, frames %d: over the caps", len(f.Output), len(f.Frames))
 		}
 		if !utf8.ValidString(f.Message) || utf8.RuneCountInString(f.Message) > failureMessageMax {
 			t.Fatalf("message not valid or not shortened: %q", f.Message)
@@ -430,12 +445,14 @@ func checkFailures(t *testing.T, fs []Failure) {
 // FuzzFailuresFromGoJSON catches a reader of the untrusted test2json stream that panics or builds
 // a record that breaks the invariants.
 func FuzzFailuresFromGoJSON(f *testing.F) {
-	f.Add(goPanicJSON("TestCompute", goPanicText))
-	f.Add(goJSON(testOut("TestAdd", "    add_test.go:14: got 3, want 4\n"), fixEvent{Action: "fail", Package: pkgCalc, Test: "TestAdd"}))
-	f.Add(goJSON(fixEvent{Action: "build-output", ImportPath: buildImport, Output: "a.go:1:2: x\n"}, fixEvent{Action: "build-fail", ImportPath: buildImport}))
+	f.Add(goPanicJSON(f, "TestCompute", goPanicText))
+	f.Add(goJSON(f, testOut("TestAdd", "    add_test.go:14: got 3, want 4\n"), fixEvent{Action: "fail", Package: pkgCalc, Test: "TestAdd"}))
+	f.Add(goJSON(f, fixEvent{Action: "build-output", ImportPath: buildImport, Output: "a.go:1:2: x\n"}, fixEvent{Action: "build-fail", ImportPath: buildImport}))
 	f.Add([]byte("{\"Action\":\"fail\"}\nnot json\n{"))
 	f.Fuzz(func(t *testing.T, data []byte) {
-		checkFailures(t, FailuresFromGoJSON(data, failureScope))
+		if got, err := FailuresFromGoJSON(data, failureScope); err == nil {
+			checkFailures(t, got)
+		}
 	})
 }
 
