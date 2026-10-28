@@ -6,14 +6,14 @@ func TestStaticFindingFromTscText(t *testing.T) {
 	const fix = anyFix
 	in := "src/a.ts(10,5): error TS2322: Type 'string' is not assignable to type 'number'.\r\n" +
 		"  Types of property 'x' are incompatible.\n" +
-		"C:\\w\\b(1).ts(3,1): warning TS6133: 'y' is declared but never used.\n" +
+		"src\\w\\b(1).ts(3,1): warning TS6133: 'y' is declared but never used.\n" +
 		"c.ts(2,2): message TS80001: File is a CommonJS module.\n" +
 		"error TS5083: Cannot read file 'tsconfig.json'.\n" +
 		"\n"
 	runFindingCases(t, ParseTscText, []findingCase{
 		{"located and global lines", "a CR kept in the message, a continuation line read as a finding, a path with parentheses cut, message level not a note, a global error dropped", in, []StaticFinding{
 			sf("tsc", "src/a.ts", 10, 5, "TS2322", "error", "Type 'string' is not assignable to type 'number'.", fix),
-			sf("tsc", `C:\w\b(1).ts`, 3, 1, "TS6133", "warning", "'y' is declared but never used.", fix),
+			sf("tsc", `src\w\b(1).ts`, 3, 1, "TS6133", "warning", "'y' is declared but never used.", fix),
 			sf("tsc", "c.ts", 2, 2, "TS80001", "note", "File is a CommonJS module.", fix),
 			sf("tsc", "", 0, 0, "TS5083", "error", "Cannot read file 'tsconfig.json'.", fix),
 		}},

@@ -2,6 +2,8 @@ package gates
 
 import (
 	"encoding/json"
+	"net/url"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -92,7 +94,7 @@ const golangciSARIF = `{
        "message": {"text": "func helper is unused"},
        "properties": {"fix": "delete helper or call it"},
        "locations": [{"physicalLocation": {
-         "artifactLocation": {"uri": "file:///D:/repo/a%20b/x.go"},
+         "artifactLocation": {"uri": "file:///work/a%20b/x.go"},
          "region": {"startLine": 3}}}]}
     ]
   }]
@@ -110,7 +112,7 @@ func TestStaticFindingFromGolangciSARIF(t *testing.T) {
 		{"location rule message fix", "a location, rule, level or message read from the wrong field", golangciSARIF, []StaticFinding{
 			sf(gl, "internal/gates/runner.go", 42, 7, "errcheck", "error",
 				"Error return value of os.Remove is not checked", anyFix),
-			sf(gl, "D:/repo/a b/x.go", 3, 0, "unused", "warning", "func helper is unused", "delete helper or call it"),
+			sf(gl, "/work/a b/x.go", 3, 0, "unused", "warning", "func helper is unused", "delete helper or call it"),
 		}},
 		{"fixes fallback none level escape", "the fixes[0] fallback, level none below note, a percent escape in a relative URI, a multi-line message", sarifFixesLog, []StaticFinding{
 			sf("golangci-lint v2", "pkg/a b.go", 9, 2, "gosec", "note", "first line", "use a constant"),
@@ -152,22 +154,44 @@ func TestStaticFindingFromGofmtList(t *testing.T) {
 
 func TestStaticFindingFromGoVetJSON(t *testing.T) {
 	const gv = "go vet"
+	// An absolute path of this machine: on Windows it has a drive colon.
+	abs := filepath.Join(t.TempDir(), "m.go")
+	q, _ := json.Marshal(abs + ":12:5")
+	qNoLine, _ := json.Marshal(abs)
 	vetIn := "# example.com/m\n" +
-		`{"example.com/m":{"printf":[{"posn":"D:\\r\\m.go:12:5","message":"bad verb %z"}]}}` + "\n" +
+		`{"example.com/m":{"printf":[{"posn":` + string(q) + `,"message":"bad verb %z"}]}}` + "\n" +
 		`{"example.com/n":{"copylocks":[{"posn":"n.go:3:1","message":"copies lock"}],"x":{"error":"boom"}}}` + "\n"
 	runFindingCases(t, ParseGoVetJSON, []findingCase{
-		{"packages analyzers errors", "a Windows drive colon split as a position, a # line breaking the stream, an analyzer error dropped", vetIn, []StaticFinding{
-			sf(gv, `D:\r\m.go`, 12, 5, "printf", "error", "bad verb %z", anyFix),
+		{"packages analyzers errors", "an absolute path (a Windows drive colon) split as a position, a # line breaking the stream, an analyzer error dropped", vetIn, []StaticFinding{
+			sf(gv, abs, 12, 5, "printf", "error", "bad verb %z", anyFix),
 			sf(gv, "n.go", 3, 1, "copylocks", "error", "copies lock", anyFix),
 			sf(gv, "", 0, 0, "x", "error", "boom", anyFix),
 		}},
-		{"position without line", "a position with no number cut at the drive colon", `{"p":{"a":[{"posn":"D:\\x.go","message":"m"}]}}`, []StaticFinding{
-			sf(gv, `D:\x.go`, 0, 0, "a", "error", "m", anyFix),
+		{"position without line", "a position with no number cut at the drive colon", `{"p":{"a":[{"posn":` + string(qNoLine) + `,"message":"m"}]}}`, []StaticFinding{
+			sf(gv, abs, 0, 0, "a", "error", "m", anyFix),
 		}},
 		{"signed number is no position", "a +3 accepted as a line", `{"p":{"a":[{"posn":"a.go:+3:4","message":"m"}]}}`, []StaticFinding{
 			sf(gv, "a.go:+3", 4, 0, "a", "error", "m", anyFix),
 		}},
 		{"empty tree", "an empty package tree read as an error", `{}`, nil},
+	})
+}
+
+func TestStaticFindingSARIFFileURIKeepsAbsolutePath(t *testing.T) {
+	// A file: URI of an absolute path of this machine; on Windows the URI is
+	// file:///<drive>:/..., and the slash before the drive must go.
+	abs := filepath.Join(t.TempDir(), "a b.go")
+	p := filepath.ToSlash(abs)
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	uri := (&url.URL{Scheme: "file", Path: p}).String()
+	in := `{"version":"2.1.0","runs":[{"results":[{"ruleId":"r","message":{"text":"m"},` +
+		`"locations":[{"physicalLocation":{"artifactLocation":{"uri":"` + uri + `"}}}]}]}]}`
+	runFindingCases(t, ParseGolangciSARIF, []findingCase{
+		{"absolute file URI", "a file: URI left with its scheme or with a slash before the drive", in, []StaticFinding{
+			sf("golangci-lint", filepath.ToSlash(abs), 0, 0, "r", "warning", "m", anyFix),
+		}},
 	})
 }
 
