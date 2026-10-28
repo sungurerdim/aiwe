@@ -214,7 +214,11 @@ func Read(r io.Reader) ([]Record, error) {
 		if err != nil {
 			return nil, fmt.Errorf("ledger line %d: %w", n, err)
 		}
-		rec, err := parseLine(strings.TrimSuffix(line, "\n"), n)
+		line = strings.TrimSuffix(line, "\n")
+		if isOwnedDirLine([]byte(line)) {
+			continue
+		}
+		rec, err := parseLine(line, n)
 		if err != nil {
 			return nil, err
 		}
