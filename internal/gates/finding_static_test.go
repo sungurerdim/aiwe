@@ -1,9 +1,82 @@
 package gates
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
+
+// anyFix in a want row means "a non-empty fix hint", for hints the code
+// supplies as a default and the test does not pin word for word.
+const anyFix = "\x00any"
+
+type parseFunc func([]byte) ([]StaticFinding, error)
+
+// findingCase is one table row: catches names the defect the row would expose.
+type findingCase struct {
+	name, catches, in string
+	want              []StaticFinding
+}
+
+// errCase is a malformed input that must fail closed with an error that names
+// what is wrong (DR-6); msg is a part of that error text.
+type errCase struct {
+	name, catches, in, msg string
+	parse                  parseFunc
+}
+
+func sf(tool, file string, line, col int, rule, level, msg, fix string) StaticFinding {
+	return StaticFinding{Tool: tool, File: file, Line: line, Col: col,
+		Rule: rule, Level: level, Message: msg, Fix: fix}
+}
+
+func sameFinding(got, want StaticFinding) bool {
+	if want.Fix == anyFix {
+		if got.Fix == "" {
+			return false
+		}
+		got.Fix = anyFix
+	}
+	return got == want
+}
+
+func runFindingCases(t *testing.T, parse parseFunc, cases []findingCase) {
+	t.Helper()
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := parse([]byte(c.in))
+			if err != nil {
+				t.Fatalf("unexpected error: %v\ncatches: %s", err, c.catches)
+			}
+			if len(got) != len(c.want) {
+				t.Fatalf("findings = %d, want %d\ncatches: %s\ngot: %+v", len(got), len(c.want), c.catches, got)
+			}
+			for i := range got {
+				if !sameFinding(got[i], c.want[i]) {
+					t.Errorf("finding %d\ncatches: %s\n got: %+v\nwant: %+v", i, c.catches, got[i], c.want[i])
+				}
+			}
+		})
+	}
+}
+
+func runErrCases(t *testing.T, cases []errCase) {
+	t.Helper()
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := c.parse([]byte(c.in))
+			if err == nil {
+				t.Fatalf("no error, findings %+v\ncatches: %s", got, c.catches)
+			}
+			if len(got) != 0 {
+				t.Errorf("error %v came with findings %+v", err, got)
+			}
+			if !strings.Contains(err.Error(), c.msg) {
+				t.Errorf("error %q does not name %q\ncatches: %s", err, c.msg, c.catches)
+			}
+		})
+	}
+}
 
 const golangciSARIF = `{
   "version": "2.1.0",
@@ -25,88 +98,89 @@ const golangciSARIF = `{
   }]
 }`
 
+const sarifFixesLog = `{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"golangci-lint v2"}},
+"results":[{"ruleId":"gosec","level":"none","message":{"text":"first line\nsecond line"},
+"fixes":[{"description":{"text":"use a constant"}}],
+"locations":[{"physicalLocation":{"artifactLocation":{"uri":"pkg/a%20b.go"},
+"region":{"startLine":9,"startColumn":2}}}]}]}]}`
+
 func TestStaticFindingFromGolangciSARIF(t *testing.T) {
-	got, err := ParseGolangciSARIF([]byte(golangciSARIF))
-	if err != nil {
-		t.Fatalf("ParseGolangciSARIF: %v", err)
-	}
-	if len(got) != 2 {
-		t.Fatalf("findings = %d, want 2: %+v", len(got), got)
-	}
-	f := got[0]
-	if f.File != "internal/gates/runner.go" || f.Line != 42 || f.Col != 7 {
-		t.Errorf("location = %s:%d:%d", f.File, f.Line, f.Col)
-	}
-	if f.Rule != "errcheck" || f.Level != "error" || f.Tool != "golangci-lint" {
-		t.Errorf("rule/level/tool = %q %q %q", f.Rule, f.Level, f.Tool)
-	}
-	if f.Message != "Error return value of os.Remove is not checked" {
-		t.Errorf("message = %q", f.Message)
-	}
-	if f.Fix == "" {
-		t.Error("fix hint empty: a finding always carries one")
-	}
-	g := got[1]
-	if g.File != "D:/repo/a b/x.go" || g.Line != 3 || g.Col != 0 {
-		t.Errorf("file URI = %s:%d:%d", g.File, g.Line, g.Col)
-	}
-	if g.Level != "warning" || g.Fix != "delete helper or call it" {
-		t.Errorf("level/fix = %q %q", g.Level, g.Fix)
-	}
+	const gl = "golangci-lint"
+	runFindingCases(t, ParseGolangciSARIF, []findingCase{
+		{"location rule message fix", "a location, rule, level or message read from the wrong field", golangciSARIF, []StaticFinding{
+			sf(gl, "internal/gates/runner.go", 42, 7, "errcheck", "error",
+				"Error return value of os.Remove is not checked", anyFix),
+			sf(gl, "D:/repo/a b/x.go", 3, 0, "unused", "warning", "func helper is unused", "delete helper or call it"),
+		}},
+		{"fixes fallback none level escape", "the fixes[0] fallback, level none below note, a percent escape in a relative URI, a multi-line message", sarifFixesLog, []StaticFinding{
+			sf("golangci-lint v2", "pkg/a b.go", 9, 2, "gosec", "note", "first line", "use a constant"),
+		}},
+		{"no location no level", "a result without a location or a level", `{"version":"2.1.0","runs":[{"results":[{"ruleId":"r","message":{"text":"m"}}]}]}`, []StaticFinding{
+			sf(gl, "", 0, 0, "r", "warning", "m", anyFix),
+		}},
+		{"clean run", "a valid log with no results read as an error", `{"version":"2.1.0","runs":[{"results":[]}]}`, nil},
+	})
 }
 
-func TestStaticFindingFromGolangciSARIFRejectsBadInput(t *testing.T) {
-	if got, err := ParseGolangciSARIF([]byte("  \n")); err != nil || len(got) != 0 {
-		t.Errorf("empty input = %v, %v; want none, nil", got, err)
-	}
-	if _, err := ParseGolangciSARIF([]byte(`{"runs": [`)); err == nil {
-		t.Error("truncated JSON: want an error")
-	}
+func TestStaticFindingRejectsMalformedSARIF(t *testing.T) {
+	p := ParseGolangciSARIF
+	runErrCases(t, []errCase{
+		{"empty", "an empty file (the tool did not run) read as clean", "", "empty", p},
+		{"blanks", "a whitespace file read as clean", "  \n", "empty", p},
+		{"empty object", "{} read as clean", "{}", "not a SARIF 2.1.0 log", p},
+		{"null", "null read as clean", "null", "not a SARIF 2.1.0 log", p},
+		{"other object", "a non-SARIF object read as clean", `{"foo":1}`, "not a SARIF 2.1.0 log", p},
+		{"wrong version", "a SARIF version other than 2.1.0 accepted", `{"version":"2.0.0","runs":[]}`, "not a SARIF 2.1.0 log", p},
+		{"truncated", "truncated JSON accepted", `{"runs": [`, "golangci-lint SARIF:", p},
+		{"scalar run", "a scalar run item skipped", `{"version":"2.1.0","runs":[1]}`, "golangci-lint SARIF:", p},
+		{"no message", "a result without message.text dropped", `{"version":"2.1.0","runs":[{"results":[{"ruleId":"r"}]}]}`, "no message", p},
+	})
 }
 
 func TestStaticFindingFromGofmtList(t *testing.T) {
-	got := ParseGofmtList([]byte("a/b.go\r\n\n  c.go  \nd/e.go\n"))
-	if len(got) != 3 {
-		t.Fatalf("findings = %d, want one per file (3): %+v", len(got), got)
+	gf := func(path string) StaticFinding {
+		return sf("gofmt", path, 0, 0, "gofmt", "error", "file is not gofmt-formatted", "run gofmt -w "+path)
 	}
-	for i, want := range []string{"a/b.go", "c.go", "d/e.go"} {
-		f := got[i]
-		if f.File != want || f.Rule != "gofmt" || f.Tool != "gofmt" || f.Level != "error" {
-			t.Errorf("finding %d = %+v", i, f)
-		}
-		if !strings.Contains(f.Fix, "gofmt -w "+want) {
-			t.Errorf("fix %q does not name the command for %s", f.Fix, want)
-		}
+	cases := []findingCase{
+		{"one per file", "a CR, a blank line or padding leaks into a path, or a file yields none or two", "a/b.go\r\n\n  c.go  \nd/e.go\n",
+			[]StaticFinding{gf("a/b.go"), gf("c.go"), gf("d/e.go")}},
+		{"no trailing newline", "the last line lost without a final newline", "x.go", []StaticFinding{gf("x.go")}},
+		{"all formatted", "empty output (every file formatted) read as a finding", "", nil},
 	}
-	if len(ParseGofmtList(nil)) != 0 {
-		t.Error("empty list must give no findings")
-	}
+	runFindingCases(t, func(b []byte) ([]StaticFinding, error) { return ParseGofmtList(b), nil }, cases)
 }
 
 func TestStaticFindingFromGoVetJSON(t *testing.T) {
-	in := "# example.com/m\n" +
+	const gv = "go vet"
+	vetIn := "# example.com/m\n" +
 		`{"example.com/m":{"printf":[{"posn":"D:\\r\\m.go:12:5","message":"bad verb %z"}]}}` + "\n" +
 		`{"example.com/n":{"copylocks":[{"posn":"n.go:3:1","message":"copies lock"}],"x":{"error":"boom"}}}` + "\n"
-	got, err := ParseGoVetJSON([]byte(in))
-	if err != nil {
-		t.Fatalf("ParseGoVetJSON: %v", err)
-	}
-	if len(got) != 3 {
-		t.Fatalf("findings = %d, want 3: %+v", len(got), got)
-	}
-	f := got[0]
-	if f.File != `D:\r\m.go` || f.Line != 12 || f.Col != 5 || f.Rule != "printf" || f.Tool != "go vet" {
-		t.Errorf("windows path finding = %+v", f)
-	}
-	if f.Message != "bad verb %z" || f.Fix == "" {
-		t.Errorf("message/fix = %q %q", f.Message, f.Fix)
-	}
-	if got[1].File != "n.go" || got[1].Rule != "copylocks" {
-		t.Errorf("second = %+v", got[1])
-	}
-	if got[2].Rule != "x" || got[2].Message != "boom" || got[2].File != "" {
-		t.Errorf("analyzer error = %+v", got[2])
-	}
+	runFindingCases(t, ParseGoVetJSON, []findingCase{
+		{"packages analyzers errors", "a Windows drive colon split as a position, a # line breaking the stream, an analyzer error dropped", vetIn, []StaticFinding{
+			sf(gv, `D:\r\m.go`, 12, 5, "printf", "error", "bad verb %z", anyFix),
+			sf(gv, "n.go", 3, 1, "copylocks", "error", "copies lock", anyFix),
+			sf(gv, "", 0, 0, "x", "error", "boom", anyFix),
+		}},
+		{"position without line", "a position with no number cut at the drive colon", `{"p":{"a":[{"posn":"D:\\x.go","message":"m"}]}}`, []StaticFinding{
+			sf(gv, `D:\x.go`, 0, 0, "a", "error", "m", anyFix),
+		}},
+		{"signed number is no position", "a +3 accepted as a line", `{"p":{"a":[{"posn":"a.go:+3:4","message":"m"}]}}`, []StaticFinding{
+			sf(gv, "a.go:+3", 4, 0, "a", "error", "m", anyFix),
+		}},
+		{"empty tree", "an empty package tree read as an error", `{}`, nil},
+	})
+}
+
+func TestStaticFindingRejectsMalformedGoVet(t *testing.T) {
+	p := ParseGoVetJSON
+	runErrCases(t, []errCase{
+		{"empty", "no output read as clean", "", "empty", p},
+		{"only comments", "comment lines only read as clean", "# pkg\n# other\n", "empty", p},
+		{"null", "null read as an empty tree", "null", "null", p},
+		{"scalar analyzer", "a scalar analyzer value skipped", `{"p":{"a":5}}`, "go vet output: p a:", p},
+		{"truncated", "truncated JSON accepted", `{"p":{`, "go vet output:", p},
+		{"text", "plain compiler text accepted", "a.go:1:1: syntax error\n", "go vet output:", p},
+	})
 }
 
 const eslintJSON = `[
@@ -121,66 +195,79 @@ const eslintJSON = `[
   ]}
 ]`
 
+func eslintParse(b []byte) ([]StaticFinding, error) { return ParseMappedJSON(b, ESLintMapping()) }
+
 func TestStaticFindingFromESLintJSON(t *testing.T) {
-	got, err := ParseMappedJSON([]byte(eslintJSON), ESLintMapping())
-	if err != nil {
-		t.Fatalf("ParseMappedJSON: %v", err)
-	}
-	if len(got) != 3 {
-		t.Fatalf("findings = %d, want 3: %+v", len(got), got)
-	}
-	f := got[0]
-	if f.File != "/w/src/a.ts" || f.Line != 4 || f.Col != 9 || f.Rule != "no-unused-vars" {
-		t.Errorf("first = %+v", f)
-	}
-	if f.Level != "error" || f.Tool != "eslint" || f.Message != "'x' is unused" || f.Fix == "" {
-		t.Errorf("first level/tool/message/fix = %+v", f)
-	}
-	if got[1].Level != "warning" || !strings.Contains(got[1].Fix, "--fix") {
-		t.Errorf("autofixable warning = %+v", got[1])
-	}
-	if got[2].File != "/w/src/b.ts" || got[2].Rule != "" || got[2].Fix == "" {
-		t.Errorf("rule-less message = %+v", got[2])
-	}
+	runFindingCases(t, eslintParse, []findingCase{
+		{"file entries and messages", "a file read from the message instead of its entry, severity 2 and 1 not mapped, the autofix object not turned into a hint, a null rule", eslintJSON, []StaticFinding{
+			sf("eslint", "/w/src/a.ts", 4, 9, "no-unused-vars", "error", "'x' is unused", "fix the reported issue"),
+			sf("eslint", "/w/src/a.ts", 5, 2, "semi", "warning", "Missing semicolon.", "run eslint --fix"),
+			sf("eslint", "/w/src/b.ts", 1, 1, "", "error", "Parsing error: x", "fix the reported issue"),
+		}},
+		{"clean file", "a file entry with no messages read as an error", `[{"filePath":"/w/a.ts","messages":[]}]`, nil},
+	})
 }
 
 func TestStaticFindingFromRuffAndMypyRows(t *testing.T) {
-	ruff := `[{"code":"F401","message":"os imported but unused","filename":"m.py",
-	  "location":{"row":1,"column":8},"fix":{"message":"Remove unused import: os"}}]`
-	got, err := ParseMappedJSON([]byte(ruff), RuffMapping())
-	if err != nil || len(got) != 1 {
-		t.Fatalf("ruff = %+v, %v", got, err)
-	}
-	if f := got[0]; f.File != "m.py" || f.Line != 1 || f.Col != 8 || f.Rule != "F401" ||
-		f.Fix != "Remove unused import: os" || f.Tool != "ruff" {
-		t.Errorf("ruff finding = %+v", f)
-	}
-	mypy := `{"file":"m.py","line":9,"column":4,"message":"Incompatible types","code":"assignment","severity":"error"}` + "\n" +
-		`{"file":"m.py","line":10,"column":0,"message":"hint","code":"note","severity":"note"}` + "\n"
-	got, err = ParseMappedJSON([]byte(mypy), MypyMapping())
-	if err != nil || len(got) != 2 {
-		t.Fatalf("mypy = %+v, %v", got, err)
-	}
-	if got[0].Rule != "assignment" || got[0].Level != "error" || got[0].Line != 9 || got[1].Level != "note" {
-		t.Errorf("mypy findings = %+v", got)
-	}
+	ruff := func(b []byte) ([]StaticFinding, error) { return ParseMappedJSON(b, RuffMapping()) }
+	mypy := func(b []byte) ([]StaticFinding, error) { return ParseMappedJSON(b, MypyMapping()) }
+	runFindingCases(t, ruff, []findingCase{
+		{"ruff nested paths", "location.row, location.column or fix.message not read as dotted paths", `[{"code":"F401","message":"os imported but unused","filename":"m.py","location":{"row":1,"column":8},"fix":{"message":"Remove unused import: os"}}]`, []StaticFinding{
+			sf("ruff", "m.py", 1, 8, "F401", "error", "os imported but unused", "Remove unused import: os"),
+		}},
+		{"ruff no fix", "a null fix object ending in an empty hint", `[{"code":"E501","message":"too long","filename":"m.py","location":{"row":2,"column":1},"fix":null}]`, []StaticFinding{
+			sf("ruff", "m.py", 2, 1, "E501", "error", "too long", anyFix),
+		}},
+		{"ruff clean", "ruff's [] for a clean run read as an error", `[]`, nil},
+	})
+	runFindingCases(t, mypy, []findingCase{
+		{"mypy column base hint level", "mypy's 0-based column shown as is, its hint ignored, a note or an upper-case severity misread, an unknown column shifted", `{"file":"m.py","line":9,"column":4,"message":"Incompatible types","code":"assignment","severity":"error","hint":"use int"}` + "\n" +
+			`{"file":"m.py","line":10,"column":0,"message":"see docs","code":"note","severity":"note","hint":null}` + "\n" +
+			`{"file":"m.py","line":11,"column":-1,"message":"bad","code":"misc","severity":"ERROR"}` + "\n", []StaticFinding{
+			sf("mypy", "m.py", 9, 5, "assignment", "error", "Incompatible types", "use int"),
+			sf("mypy", "m.py", 10, 1, "note", "note", "see docs", "fix the reported type error"),
+			sf("mypy", "m.py", 11, 0, "misc", "error", "bad", anyFix),
+		}},
+	})
 }
 
-func TestStaticFindingMappingRejectsBadRow(t *testing.T) {
-	if _, err := ParseMappedJSON([]byte(`[]`), StaticMapping{Tool: "x"}); err == nil {
-		t.Error("a mapping without a file field: want an error")
+func TestStaticFindingRejectsMalformedMappedJSON(t *testing.T) {
+	typo := ESLintMapping()
+	typo.Message = "msg"
+	typoParse := func(b []byte) ([]StaticFinding, error) { return ParseMappedJSON(b, typo) }
+	noFile := func(b []byte) ([]StaticFinding, error) { return ParseMappedJSON(b, StaticMapping{Tool: "x"}) }
+	e := eslintParse
+	runErrCases(t, []errCase{
+		{"empty", "no output read as clean", "", "empty", e},
+		{"empty object", "{} read as clean", "{}", "no list at", e},
+		{"null", "null read as clean", "null", "top-level value is null", e},
+		{"scalar", "a scalar read as clean", "5", "top-level value is", e},
+		{"scalar elements", "scalar items skipped", `[1,"a",null]`, "want an object", e},
+		{"scalar message", "a scalar message item skipped", `[{"filePath":"a","messages":[1]}]`, "want an object", e},
+		{"item without file", "an item missing the mapped file path kept with an empty file", `[{"messages":[{"message":"m"}]}]`, "(file)", e},
+		{"mapping typo", "a renamed tool field (message path wrong) dropping every finding as clean", eslintJSON, "(message)", typoParse},
+		{"mapping without file", "a row with no file path accepted", `[]`, "needs a file field", noFile},
+		{"truncated", "truncated JSON accepted", `[{`, "eslint output:", e},
+	})
+}
+
+func TestStaticFindingJSONOmitsUnknownPosition(t *testing.T) {
+	b, err := json.Marshal(StaticFinding{File: "a.go", Rule: "gofmt"})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, err := ParseMappedJSON([]byte(`[{`), ESLintMapping()); err == nil {
-		t.Error("truncated JSON: want an error")
+	if strings.Contains(string(b), `"line"`) || strings.Contains(string(b), `"col"`) {
+		t.Errorf("0 (no position) must not be written as a position: %s", b)
 	}
-	if got, err := ParseMappedJSON([]byte(`[1,"a",null]`), ESLintMapping()); err != nil || len(got) != 0 {
-		t.Errorf("non-object elements = %v, %v; want none, nil", got, err)
+	b, _ = json.Marshal(StaticFinding{File: "a.go", Line: 3, Col: 1})
+	if !strings.Contains(string(b), `"line":3`) || !strings.Contains(string(b), `"col":1`) {
+		t.Errorf("a known position must be written: %s", b)
 	}
 }
 
 func FuzzParseGolangciSARIF(f *testing.F) {
 	f.Add([]byte(golangciSARIF))
-	f.Add([]byte(`{"runs":[{"results":[{"locations":[{}]}]}]}`))
+	f.Add([]byte(`{"version":"2.1.0","runs":[{"results":[{"locations":[{}]}]}]}`))
 	f.Fuzz(func(t *testing.T, data []byte) {
 		got, err := ParseGolangciSARIF(data)
 		checkFuzzFindings(t, got, err)
@@ -205,7 +292,7 @@ func FuzzParseGoVetJSON(f *testing.F) {
 
 func FuzzParseMappedJSON(f *testing.F) {
 	f.Add([]byte(eslintJSON))
-	f.Add([]byte(`{"file":"a","line":"3","column":1.5}`))
+	f.Add([]byte(`{"file":"a","line":"3","column":1.5,"message":"m"}`))
 	f.Fuzz(func(t *testing.T, data []byte) {
 		for _, m := range []StaticMapping{ESLintMapping(), RuffMapping(), MypyMapping()} {
 			got, err := ParseMappedJSON(data, m)
