@@ -1,17 +1,18 @@
 package repocheck
 
 import (
-	"context"
 	"path"
 	"regexp"
 	"slices"
 	"strings"
 )
 
-// The rule names of the commit-point test integrity check (SPEC §5.13, L72).
+// The rule names of the commit-point test integrity check (SPEC §5.13, L72). ruleTestDeletionUnproven
+// covers every deleted test, not only a detail test: a diff cannot tell a detail test from a boundary
+// test, so each deleted test needs its Covered-by and Mutation proof.
 const (
 	ruleBehaviorChangeMissing = "behavior_change_missing"
-	ruleDetailTestDeletion    = "detail_test_deletion_unproven"
+	ruleTestDeletionUnproven  = "test_deletion_unproven"
 )
 
 // Integrity is what the test integrity check found: Warnings never refuse a commit, Findings do.
@@ -31,21 +32,22 @@ var coveredByPattern = regexp.MustCompile(`^Covered-by: \S`)
 // Mutation: <file:line> <test> red, reverted.
 var mutationPattern = regexp.MustCompile(`^Mutation: \S+:[1-9][0-9]* \S+ red, reverted$`)
 
-// assertionPattern matches a line that asserts: a Go failure call, an assert or require call, an
-// expect call or a unittest assert method.
-var assertionPattern = regexp.MustCompile(`\.(?:Fatalf?|Errorf|FailNow|Fail)\(|\.Error\([^)]|\bassert\w*[.(]|\brequire\.\w+\(|\bexpect\(|\bself\.assert\w+\(`)
+// The check knows Go and Python only (the stacks of aiwe and of the #24 stack profile); a test of
+// another language is not recognised, so its deletion is not measured here.
 
-// testFuncPattern matches the line that declares a test: a Go Test function or a Python test_ function;
+// assertionPattern matches a line that asserts: a Go failure call, a testify assert or require call, a
+// Python assert statement or a unittest assert method.
+var assertionPattern = regexp.MustCompile(`\.(?:Fatalf?|Errorf|FailNow|Fail)\(|\.Error\([^)]|\bassert\.\w+\(|\brequire\.\w+\(|^\s*assert\s|\bself\.assert\w+\(`)
+
+// testFuncPattern matches the line that declares a test: a Go Test function or a Python test function;
 // it captures the name in one of its two groups.
 var testFuncPattern = regexp.MustCompile(`^(?:func (Test\w*)\(|\s*def (test\w*)\()`)
 
-// testFilePattern matches the path of a test file.
-var testFilePattern = regexp.MustCompile(`(?:_test\.\w+|\.(?:test|spec)\.\w+|(?:^|/)test_[^/]*\.py|(?:^|/)tests?/|(?:^|/)__tests__/)`)
+// testFilePattern matches the path of a Go or Python test file.
+var testFilePattern = regexp.MustCompile(`(?:_test\.(?:go|py)|(?:^|/)test_[^/]*\.py)$`)
 
-// codeExtensions are the file extensions of product code, a test file excluded.
-func codeExtensions() []string {
-	return []string{".go", ".py", ".js", ".jsx", ".ts", ".tsx", ".rs", ".java", ".kt", ".c", ".h", ".cc", ".cpp", ".cs", ".rb", ".php", ".swift"}
-}
+// codeExtensions are the file extensions of Go and Python product code, a test file excluded.
+func codeExtensions() []string { return []string{".go", ".py"} }
 
 // diffFile is one file of a staged diff: its path and the lines the diff adds and removes.
 type diffFile struct {
@@ -53,9 +55,6 @@ type diffFile struct {
 	added   []string
 	removed []string
 }
-
-// deletedTest is a test that the diff removes without adding one of the same name.
-type deletedTest struct{ path, name string }
 
 // CommitIntegrity checks a commit message against the staged diff it lands with (SPEC §5.13, L72).
 // A diff that changes product code and an assertion with no Behavior change line is a warning, never a
@@ -71,20 +70,10 @@ func CommitIntegrity(msg, diff string) Integrity {
 	}
 	deleted := deletedTests(files)
 	proven := min(countLines(lines, coveredByPattern), countLines(lines, mutationPattern))
-	if len(deleted) > proven {
-		for _, d := range deleted[proven:] {
-			res.Findings = append(res.Findings, Finding{Rule: ruleDetailTestDeletion, Path: d.path})
-		}
+	for _, p := range deleted[min(proven, len(deleted)):] {
+		res.Findings = append(res.Findings, Finding{Rule: ruleTestDeletionUnproven, Path: p})
 	}
 	return res
-}
-
-// StagedDiff returns the staged diff of the repository at repo with no context lines; no git, or a
-// directory that is not a repository, is an error.
-func StagedDiff(ctx context.Context, repo string) (string, error) {
-	out, err := runProgram(ctx, repo, "git", "-c", "core.quotePath=false", "diff", "--cached",
-		"--no-color", "--no-ext-diff", "--no-renames", "--unified=0")
-	return string(out), err
 }
 
 // unfencedLines returns the lines of msg that git keeps and that lie outside a ``` fence.
@@ -142,25 +131,41 @@ func testName(line string) string {
 	return m[1] + m[2]
 }
 
-// deletedTests returns, in diff order, each test a test file removes whose name no test file adds.
-func deletedTests(files []diffFile) []deletedTest {
+// testFiles returns the files of the diff that are test files.
+func testFiles(files []diffFile) []diffFile {
+	return slices.DeleteFunc(slices.Clone(files), func(f diffFile) bool { return !isTestFile(f.path) })
+}
+
+// declaredTests returns the names of the tests that lines declare.
+func declaredTests(lines []string) []string {
+	var names []string
+	for _, l := range lines {
+		if n := testName(l); n != "" {
+			names = append(names, n)
+		}
+	}
+	return names
+}
+
+// deletedTests returns the path of the test file for each test the diff removes whose name no test
+// file adds, in diff order; a test moved to another file is no deletion.
+func deletedTests(files []diffFile) []string {
+	tests := testFiles(files)
 	added := map[string]bool{}
-	for _, f := range files {
-		for _, l := range f.added {
-			if n := testName(l); n != "" && isTestFile(f.path) {
-				added[n] = true
+	for _, f := range tests {
+		for _, n := range declaredTests(f.added) {
+			added[n] = true
+		}
+	}
+	var paths []string
+	for _, f := range tests {
+		for _, n := range declaredTests(f.removed) {
+			if !added[n] {
+				paths = append(paths, f.path)
 			}
 		}
 	}
-	var deleted []deletedTest
-	for _, f := range files {
-		for _, l := range f.removed {
-			if n := testName(l); n != "" && isTestFile(f.path) && !added[n] {
-				deleted = append(deleted, deletedTest{path: f.path, name: n})
-			}
-		}
-	}
-	return deleted
+	return paths
 }
 
 // diffParser reads a unified diff line by line.

@@ -23,6 +23,9 @@ const (
 	outcomeRed        core.Outcome = "red"
 	outcomeIncomplete core.Outcome = "incomplete"
 
+	// ruleIntegrityNotMeasured is the warning of a commit-msg run that could not read a staged diff.
+	ruleIntegrityNotMeasured = "test_integrity_not_measured"
+
 	// productFile is the one file that may hold the product name (DR-17).
 	productFile = "internal/core/platform.go"
 )
@@ -194,10 +197,8 @@ func runTrace(_ context.Context, repo string) (measured, error) {
 // runCommitMsg checks the commit message on stdin, as the commit-msg hook and the CI step pass it
 // (SPEC §4, §12.2, §12.3); a message that is not UTF-8 is an error, never green. The repository
 // slug a Closes line must name comes from the origin remote of --repo; with no --repo, or an
-// origin that cannot be read, it is unknown and a Closes line is a finding (fail closed). With --repo
-// the staged diff is read too (SPEC §5.13, L72): a missing Behavior change line is a warning and
-// never a refusal, and a deleted test without its Covered-by and Mutation lines is a finding; a
-// staged diff that cannot be read is an error, never green.
+// origin that cannot be read, it is unknown and a Closes line is a finding (fail closed). The staged
+// diff is read too (stagedIntegrity, SPEC §5.13, L72).
 func runCommitMsg(ctx context.Context, in core.Input) (core.Result[any], error) {
 	body, err := io.ReadAll(os.Stdin)
 	if err != nil {
@@ -215,19 +216,35 @@ func runCommitMsg(ctx context.Context, in core.Input) (core.Result[any], error) 
 		}
 	}
 	found := repocheck.CommitMessage(msg, slug)
-	if repo := in.Params["repo"]; repo != "" {
-		diff, err := repocheck.StagedDiff(ctx, repo)
-		if err != nil {
-			return core.Result[any]{}, fmt.Errorf("commit-msg: staged diff: %w", err)
-		}
-		integrity := repocheck.CommitIntegrity(msg, diff)
-		found = append(found, integrity.Findings...)
-		res.Warnings = integrity.Warnings
+	integrity, err := stagedIntegrity(ctx, in.Params["repo"], msg)
+	if err != nil {
+		return core.Result[any]{}, err
 	}
+	found = append(found, integrity.Findings...)
+	res.Warnings = integrity.Warnings
 	if len(found) > 0 {
 		res.Result, res.Findings = resultRed, found
 	}
 	return summarize([]checkResult{res}), nil
+}
+
+// stagedIntegrity checks msg against the staged diff of repo (SPEC §5.13, L72). With no repo, or an
+// empty staged diff (an amend that stages nothing, an empty commit), nothing is measured and the
+// result carries a not-measured warning, never a silent green (DR-6); a staged diff that cannot be
+// read is an error.
+func stagedIntegrity(ctx context.Context, repo, msg string) (repocheck.Integrity, error) {
+	notMeasured := repocheck.Integrity{Warnings: []repocheck.Finding{{Rule: ruleIntegrityNotMeasured, Path: "commit-message"}}}
+	if repo == "" {
+		return notMeasured, nil
+	}
+	diff, err := repocheck.StagedDiff(ctx, repo)
+	if err != nil {
+		return repocheck.Integrity{}, fmt.Errorf("commit-msg: staged diff: %w", err)
+	}
+	if strings.TrimSpace(diff) == "" {
+		return notMeasured, nil
+	}
+	return repocheck.CommitIntegrity(msg, diff), nil
 }
 
 // summarize maps the results to one envelope: all green is ok, any red is red, and anything else
@@ -259,6 +276,9 @@ func describe(r checkResult) string {
 	}
 	for _, f := range r.Findings {
 		line += fmt.Sprintf("\n  %s %s:%d", f.Rule, f.Path, f.Line)
+	}
+	for _, w := range r.Warnings {
+		line += fmt.Sprintf("\n  warning: %s %s:%d", w.Rule, w.Path, w.Line)
 	}
 	return line
 }
