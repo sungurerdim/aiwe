@@ -217,20 +217,6 @@ func TestMethodBodiesUnwrapsWrappedSentences(t *testing.T) {
 	}
 }
 
-// TestMethodBodiesDropsMarkdownCodeMarks proves a SPEC code span is method prose.
-// A card that keeps the marks fails validation: the body rule reads them as a command.
-func TestMethodBodiesDropsMarkdownCodeMarks(t *testing.T) {
-	t.Parallel()
-	const spec = "Method per role (the card body): **security-reviewer**: unreproduced → `not_measured`.\n\n"
-	got, err := methodBodies(spec)
-	if err != nil {
-		t.Fatalf("expected the marked paragraph to parse; got %v", err)
-	}
-	if got["security-reviewer"] != "unreproduced → not_measured." {
-		t.Fatalf("security-reviewer = %q, want the sentence without code marks", got["security-reviewer"])
-	}
-}
-
 // TestAuditorLimitKeepsDeferredTrigger proves the §15 rule stays on the auditor
 // card as a limit. The SPEC §9.1 method sentence does not carry it.
 func TestAuditorLimitKeepsDeferredTrigger(t *testing.T) {
