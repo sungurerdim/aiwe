@@ -78,6 +78,32 @@ func TestFailureBuildErrorGivesOneRecord(t *testing.T) {
 	if f.Kind != FailureCompile || f.Test != pkgDep {
 		t.Errorf("a dependency that does not build must give its own record only: %+v", f)
 	}
+	// One compile error of a package built twice (alone, and for its own tests) is one record.
+	const line = "internal/calc/calc.go:7:9: undefined: missing\n"
+	both := pkgCalc + " [" + pkgCalc + ".test]"
+	twice := goJSON(t,
+		fixEvent{Action: "build-output", ImportPath: pkgCalc, Output: line},
+		fixEvent{Action: "build-fail", ImportPath: pkgCalc},
+		fixEvent{Action: "build-output", ImportPath: both, Output: line},
+		fixEvent{Action: "build-fail", ImportPath: both},
+		fixEvent{Action: "fail", Package: pkgWeb, FailedBuild: pkgCalc},
+		fixEvent{Action: "fail", Package: pkgCalc, FailedBuild: both},
+	)
+	f = onlyFailure(t, goFailures(t, twice, failureScope()))
+	if f.Kind != FailureCompile || f.Test != pkgCalc || f.TestLocation != "internal/calc/calc.go:7:9" {
+		t.Errorf("one error built twice must give one record: %+v", f)
+	}
+	// A dependency whose own path ends in _test keeps its name: only "[<pkg>.test]" is the xtest form.
+	e2e := failureModule + "/internal/e2e_test"
+	named := e2e + " [" + pkgCalc + ".test]"
+	suffix := goJSON(t,
+		fixEvent{Action: "build-output", ImportPath: named, Output: "internal/e2e_test/e.go:2:1: undefined: gone\n"},
+		fixEvent{Action: "build-fail", ImportPath: named},
+	)
+	f = onlyFailure(t, goFailures(t, suffix, failureScope()))
+	if f.Test != e2e {
+		t.Errorf("a dependency named *_test must keep its name: %q, want %q", f.Test, e2e)
+	}
 }
 
 func TestFailureLogLineBeforeTheAssertionIsNotTheLocation(t *testing.T) {
