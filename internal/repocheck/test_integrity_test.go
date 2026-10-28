@@ -106,55 +106,73 @@ func TestBehaviorChangeLineClearsTheWarning(t *testing.T) {
 }
 
 const (
-	deletedTestBody = "func TestRunCountsFromZero(t *testing.T) {\n\tif got := run(); got != 1 {\n\t\tt.Fatalf(\"run() = %d, want 1\", got)\n\t}\n}"
-	coverLine       = "Covered-by: TestRunThroughTheCLI"
-	mutationLine    = "Mutation: internal/core/run.go:3 TestRunThroughTheCLI red, reverted"
+	deletedTestBody   = "func TestRunCountsFromZero(t *testing.T) {\n\tif got := run(); got != 1 {\n\t\tt.Fatalf(\"run() = %d, want 1\", got)\n\t}\n}"
+	runInternalTest   = "internal/core/run_internal_test.go"
+	otherInternalTest = "internal/core/other_internal_test.go"
+	pythonTest        = "tests/test_run.py"
+	coverLine         = "Covered-by: TestRunThroughTheCLI"
+	mutationLine      = "Mutation: internal/core/run.go:3 TestRunThroughTheCLI red, reverted"
 )
 
 // TestDetailTestDeletionNeedsCoverAndMutation catches a deleted detail test that passes without a
 // Covered-by line and a Mutation line, a malformed line that counts, and a moved test that is
 // taken for a deletion (SPEC §5.13, L72).
 func TestDetailTestDeletionNeedsCoverAndMutation(t *testing.T) {
-	deletion := deletedFileText("internal/core/run_internal_test.go", strings.Split(deletedTestBody, "\n"))
+	deletion := deletedFileText(runInternalTest, strings.Split(deletedTestBody, "\n"))
 	moved := deletion + diffFileText("internal/core/run_test.go", nil, strings.Split(deletedTestBody, "\n"))
 	head := "test: drop the detail test\n\n"
 	tests := []struct {
 		name  string
 		msg   string
 		diff  string
-		rules []string
+		paths []string
 	}{
-		{"no line is a must finding", head + "The test pinned run().\n", deletion, []string{ruleTestDeletionUnproven}},
-		{"Covered-by alone is a must finding", head + coverLine + "\n", deletion, []string{ruleTestDeletionUnproven}},
-		{"Mutation alone is a must finding", head + mutationLine + "\n", deletion, []string{ruleTestDeletionUnproven}},
+		{"no line is a must finding", head + "The test pinned run().\n", deletion, []string{runInternalTest}},
+		{"Covered-by alone is a must finding", head + coverLine + "\n", deletion, []string{runInternalTest}},
+		{"Mutation alone is a must finding", head + mutationLine + "\n", deletion, []string{runInternalTest}},
 		{"both lines are clean", head + coverLine + "\n" + mutationLine + "\n", deletion, nil},
 		{"a Mutation line without file:line is a must finding", head + coverLine + "\nMutation: TestRunThroughTheCLI red, reverted\n",
-			deletion, []string{ruleTestDeletionUnproven}},
+			deletion, []string{runInternalTest}},
 		{"a Mutation line that was not reverted is a must finding", head + coverLine + "\nMutation: internal/core/run.go:3 TestRunThroughTheCLI red\n",
-			deletion, []string{ruleTestDeletionUnproven}},
-		{"a Covered-by line with no test is a must finding", head + "Covered-by:\n" + mutationLine + "\n", deletion, []string{ruleTestDeletionUnproven}},
-		{"lines inside a fence do not count", head + "```\n" + coverLine + "\n" + mutationLine + "\n```\n", deletion, []string{ruleTestDeletionUnproven}},
+			deletion, []string{runInternalTest}},
+		{"a Covered-by line with no test is a must finding", head + "Covered-by:\n" + mutationLine + "\n", deletion, []string{runInternalTest}},
+		{"lines inside a fence do not count", head + "```\n" + coverLine + "\n" + mutationLine + "\n```\n", deletion, []string{runInternalTest}},
 		{"a test moved to another file is no deletion", head + "The test moved.\n", moved, nil},
 		{"a deleted Python test is a must finding", head + "The test pinned run().\n",
-			deletedFileText("tests/test_run.py", []string{"def test_run():", "    assert run() == 1"}), []string{ruleTestDeletionUnproven}},
+			deletedFileText(pythonTest, []string{"def test_run():", "    assert run() == 1"}), []string{pythonTest}},
 		{"a deleted function that is not a test is no deletion", head + "Dropped a helper.\n",
 			deletedFileText("internal/core/helper_test.go", []string{"func helper() int {", "\treturn 1", "}"}), nil},
 		{"one pair of lines covers one of two deleted tests",
 			head + coverLine + "\n" + mutationLine + "\n",
-			deletion + deletedFileText("internal/core/other_internal_test.go", []string{"func TestOtherDetail(t *testing.T) {", "}"}),
-			[]string{ruleTestDeletionUnproven}},
+			deletion + deletedFileText(otherInternalTest, []string{"func TestOtherDetail(t *testing.T) {", "}"}),
+			[]string{otherInternalTest}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			got := CommitIntegrity(tc.msg, tc.diff)
-			if r := ruleSet(got.Findings); strings.Join(r, ",") != strings.Join(tc.rules, ",") {
-				t.Fatalf("CommitIntegrity(%q, diff) findings = %v, want %v", tc.msg, r, tc.rules)
-			}
+			var paths []string
 			for _, f := range got.Findings {
-				if !isTestFile(f.Path) {
-					t.Errorf("finding %+v names path %q, want the deleted test file", f, f.Path)
+				if f.Rule != ruleTestDeletionUnproven {
+					t.Errorf("finding %+v has rule %q, want %q", f, f.Rule, ruleTestDeletionUnproven)
 				}
+				paths = append(paths, f.Path)
+			}
+			if strings.Join(paths, ",") != strings.Join(tc.paths, ",") {
+				t.Fatalf("CommitIntegrity(%q, diff) findings name the paths %v, want the deleted test files %v", tc.msg, paths, tc.paths)
 			}
 		})
+	}
+}
+
+// TestIntegrityNotMeasuredIsAWarning catches a not-measured result that refuses a commit or names a
+// path other than the commit message (DR-6).
+func TestIntegrityNotMeasuredIsAWarning(t *testing.T) {
+	got := IntegrityNotMeasured()
+	if len(got.Findings) != 0 {
+		t.Errorf("IntegrityNotMeasured() findings = %+v, want none: not measured never refuses", got.Findings)
+	}
+	want := []Finding{{Rule: "test_integrity_not_measured", Path: commitMessagePath}}
+	if len(got.Warnings) != 1 || got.Warnings[0] != want[0] {
+		t.Errorf("IntegrityNotMeasured() warnings = %+v, want %+v", got.Warnings, want)
 	}
 }
