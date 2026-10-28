@@ -313,8 +313,9 @@ func TestCheckRecordCarriesTestRunFields(t *testing.T) {
 // no prev, so it is no link of the hash chain; n tells two lines apart.
 func ownedDirLine(n int) string {
 	return fmt.Sprintf(`{"format_version":1,"kind":"owned_dir","at":"2026-10-14T10:00:00Z","repo_id":"none",`+
-		`"goal":"none","unit":"none","run_id":"none","root":"temp","path":"aiwe-%06d","owner":"o",`+
-		`"pid":4242,"start":"2026-10-14T09:59:00Z","start_id":"none","removed_at":null,"hmac":"00"}`+"\n", n)
+		`"goal":"none","unit":"none","run_id":"none","root":"temp","path":"%s-%06d","owner":"o",`+
+		`"pid":4242,"start":"2026-10-14T09:59:00Z","start_id":"none","removed_at":null,"hmac":"00"}`+"\n",
+		core.Product, n)
 }
 
 // recordLines returns the record lines of a ledger, owned_dir lines left out, and the prev of each.
