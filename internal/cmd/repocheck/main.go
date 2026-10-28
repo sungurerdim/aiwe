@@ -92,6 +92,7 @@ type checkResult struct {
 	Check    string              `json:"check"`
 	Result   string              `json:"result"`
 	Findings []repocheck.Finding `json:"findings,omitempty"`
+	Warnings []repocheck.Finding `json:"warnings,omitempty"`
 	Detail   string              `json:"detail,omitempty"`
 }
 
@@ -193,7 +194,10 @@ func runTrace(_ context.Context, repo string) (measured, error) {
 // runCommitMsg checks the commit message on stdin, as the commit-msg hook and the CI step pass it
 // (SPEC §4, §12.2, §12.3); a message that is not UTF-8 is an error, never green. The repository
 // slug a Closes line must name comes from the origin remote of --repo; with no --repo, or an
-// origin that cannot be read, it is unknown and a Closes line is a finding (fail closed).
+// origin that cannot be read, it is unknown and a Closes line is a finding (fail closed). With --repo
+// the staged diff is read too (SPEC §5.13, L72): a missing Behavior change line is a warning and
+// never a refusal, and a deleted test without its Covered-by and Mutation lines is a finding; a
+// staged diff that cannot be read is an error, never green.
 func runCommitMsg(ctx context.Context, in core.Input) (core.Result[any], error) {
 	body, err := io.ReadAll(os.Stdin)
 	if err != nil {
@@ -210,7 +214,17 @@ func runCommitMsg(ctx context.Context, in core.Input) (core.Result[any], error) 
 			slug = repocheck.RepoSlug(url)
 		}
 	}
-	if found := repocheck.CommitMessage(msg, slug); len(found) > 0 {
+	found := repocheck.CommitMessage(msg, slug)
+	if repo := in.Params["repo"]; repo != "" {
+		diff, err := repocheck.StagedDiff(ctx, repo)
+		if err != nil {
+			return core.Result[any]{}, fmt.Errorf("commit-msg: staged diff: %w", err)
+		}
+		integrity := repocheck.CommitIntegrity(msg, diff)
+		found = append(found, integrity.Findings...)
+		res.Warnings = integrity.Warnings
+	}
+	if len(found) > 0 {
 		res.Result, res.Findings = resultRed, found
 	}
 	return summarize([]checkResult{res}), nil
