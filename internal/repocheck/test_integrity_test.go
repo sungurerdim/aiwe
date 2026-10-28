@@ -102,17 +102,17 @@ func TestBehaviorChangeLineClearsTheWarning(t *testing.T) {
 }
 
 const (
-	deletedTest  = "func TestRunCountsFromZero(t *testing.T) {\n\tif got := run(); got != 1 {\n\t\tt.Fatalf(\"run() = %d, want 1\", got)\n\t}\n}"
-	coverLine    = "Covered-by: TestRunThroughTheCLI"
-	mutationLine = "Mutation: internal/core/run.go:3 TestRunThroughTheCLI red, reverted"
+	deletedTestBody = "func TestRunCountsFromZero(t *testing.T) {\n\tif got := run(); got != 1 {\n\t\tt.Fatalf(\"run() = %d, want 1\", got)\n\t}\n}"
+	coverLine       = "Covered-by: TestRunThroughTheCLI"
+	mutationLine    = "Mutation: internal/core/run.go:3 TestRunThroughTheCLI red, reverted"
 )
 
 // TestDetailTestDeletionNeedsCoverAndMutation catches a deleted detail test that passes without a
 // Covered-by line and a Mutation line, a malformed line that counts, and a moved test that is
 // taken for a deletion (SPEC §5.13, L72).
 func TestDetailTestDeletionNeedsCoverAndMutation(t *testing.T) {
-	deletion := deletedFileText("internal/core/run_internal_test.go", strings.Split(deletedTest, "\n"))
-	moved := deletion + diffFileText("internal/core/run_test.go", nil, strings.Split(deletedTest, "\n"))
+	deletion := deletedFileText("internal/core/run_internal_test.go", strings.Split(deletedTestBody, "\n"))
+	moved := deletion + diffFileText("internal/core/run_test.go", nil, strings.Split(deletedTestBody, "\n"))
 	head := "test: drop the detail test\n\n"
 	tests := []struct {
 		name  string
