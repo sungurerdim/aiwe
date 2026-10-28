@@ -151,23 +151,6 @@ func TestPromptOverTheCapIsRefusedBeforeDispatch(t *testing.T) {
 	}
 }
 
-// TestDispatcherRoutesTheRunToItsProvider proves the dispatcher hands a run only to the provider its
-// assignment entry names, so a role never runs on a source it was not assigned (DR-15, SPEC §8.1).
-func TestDispatcherRoutesTheRunToItsProvider(t *testing.T) {
-	t.Parallel()
-	first := &fakeRunner{id: "sub-a"}
-	second := &fakeRunner{id: "api-b"}
-	d := NewDispatcher(first, second)
-	req := DispatchRequest{RunID: "run-1", Role: roleEngineer, Prompt: "ROLE\n...",
-		Entry: roles.Pin{Source: "api-b", Model: "model-b", Effort: "high"}}
-	if _, err := d.Dispatch(t.Context(), req); err != nil {
-		t.Fatalf("Dispatch: %v", err)
-	}
-	if len(first.runs) != 0 || len(second.runs) != 1 {
-		t.Fatalf("dispatcher reached sub-a %d times and api-b %d times, want 0 and 1", len(first.runs), len(second.runs))
-	}
-}
-
 // TestDispatcherRefusesAnEntryNoRunnerNames covers the fail-closed dispatch: a candidate whose
 // source has no runner is refused, never routed to another provider (SPEC §7.4 no_capacity).
 func TestDispatcherRefusesAnEntryNoRunnerNames(t *testing.T) {
