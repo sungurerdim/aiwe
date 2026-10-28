@@ -42,6 +42,12 @@ func TestSourceRulesVersionOwner(t *testing.T) {
 			t.Fatalf("version_literal lines of %s = %v, want none", file.Path, got)
 		}
 	})
+	t.Run("a tool version in the owner file is not flagged", func(t *testing.T) {
+		file := sourceRulesFile(owner, "package core", `const tool = "1.2.3"`)
+		if got := versionLiteralLines(cfg, file); len(got) != 0 {
+			t.Fatalf("version_literal lines of %s = %v, want none", file.Path, got)
+		}
+	})
 	t.Run("a file beside the owner is not exempt", func(t *testing.T) {
 		file := sourceRulesFile("internal/core/standards_extra.go", "package core", `const SarifVersion = "2.1.0"`)
 		if got := versionLiteralLines(cfg, file); !slices.Equal(got, []int{2}) {
