@@ -25,6 +25,9 @@ const (
 
 	// productFile is the one file that may hold the product name (DR-17).
 	productFile = "internal/core/platform.go"
+
+	// versionFile is the one file that may hold the format versions of standards (DR-17, STD-6).
+	versionFile = "internal/core/standard_versions.go"
 )
 
 func main() {
@@ -305,7 +308,7 @@ func runSourceRules(_ context.Context, repo string) ([]repocheck.Finding, error)
 	if err != nil {
 		return nil, err
 	}
-	cfg := repocheck.SourceRulesConfig{Product: core.Product, ProductFile: productFile}
+	cfg := repocheck.SourceRulesConfig{Product: core.Product, ProductFile: productFile, VersionFile: versionFile}
 	var found []repocheck.Finding
 	for _, f := range repocheck.SourceRules(cfg, files) {
 		found = append(found, repocheck.Finding(f))

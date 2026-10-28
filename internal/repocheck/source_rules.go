@@ -69,6 +69,7 @@ type SourceFile struct {
 type SourceRulesConfig struct {
 	Product     string
 	ProductFile string
+	VersionFile string // the one file that owns standard format versions
 }
 
 // SourceFinding is one broken rule; Line is 1-based, or 0 when the file has no usable position.
@@ -215,7 +216,7 @@ func literalRules() []literalRule {
 	return []literalRule{
 		{ruleMachinePath, func(*sourceChecker) bool { return false }, matchPattern(machinePathPattern)},
 		{ruleProductName, (*sourceChecker).isProductFile, (*sourceChecker).hasProduct},
-		{ruleVersionLiteral, (*sourceChecker).isTestFile, matchPattern(versionPattern)},
+		{ruleVersionLiteral, (*sourceChecker).isTestOrVersionFile, matchPattern(versionPattern)},
 	}
 }
 func matchPattern(re *regexp.Regexp) func(*sourceChecker, string) bool {
