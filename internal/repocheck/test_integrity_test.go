@@ -62,6 +62,10 @@ func TestBehaviorChangeLineWarnsWhenMissing(t *testing.T) {
 		{"a docs file changed beside an assertion is no code change", plainMessage,
 			diffFileText("docs/SPEC.md", []string{"a"}, []string{"b"}) + assertChange, nil},
 		{"an empty diff has nothing to warn on", plainMessage, "", nil},
+		{"a Python assertion beside Python code warns", plainMessage,
+			diffFileText("app/run.py", []string{"    return 1"}, []string{"    return 2"}) +
+				diffFileText("tests/test_run.py", []string{"    assert run() == 1"}, []string{"    assert run() == 2"}),
+			[]string{ruleBehaviorChangeMissing}},
 		{"a Behavior change line inside a code fence does not count",
 			"fix: x\n\n```\nBehavior change: Run returns 2.\n```\n", codeChange + assertChange, []string{ruleBehaviorChangeMissing}},
 		{"a Behavior change line with no text does not count", "fix: x\n\nBehavior change:\n",
@@ -120,23 +124,25 @@ func TestDetailTestDeletionNeedsCoverAndMutation(t *testing.T) {
 		diff  string
 		rules []string
 	}{
-		{"no line is a must finding", head + "The test pinned run().\n", deletion, []string{ruleDetailTestDeletion}},
-		{"Covered-by alone is a must finding", head + coverLine + "\n", deletion, []string{ruleDetailTestDeletion}},
-		{"Mutation alone is a must finding", head + mutationLine + "\n", deletion, []string{ruleDetailTestDeletion}},
+		{"no line is a must finding", head + "The test pinned run().\n", deletion, []string{ruleTestDeletionUnproven}},
+		{"Covered-by alone is a must finding", head + coverLine + "\n", deletion, []string{ruleTestDeletionUnproven}},
+		{"Mutation alone is a must finding", head + mutationLine + "\n", deletion, []string{ruleTestDeletionUnproven}},
 		{"both lines are clean", head + coverLine + "\n" + mutationLine + "\n", deletion, nil},
 		{"a Mutation line without file:line is a must finding", head + coverLine + "\nMutation: TestRunThroughTheCLI red, reverted\n",
-			deletion, []string{ruleDetailTestDeletion}},
+			deletion, []string{ruleTestDeletionUnproven}},
 		{"a Mutation line that was not reverted is a must finding", head + coverLine + "\nMutation: internal/core/run.go:3 TestRunThroughTheCLI red\n",
-			deletion, []string{ruleDetailTestDeletion}},
-		{"a Covered-by line with no test is a must finding", head + "Covered-by:\n" + mutationLine + "\n", deletion, []string{ruleDetailTestDeletion}},
-		{"lines inside a fence do not count", head + "```\n" + coverLine + "\n" + mutationLine + "\n```\n", deletion, []string{ruleDetailTestDeletion}},
+			deletion, []string{ruleTestDeletionUnproven}},
+		{"a Covered-by line with no test is a must finding", head + "Covered-by:\n" + mutationLine + "\n", deletion, []string{ruleTestDeletionUnproven}},
+		{"lines inside a fence do not count", head + "```\n" + coverLine + "\n" + mutationLine + "\n```\n", deletion, []string{ruleTestDeletionUnproven}},
 		{"a test moved to another file is no deletion", head + "The test moved.\n", moved, nil},
+		{"a deleted Python test is a must finding", head + "The test pinned run().\n",
+			deletedFileText("tests/test_run.py", []string{"def test_run():", "    assert run() == 1"}), []string{ruleTestDeletionUnproven}},
 		{"a deleted function that is not a test is no deletion", head + "Dropped a helper.\n",
 			deletedFileText("internal/core/helper_test.go", []string{"func helper() int {", "\treturn 1", "}"}), nil},
 		{"one pair of lines covers one of two deleted tests",
 			head + coverLine + "\n" + mutationLine + "\n",
 			deletion + deletedFileText("internal/core/other_internal_test.go", []string{"func TestOtherDetail(t *testing.T) {", "}"}),
-			[]string{ruleDetailTestDeletion}},
+			[]string{ruleTestDeletionUnproven}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -145,7 +151,7 @@ func TestDetailTestDeletionNeedsCoverAndMutation(t *testing.T) {
 				t.Fatalf("CommitIntegrity(%q, diff) findings = %v, want %v", tc.msg, r, tc.rules)
 			}
 			for _, f := range got.Findings {
-				if !strings.HasSuffix(f.Path, "_test.go") {
+				if !isTestFile(f.Path) {
 					t.Errorf("finding %+v names path %q, want the deleted test file", f, f.Path)
 				}
 			}
