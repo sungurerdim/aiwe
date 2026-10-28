@@ -1,8 +1,10 @@
 package gates
 
 import (
+	"encoding/json"
 	"errors"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -106,20 +108,27 @@ func TestDeclaredSelectionWithoutRows(t *testing.T) {
 	}
 }
 
-// TestDeclaredRowWithoutTestsNeedsAReason catches a declaredDeps row that selects no test with no
-// word on why (a silent gap), a row that names no path or an empty test or a glob that can never
-// match, a refusal that is not a core.Error or does not name the row, and a gate without
-// declaredDeps or a row with only one of tests and reason that is refused (SPEC L70).
-func TestDeclaredRowWithoutTestsNeedsAReason(t *testing.T) {
+// parseDeclared parses a gate.json with the given declaredDeps rows (JSON objects).
+func parseDeclared(rows string) (Definition, error) {
 	const head = `{"formatVersion":1,"steps":[{"id":"test","command":["go","test","./..."],"required":true,` +
 		`"expect":{"exitCode":0}}],"declaredDeps":[`
+	return ParseDefinition([]byte(head + rows + `]}`))
+}
+
+// TestDeclaredRowWithoutTestsNeedsAReason catches a declaredDeps row without a reason, with or
+// without tests (a silent row: SPEC-contracts 8.3 gives every row tests and a reason), a row that
+// names no path or a glob that can never match, a refusal that is not a core.Error or does not
+// name the row, and a gate without declaredDeps that is refused (SPEC L70).
+func TestDeclaredRowWithoutTestsNeedsAReason(t *testing.T) {
 	cases := []struct {
 		name    string
 		rows    string
 		refused string
 	}{
 		{"a gate without declaredDeps stays valid", ``, ""},
-		{"tests without a reason is valid", `{"paths":["docs/SPEC.md"],"tests":["./internal/roles"]}`, ""},
+		{"tests without a reason is refused, every row says why", `{"paths":["docs/SPEC.md"],"tests":["./internal/roles"]}`,
+			"declaredDeps row 1"},
+		{"tests with a blank reason is refused", `{"paths":["a.md"],"tests":["./a"],"reason":" \t"}`, "declaredDeps row 1"},
 		{"a reason without tests is valid", `{"paths":["docs/guide.md"],"reason":"read by no test"}`, ""},
 		{"tests and a reason is valid", `{"paths":["a/**"],"tests":["./a"],"reason":"x"}`, ""},
 		{"no tests and no reason is refused", `{"paths":["docs/SPEC.md"]}`, "declaredDeps row 1"},
@@ -127,14 +136,14 @@ func TestDeclaredRowWithoutTestsNeedsAReason(t *testing.T) {
 		{"a blank reason is no reason", `{"paths":["x.md"],"reason":"   "}`, "declaredDeps row 1"},
 		{"the second row is the one named", `{"paths":["a.md"],"reason":"r"},{"paths":["b.md"]}`, "declaredDeps row 2"},
 		{"a row with no path declares nothing", `{"tests":["./a"],"reason":"r"}`, "declaredDeps row 1"},
-		{"an empty path glob", `{"paths":[""],"tests":["./a"]}`, "declaredDeps row 1"},
-		{"an empty test name", `{"paths":["a.md"],"tests":[""]}`, "declaredDeps row 1"},
-		{"a glob that path.Match rejects can never match", `{"paths":["docs/[x.md"],"tests":["./a"]}`, "declaredDeps row 1"},
-		{"an unknown field of a row", `{"paths":["a.md"],"tests":["./a"],"packages":["./b"]}`, "unknown field"},
+		{"an empty path glob", `{"paths":[""],"tests":["./a"],"reason":"r"}`, "declaredDeps row 1"},
+		{"an empty test name", `{"paths":["a.md"],"tests":[""],"reason":"r"}`, "declaredDeps row 1"},
+		{"a glob that path.Match rejects can never match", `{"paths":["docs/[x.md"],"tests":["./a"],"reason":"r"}`, "declaredDeps row 1"},
+		{"an unknown field of a row", `{"paths":["a.md"],"tests":["./a"],"reason":"r","packages":["./b"]}`, "unknown field"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			def, err := ParseDefinition([]byte(head + tc.rows + `]}`))
+			def, err := parseDeclared(tc.rows)
 			if tc.refused == "" {
 				if err != nil {
 					t.Fatalf("ParseDefinition error = %v, want nil", err)
@@ -188,4 +197,128 @@ func TestRepositoryGateDeclaresItsSpecFiles(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestDeclaredTestEntryIsARelativeDir catches a tests entry that cannot join a Go selection on its
+// directory: a pattern that names many packages, an import path, a path with a trailing slash, a
+// dot or a doubled separator, or one that leaves the repository. #598 joins Package on
+// GoSelection.Dir, so one package must have one spelling (SPEC L69).
+func TestDeclaredTestEntryIsARelativeDir(t *testing.T) {
+	cases := []struct {
+		name  string
+		entry string
+		ok    bool
+	}{
+		{"a relative directory", "./internal/roles", true},
+		{"a nested directory", "./a/b/c", true},
+		{"the root package", ".", true},
+		{"the pattern that names the whole tree", "./...", false},
+		{"a pattern below a directory", "./internal/...", false},
+		{"an import path", "github.com/sungurerdim/aiwe/internal/roles", false},
+		{"a directory without the ./ prefix", "internal/roles", false},
+		{"a trailing slash gives a second spelling", "./internal/roles/", false},
+		{"a doubled separator", "./internal//roles", false},
+		{"a dot segment", "./internal/./roles", false},
+		{"a parent segment leaves the repository", "./internal/../../x", false},
+		{"only the prefix", "./", false},
+		{"dot dot", "..", false},
+		{"an absolute path", "/internal/roles", false},
+		{"a Windows separator", `./internal\roles`, false},
+		{"a wildcard", "./internal/*", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			raw, err := json.Marshal(tc.entry)
+			if err != nil {
+				t.Fatalf("marshal %q: %v", tc.entry, err)
+			}
+			_, err = parseDeclared(`{"paths":["a.md"],"tests":[` + string(raw) + `],"reason":"r"}`)
+			if tc.ok && err != nil {
+				t.Fatalf("ParseDefinition(tests %q) error = %v, want nil", tc.entry, err)
+			}
+			if !tc.ok && (err == nil || !strings.Contains(err.Error(), "declaredDeps row 1")) {
+				t.Fatalf("ParseDefinition(tests %q) = %v, want a refusal naming declaredDeps row 1", tc.entry, err)
+			}
+		})
+	}
+}
+
+// TestDeclaredPartitionsEveryChangedFile catches a changed file that lands in none or in two of
+// Selected, Exempt and Unmapped: a row without tests that swallows a file silently (the ** repro),
+// a file both selected and exempt, an exemption without the row's reason, an unsorted or repeated
+// list, a row with no path that matches every file, and a package or reason listed twice (L69).
+func TestDeclaredPartitionsEveryChangedFile(t *testing.T) {
+	sel := func(pkg, reason string) DeclaredSelection { return DeclaredSelection{Package: pkg, Reason: reason} }
+	cases := []struct {
+		name         string
+		rows         []DeclaredDep
+		changed      []string
+		wantSelected []DeclaredSelection
+		wantExempt   []DeclaredExempt
+		wantUnmapped []string
+	}{
+		{"a ** row with a reason and no tests exempts a new file with the reason, it is not a silent skip",
+			[]DeclaredDep{{Paths: []string{"**"}, Reason: "x"}}, []string{"data/new.bin"},
+			nil, []DeclaredExempt{{File: "data/new.bin", Reason: "x"}}, nil},
+		{"a file a row with tests selects is not also exempt by a row without tests",
+			[]DeclaredDep{{Paths: []string{"a.md"}, Tests: []string{"./a"}, Reason: "r"},
+				{Paths: []string{"**"}, Reason: "rest"}},
+			[]string{"a.md", "zz.bin"},
+			[]DeclaredSelection{sel("./a", "declared: a.md match a.md (r)")},
+			[]DeclaredExempt{{File: "zz.bin", Reason: "rest"}}, nil},
+		{"one run puts a selected, an exempt and an unmapped file each in one list, sorted",
+			[]DeclaredDep{{Paths: []string{"s.md"}, Tests: []string{"./s"}, Reason: "r"},
+				{Paths: []string{"e2.md", "e1.md"}, Reason: "none reads them"}},
+			[]string{"u.md", "e2.md", "s.md", "e1.md", "e1.md"},
+			[]DeclaredSelection{sel("./s", "declared: s.md match s.md (r)")},
+			[]DeclaredExempt{{File: "e1.md", Reason: "none reads them"}, {File: "e2.md", Reason: "none reads them"}},
+			[]string{"u.md"}},
+		{"two rows without tests that match one file give both reasons in row order",
+			[]DeclaredDep{{Paths: []string{"f.md"}, Reason: "first"}, {Paths: []string{"*.md"}, Reason: "second"}},
+			[]string{"f.md"}, nil, []DeclaredExempt{{File: "f.md", Reason: "first; second"}}, nil},
+		{"a row with no path matches no file even when it has tests",
+			[]DeclaredDep{{Tests: []string{"./a"}, Reason: "r"}, {Reason: "none"}}, []string{"q.md"},
+			nil, nil, []string{"q.md"}},
+		{"a package listed twice in one row is selected once with one reason",
+			[]DeclaredDep{{Paths: []string{"a.md"}, Tests: []string{"./a", "./a"}, Reason: "r"}}, []string{"a.md"},
+			[]DeclaredSelection{sel("./a", "declared: a.md match a.md (r)")}, nil, nil},
+		{"two identical rows give the package one reason, not the same reason twice",
+			[]DeclaredDep{{Paths: []string{"a.md"}, Tests: []string{"./a"}, Reason: "r"},
+				{Paths: []string{"a.md"}, Tests: []string{"./a"}, Reason: "r"}}, []string{"a.md"},
+			[]DeclaredSelection{sel("./a", "declared: a.md match a.md (r)")}, nil, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := SelectDeclared(tc.rows, tc.changed)
+			if !reflect.DeepEqual(got.Selected, tc.wantSelected) {
+				t.Errorf("Selected = %+v, want %+v", got.Selected, tc.wantSelected)
+			}
+			if !reflect.DeepEqual(got.Exempt, tc.wantExempt) {
+				t.Errorf("Exempt = %+v, want %+v", got.Exempt, tc.wantExempt)
+			}
+			if !reflect.DeepEqual(got.Unmapped, tc.wantUnmapped) {
+				t.Errorf("Unmapped = %q, want %q", got.Unmapped, tc.wantUnmapped)
+			}
+			for _, f := range tc.changed {
+				if n := listsHolding(got, f); n != 1 {
+					t.Errorf("file %q is in %d of Selected, Exempt and Unmapped, want exactly 1", f, n)
+				}
+			}
+		})
+	}
+}
+
+// listsHolding counts the lists of res that hold file: Selected by a reason that names it.
+func listsHolding(res DeclaredSelectResult, file string) int {
+	n := 0
+	if slices.ContainsFunc(res.Selected, func(s DeclaredSelection) bool { return strings.Contains(s.Reason, file) }) {
+		n++
+	}
+	if slices.ContainsFunc(res.Exempt, func(e DeclaredExempt) bool { return e.File == file }) {
+		n++
+	}
+	if slices.Contains(res.Unmapped, file) {
+		n++
+	}
+	return n
 }
