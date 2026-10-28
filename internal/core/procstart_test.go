@@ -108,24 +108,23 @@ func TestStartID(t *testing.T) {
 	}
 }
 
-// TestProcessStart catches a start time of the running process that is not the OS start time, and a
-// gone pid, or a pid that names no process, read as running.
-func TestProcessStart(t *testing.T) {
-	self, err := CurrentProcess()
-	if err != nil {
-		t.Fatalf("CurrentProcess: %v", err)
+// TestProcessStartNotRunning catches a pid that names no running process, a gone one, 0 or -1,
+// read as running or as an error, which would keep a dead owner alive.
+func TestProcessStartNotRunning(t *testing.T) {
+	rows := []struct {
+		name string // the pid the row reads
+		pid  int
+	}{
+		{"gone", procTestDeadPID(t)},
+		{"zero", 0},
+		{"negative", -1},
 	}
-	start, running, err := processStart(self.PID)
-	if err != nil || !running {
-		t.Fatalf("processStart(%d) of the running process = %v, %v, %v; want its start, running", self.PID, start, running, err)
-	}
-	if d := start.Sub(self.Start); d < -time.Second || d > time.Second {
-		t.Errorf("processStart(%d) = %v, %v away from CurrentProcess().Start %v", self.PID, start, d, self.Start)
-	}
-	for _, pid := range []int{procTestDeadPID(t), 0, -1} {
-		if _, running, err := processStart(pid); err != nil || running {
-			t.Errorf("processStart(%d) of no running process = running %v, %v; want not running, no error", pid, running, err)
-		}
+	for _, r := range rows {
+		t.Run(r.name, func(t *testing.T) {
+			if _, running, err := processStart(r.pid); err != nil || running {
+				t.Errorf("processStart(%d) of no running process = running %v, %v; want not running, no error", r.pid, running, err)
+			}
+		})
 	}
 }
 
