@@ -166,14 +166,12 @@ func lastRecordLine(tail []byte, whole bool) (line []byte, found, more bool, err
 	if len(tail) == 0 {
 		return nil, false, !whole, nil
 	}
-	body, complete := bytes.CutSuffix(tail, []byte{'
-'})
+	body, complete := bytes.CutSuffix(tail, []byte{'\n'})
 	if !complete {
 		return nil, false, false, fmt.Errorf("ledger last line: %w", tornLine())
 	}
 	for {
-		start := bytes.LastIndexByte(body, '
-') + 1
+		start := bytes.LastIndexByte(body, '\n') + 1
 		switch {
 		case start == 0 && !whole:
 			return nil, false, true, nil
