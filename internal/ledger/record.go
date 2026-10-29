@@ -232,6 +232,12 @@ type Check struct {
 	TailPath   Field[string]           `json:"tailPath"`
 	MapGaps    Field[[]string]         `json:"mapGaps"`
 
+	// Failures holds the failing tests and findings the check parsed, at most maxFailures of them;
+	// FailuresDropped counts the rest (L76). Both read unknown when the check parsed no failure and
+	// in a record written before the fields; a green step holds an empty list (SetFailures).
+	Failures        Field[[]Failure]     `json:"failures"`
+	FailuresDropped core.Measured[int64] `json:"failuresDropped"`
+
 	// QueueWaitMS is the time spent waiting, per resource name (L63, SPEC-contracts §8.5); a resource
 	// whose wait was not measured reads unknown, and so does a record that names no resource.
 	QueueWaitMS Field[map[string]core.Measured[int64]] `json:"queueWaitMs"`
@@ -253,7 +259,7 @@ func (c Check) validate() error {
 	if c.Commit == "" {
 		return refuse(fmt.Sprintf("a commit sha or %q", CommitUncommitted), "an empty commit")
 	}
-	return nil
+	return c.validateFailures()
 }
 
 // Record is one record of the ledger: a Run or a Check (SPEC §8.5). The unexported method keeps the

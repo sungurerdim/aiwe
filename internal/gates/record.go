@@ -29,52 +29,13 @@ const (
 	checkFormatVersion = 1
 	// recordNone is the value of a record identity that is absent (SPEC §8.5).
 	recordNone = "none"
-	// findingKind is the kind of an entry that holds a lint, type or format finding.
-	findingKind = "finding"
 )
-
-// CheckEntry is one entry of failures[] in a check record (L76, SPEC-contracts §8.5): a failing
-// test read by a test parser (#608) or a lint, type or format finding read by a static reader
-// (#609), in one shape. TestLocation is the file:line where the test failed, or the file:line:col
-// of a finding; SourceLocation is the deepest product frame of a test, or the finding's own place.
-type CheckEntry struct {
-	Test           string       `json:"test,omitempty"`
-	Tool           string       `json:"tool,omitempty"`
-	TestLocation   string       `json:"testLocation"`
-	SourceLocation string       `json:"sourceLocation,omitempty"`
-	Kind           string       `json:"kind"`
-	Rule           string       `json:"rule,omitempty"`
-	Level          string       `json:"level,omitempty"`
-	Message        string       `json:"message"`
-	Fix            string       `json:"fix,omitempty"`
-	Rerun          []string     `json:"rerun,omitempty"`
-	Attachments    []Attachment `json:"attachments,omitempty"`
-}
-
-// failureEntry is the entry of one failing test.
-func failureEntry(f Failure) CheckEntry {
-	return CheckEntry{Test: f.Test, TestLocation: f.TestLocation, SourceLocation: f.SourceLocation, Kind: f.Kind,
-		Message: f.Message, Rerun: slices.Clone(f.Rerun), Attachments: slices.Clone(f.Attachments)}
-}
-
-// findingEntry is the entry of one static finding; its position is file, file:line or file:line:col,
-// as much as the tool gave.
-func findingEntry(s StaticFinding) CheckEntry {
-	loc := s.File
-	if s.Line > 0 {
-		loc = fmt.Sprintf("%s:%d", loc, s.Line)
-		if s.Col > 0 {
-			loc = fmt.Sprintf("%s:%d", loc, s.Col)
-		}
-	}
-	return CheckEntry{Tool: s.Tool, TestLocation: loc, SourceLocation: loc, Kind: findingKind, Rule: s.Rule,
-		Level: s.Level, Message: s.Message, Fix: s.Fix}
-}
 
 // CheckRecord is what one step leaves after it runs: its ledger check record, the failures[] its
 // parsed output holds, and Tail, the last tailLines lines of its output. Tail is set for every run
-// that is not green, parsed or not, until the ledger record carries failures[] (#702); the sink
-// writes it to a file and names that file in the record's tailPath (SPEC-contracts §8.5).
+// that is not green, parsed or not; the sink writes it to a file and names that file in the record's
+// tailPath (SPEC-contracts §8.5). The ledger record carries the parsed entries itself as failures[]
+// (#702), so the tail keeps the raw output and is no longer the only place a failure is read from.
 type CheckRecord struct {
 	Check    ledger.Check
 	Failures []CheckEntry
@@ -149,9 +110,9 @@ func (r *Runner) record(ctx context.Context, report StepReport, ran stepOutput) 
 }
 
 // buildCheckRecord builds the record of one step that ended at at. A green step carries no failure
-// and no tail. A red one names the class of the rule table (#593) when a rule matched. A step that is
-// not green carries the entries its output parsers read and always keeps its tail: the ledger record
-// carries no failures[] until #702, so the tail is its only diagnostic.
+// and no tail, and holds a known empty failures list. A red one names the class of the rule table
+// (#593) when a rule matched. A step that is not green carries the entries its output parsers read, in
+// the ledger record as failures[] when a parser read any, and always keeps its tail.
 func buildCheckRecord(facts RunFacts, report StepReport, ran stepOutput, at time.Time) CheckRecord {
 	c := ledger.Check{Header: checkHeader(at), Key: cmp.Or(facts.Key, recordNone), StepID: report.ID,
 		Commit: cmp.Or(facts.Commit, ledger.CommitUncommitted), Killed: ran.killed,
@@ -164,6 +125,7 @@ func buildCheckRecord(facts RunFacts, report StepReport, ran stepOutput, at time
 	}
 	c.Counts, c.Slowest = testCounts(ran.stdout)
 	if report.Result == ResultGreen {
+		c.SetFailures(nil)
 		return CheckRecord{Check: c}
 	}
 	lines := outputLines(ran.all)
@@ -171,8 +133,9 @@ func buildCheckRecord(facts RunFacts, report StepReport, ran stepOutput, at time
 		v := ClassifyRed(RedRun{Step: report.ID, Exit: report.ExitCode, Output: lines})
 		c.RedClass = ledger.Field[string]{Value: string(v.Class), Known: v.Class != RedUnknown}
 	}
-	return CheckRecord{Check: c, Failures: parsedEntries(ran, RepoScope{Module: facts.Module, Root: ran.dir}),
-		Tail: lastLines(lines, tailLines)}
+	entries := parsedEntries(ran, RepoScope{Module: facts.Module, Root: ran.dir})
+	setLedgerFailures(&c, entries)
+	return CheckRecord{Check: c, Failures: entries, Tail: lastLines(lines, tailLines)}
 }
 
 // checkHeader is the header of a check record at at; the record names no goal, unit or run, so each
