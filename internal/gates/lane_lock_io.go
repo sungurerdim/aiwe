@@ -77,9 +77,10 @@ func (w *laneWaiter) numberLocked(ctx context.Context, t laneTicket) (*laneHold,
 // hold the lock. An error at the open, a permission error too, fails the wait: no lock file is ever
 // deleted, so none is met half deleted and nothing is retried.
 func (w *laneWaiter) await(ctx context.Context, next laneWait, started map[uint64]bool) error {
-	got := w.lockAt(ctx, filepath.Join(w.path, laneSeqName(next.seq, next.ext)))
+	lock := filepath.Join(w.path, laneSeqName(next.seq, next.ext))
+	got := w.lockAt(ctx, lock)
 	if got.err != nil {
-		return got.err
+		return laneLockError(lock, got.err)
 	}
 	if err := got.fl.Release(); err != nil {
 		return err
@@ -94,7 +95,8 @@ func (w *laneWaiter) await(ctx context.Context, next laneWait, started map[uint6
 		return err
 	case t.unread:
 		w.gone[next.seq] = true
-		return w.lanes.print(laneUnreadLine(w.spec.label, filepath.Join(w.path, laneSeqName(t.seq, laneTicketExt))))
+		_, rerr := w.removeName(laneSeqName(t.seq, laneTicketExt))
+		return w.lanes.print(laneUnreadLine(w.spec.label, filepath.Join(w.path, laneSeqName(t.seq, laneTicketExt)), rerr))
 	case !present:
 		return nil
 	case !core.OwnerAlive(t.owner()):
@@ -103,6 +105,17 @@ func (w *laneWaiter) await(ctx context.Context, next laneWait, started map[uint6
 		return laneError("the alive lock of a live owner held", fmt.Sprintf("ticket %d of pid %d with its lock free", t.seq, t.PID), laneReplaced)
 	}
 	return nil
+}
+
+// laneLockError names the next step for a lock open the OS refused, keeping its cause. A cancel, a
+// timeout and an error that is a lane error already pass unchanged.
+func laneLockError(path string, err error) error {
+	var ce *core.Error
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.As(err, &ce) {
+		return err
+	}
+	return &core.Error{Outcome: core.OutcomeError, Expected: "a lane lock file this process may open", Found: err.Error(),
+		Next: "fix or remove " + path + " while no check runs", Err: err}
 }
 
 // lockAt takes the OS lock on p. It refuses a p that is a link or not a regular file, before the

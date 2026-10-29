@@ -84,10 +84,13 @@ func (w *laneWaiter) enqueue(ctx context.Context, t laneTicket) (*laneHold, erro
 }
 
 // number gives t the next seq, then takes its locks and writes its ticket. It runs under the lane
-// lock.
+// lock, and first sweeps a lane that holds no ticket.
 func (w *laneWaiter) number(ctx context.Context, t laneTicket) (*laneHold, error) {
 	names, err := laneNames(w.path)
 	if err != nil {
+		return nil, err
+	}
+	if names, err = w.sweep(names); err != nil {
 		return nil, err
 	}
 	seq, ok := laneNextSeq(names)
@@ -107,6 +110,37 @@ func (w *laneWaiter) number(ctx context.Context, t laneTicket) (*laneHold, error
 		return nil, errors.Join(err, h.end())
 	}
 	return h, nil
+}
+
+// sweep removes the wait, alive and temporary files of a lane that holds no ticket and returns the
+// names left (audit-596-r3, SPEC 6.4). It runs under the lane lock, where every ticket is written
+// after its owner's locks, so a lane with no ticket has nobody to open those files: a waiter owns a
+// ticket before it opens a lock of another, and a numbering is blocked by this lock. A file it
+// cannot remove, which is what Windows answers while a handle holds it open, stays for the next
+// sweep and is logged.
+func (w *laneWaiter) sweep(names []string) ([]string, error) {
+	if slices.ContainsFunc(names, func(n string) bool { _, ext, ok := laneSeqOf(n); return ok && ext == laneTicketExt }) {
+		return names, nil
+	}
+	var kept []string
+	var errs []error
+	for _, n := range names {
+		_, ext, ok := laneSeqOf(n)
+		if !ok || ext != laneWaitExt && ext != laneAliveExt && ext != laneTempExt {
+			kept = append(kept, n)
+			continue
+		}
+		if _, err := w.removeName(n); err != nil {
+			kept = append(kept, n)
+			errs = append(errs, w.lanes.print(laneSweepLine(w.spec.label, filepath.Join(w.path, n), err)))
+		}
+	}
+	return kept, errors.Join(errs...)
+}
+
+// laneSweepLine is the line logged for a stale lane file the sweep could not remove.
+func laneSweepLine(label, path string, err error) string {
+	return fmt.Sprintf("lane %s: could not remove %s, left for the next sweep: %v\n", label, path, err)
 }
 
 // serve waits until the lane admits h, printing each new position, and drops dead owners on its way.
@@ -207,9 +241,14 @@ func (d laneDir) readTicket(seq uint64) (laneTicket, bool, error) {
 }
 
 // laneUnreadLine is the line logged when a lease passes a ticket that cannot be read and whose owner
-// holds no lock: the residue of an owner that ended or died, with its path.
-func laneUnreadLine(label, path string) string {
-	return fmt.Sprintf("lane %s: passed ticket %s, which cannot be read and whose owner holds no lock\n", label, path)
+// holds no lock: that owner ended or died. The ticket is removed so the lane can go idle; rerr is the
+// error of that removal, if any.
+func laneUnreadLine(label, path string, rerr error) string {
+	line := fmt.Sprintf("lane %s: passed ticket %s, which cannot be read and whose owner holds no lock", label, path)
+	if rerr != nil {
+		line += fmt.Sprintf("; it stays, as its removal failed: %v", rerr)
+	}
+	return line + "\n"
 }
 
 // readLaneTicket reads the ticket file name of the lane directory dir through an os.Root, so a link

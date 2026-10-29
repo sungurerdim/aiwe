@@ -72,8 +72,8 @@ func laneReservedNames() []string {
 
 // LaneRequest is what one check asks of the lanes: the exclusive resources it cannot share and its
 // worker count, the number of CPU tickets it takes. Repo and Kind name the job to its waiters. Slot
-// is the index of the caller's slot lease, from 1: the lease runs with it as AIWE_SLOT (SPEC 6.5), the
-// lanes never number slots themselves.
+// is the index of the caller's slot lease, from 1: the lease runs with it as the slot variable (SPEC
+// 6.5), the lanes never number slots themselves. A nested call must name its holder's slot.
 type LaneRequest struct {
 	Repo      string
 	Kind      string
@@ -120,12 +120,11 @@ type LaneLease struct {
 }
 
 // laneSpec is one lane a request queues in: capacity tickets in all, weight of them for the
-// request; slots marks the CPU lane, whose tickets name the slot of their lease.
+// request.
 type laneSpec struct {
 	label            string
 	dir              string // relative to Root
 	capacity, weight int
-	slots            bool
 }
 
 // laneTicket is the content of one ticket file; seq comes from its file name. unread marks the
@@ -138,7 +137,6 @@ type laneTicket struct {
 	Kind    string    `json:"kind"`
 	Since   time.Time `json:"since"`
 	Weight  int       `json:"weight"`
-	Slot    int       `json:"slot"`
 	seq     uint64
 	unread  bool
 }
@@ -156,7 +154,7 @@ type laneWait struct {
 // req, or fails when ctx or MaxWait ends first (DR-1), leaving no ticket. A call whose env carries
 // the token of a live holder runs inside that holder's check: it takes no ticket, keeps the slot.
 func (l *Lanes) Acquire(ctx context.Context, req LaneRequest) (*LaneLease, error) {
-	if lease, ok, err := l.nested(); ok || err != nil {
+	if lease, ok, err := l.nested(req); ok || err != nil {
 		return lease, err
 	}
 	specs, err := l.plan(req)
@@ -173,12 +171,8 @@ func (l *Lanes) Acquire(ctx context.Context, req LaneRequest) (*LaneLease, error
 	since := l.now().UTC()
 	for _, s := range specs {
 		asked := l.now()
-		t := laneTicket{PID: self.PID, Start: self.Start.UTC(), StartID: self.StartID(), Repo: req.Repo, Kind: req.Kind,
-			Since: since, Weight: s.weight}
-		if s.slots {
-			t.Slot = req.Slot
-		}
-		h, err := l.take(ctx, s, t)
+		h, err := l.take(ctx, s, laneTicket{PID: self.PID, Start: self.Start.UTC(), StartID: self.StartID(),
+			Repo: req.Repo, Kind: req.Kind, Since: since, Weight: s.weight})
 		if err != nil {
 			return nil, errors.Join(fmt.Errorf("lane %s: %w", s.label, err), lease.Release())
 		}
@@ -190,7 +184,7 @@ func (l *Lanes) Acquire(ctx context.Context, req LaneRequest) (*LaneLease, error
 
 // nested returns the lease of a call inside a holder's check. A token whose owner is gone was left
 // in a shell and is ignored; a malformed token or slot is refused, never read as a nested call.
-func (l *Lanes) nested() (*LaneLease, bool, error) {
+func (l *Lanes) nested(req LaneRequest) (*LaneLease, bool, error) {
 	token := l.lookup(laneTokenEnv())
 	if token == "" {
 		return nil, false, nil
@@ -204,6 +198,11 @@ func (l *Lanes) nested() (*LaneLease, bool, error) {
 	}
 	if !core.OwnerAlive(owner) {
 		return nil, false, nil
+	}
+	if req.Slot != slot {
+		return nil, false, laneError("a nested call that names the slot of the check it runs in",
+			fmt.Sprintf("slot %d in the request and %d in %s", req.Slot, slot, laneSlotEnv()),
+			"pass the slot lease index of the running check in LaneRequest.Slot")
 	}
 	return &LaneLease{lanes: l, slot: slot, token: token, nested: true}, true, nil
 }
@@ -235,7 +234,7 @@ func (l *Lanes) plan(req LaneRequest) ([]laneSpec, error) {
 		specs = append(specs, laneSpec{label: laneResourceLabel(n), dir: filepath.Join(laneExclusiveDir, n), capacity: 1, weight: 1})
 	}
 	pool := int(l.Pool.Value)
-	return append(specs, laneSpec{label: laneCPULabel, dir: laneCPUDir, capacity: pool, weight: min(req.Workers, pool), slots: true}), nil
+	return append(specs, laneSpec{label: laneCPULabel, dir: laneCPUDir, capacity: pool, weight: min(req.Workers, pool)}), nil
 }
 
 // checkLaneRoot refuses a lane root that is empty or relative, climbs with "..", or is a UNC or
