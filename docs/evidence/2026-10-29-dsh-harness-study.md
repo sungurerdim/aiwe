@@ -868,11 +868,11 @@ Source: a re-read of the session transcript, from the owner's DSH task to the la
 
 ### Track A: harness loop (DSH + OpenCode), parent epic + U0-U18
 
-Units, dependencies and done criteria: "Units" above. Priority is derived (impact x urgency, `aiwe-wt/issue.py`); severity is set so the foundation ranks first: U0, U1, U2, U3, U5, U6 high; U4, U7-U12, U14-U16 medium; U13, U17, U18 low. U15 (in-run verify) and B1 are one outcome and become one issue.
+Units, dependencies and done criteria: "Units" above. Priority is derived (impact x urgency, `aiwe-wt/issue.py`); severity is set so the foundation ranks first: U0, U1, U2, U3, U5, U6 high; U4, U7-U12, U14-U16 medium; U13, U17, U18 low. U15 (in-run verify tool, #691) and B1 (return gate) are separate outcomes.
 
 ### Track B: test system, under #587
 
-- B1. In-run verify: the agent calls `aiwe verify`, the engine runs the check and returns the result in the same call; the final report is refused until verify is green or the try limit (3) is spent. The auditor runs in its own run with a clean context (DR-5), and the writer can receive the verdict in the same bounded wait. A red result comes back compact: the failed checks, the `done` item each one serves, a one-line fix hint and the path of the full record; the agent fixes it in the same context, and a green result ends the run at once. Each unit records lead-agent round trips and first-pass green, so the gain is measured. Same outcome as U15 (one issue).
+- B1. In-run verify: the agent calls `aiwe verify`, the engine runs the check and returns the result in the same call; the final report is refused until verify is green or the try limit (3) is spent. The auditor runs in its own run with a clean context (DR-5), and the writer can receive the verdict in the same bounded wait. A red result comes back compact: the failed checks, the `done` item each one serves, a one-line fix hint and the path of the full record; the agent fixes it in the same context, and a green result ends the run at once. Each unit records lead-agent round trips and first-pass green, so the gain is measured. U15 (#691) is the Go loop's verify tool; B1 is the engine's return gate that every harness meets, so they stay two issues.
 - B2. Changed-line coverage: the coverage profile is intersected with the diff hunks; a finding names `file:line-line` and the function no test ran.
 - B3. New public surface inventory: every exported symbol, endpoint or route the diff adds, with no test that calls it, is a finding; the surface kinds are stack rows (DR-3).
 - B4. Each `done` item maps to a recorded green check; an item with no evidence blocks the close. A diff that touches a stack row's `UIPaths` requires the UX check result.
