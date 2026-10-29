@@ -113,7 +113,9 @@ func (w *laneWaiter) number(ctx context.Context, t laneTicket) (*laneHold, error
 }
 
 // sweep removes the wait, alive and temporary files of a lane that holds no ticket and returns the
-// names left (audit-596-r3, SPEC 6.4). It runs under the lane lock, where every ticket is written
+// names left (audit-596-r3, SPEC 6.4). It is the only place a lane removes a lock file: only on an
+// idle lane and only under the lane lock, so no open of a lock file meets a delete in progress and
+// no wait retries (B2 of audit-596-r2). It runs under the lane lock, where every ticket is written
 // after its owner's locks, so a lane with no ticket has nobody to open those files: a waiter owns a
 // ticket before it opens a lock of another, and a numbering is blocked by this lock. A file it
 // cannot remove, which is what Windows answers while a handle holds it open, stays for the next
@@ -297,7 +299,7 @@ func (d laneDir) writeTicket(t laneTicket) error {
 }
 
 // dropDead removes the ticket of a dead owner and logs it with the owner's pid and start time; when
-// another waiter removed it first, this one logs nothing. Its lock files stay (B2 of audit-596-r2).
+// another waiter removed it first, this one logs nothing. Its lock files stay for sweep.
 func (d laneDir) dropDead(t laneTicket) error {
 	removed, err := d.removeName(laneSeqName(t.seq, laneTicketExt))
 	if err != nil || !removed {
@@ -315,7 +317,7 @@ func (d laneDir) removeName(name string) (bool, error) {
 	return err == nil, err
 }
 
-// end removes the ticket of h, then frees its locks and leaves their files: the ticket goes first,
+// end removes the ticket of h, then frees its locks; sweep removes their files. The ticket goes first,
 // so whoever gets the alive lock finds it gone and knows its owner ended, not died.
 func (h *laneHold) end() error {
 	_, err := h.removeName(laneSeqName(h.ticket.seq, laneTicketExt))

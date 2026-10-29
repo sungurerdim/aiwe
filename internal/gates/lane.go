@@ -28,8 +28,8 @@ import (
 // queued before it, then, while the tickets ahead leave too little capacity, on the alive lock of
 // the oldest. The OS frees both locks when an owner dies; a ticket whose owner no longer runs is
 // dropped and logged; one that cannot be read holds its place until its alive lock is got (DR-6).
-// lane.lock serialises only the numbering of new tickets. No lock file is ever deleted: a file that
-// stays can never be met half deleted, so no open of one needs a second look (B2 of audit-596-r2).
+// lane.lock serialises the numbering of new tickets and the sweep of an idle lane's lock files; sweep
+// (lane_io.go) states the one rule under which a lock file is removed.
 
 const (
 	laneCPUDir       = "cpu"

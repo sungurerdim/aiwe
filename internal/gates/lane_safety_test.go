@@ -235,9 +235,9 @@ func TestLaneLockFileSwapIsRefused(t *testing.T) {
 }
 
 // TestLaneLockFileCannotBeDeletedWhileHeld pins N1 (security-591): Windows opens the lock file
-// without FILE_SHARE_DELETE, so it cannot be removed or replaced while open. The lane never
-// deletes a lock file (B2 of audit-596-r2), so a release beside a waiter that holds the file open
-// has nothing to delete and succeeds; only the tickets go.
+// without FILE_SHARE_DELETE, so it cannot be removed or replaced while open. A release
+// deletes only its ticket (a lock file goes in the sweep of an idle lane), so a release beside a
+// waiter that holds the file open has nothing to delete and succeeds.
 func TestLaneLockFileCannotBeDeletedWhileHeld(t *testing.T) {
 	for _, tc := range []struct {
 		name        string

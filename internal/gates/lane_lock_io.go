@@ -74,8 +74,8 @@ func (w *laneWaiter) numberLocked(ctx context.Context, t laneTicket) (*laneHold,
 // owner died; when that owner still runs and the path names the file the open saw, the lock file
 // was replaced under a live owner (A3), and the request is refused rather than run beside it. An
 // alive lock got while the ticket cannot be read marks it gone, with one log line: a live owner would
-// hold the lock. An error at the open, a permission error too, fails the wait: no lock file is ever
-// deleted, so none is met half deleted and nothing is retried.
+// hold the lock. An error at the open, a permission error too, fails the wait, and nothing is
+// retried: only sweep removes a lock file, on an idle lane (see there).
 func (w *laneWaiter) await(ctx context.Context, next laneWait, started map[uint64]bool) error {
 	lock := filepath.Join(w.path, laneSeqName(next.seq, next.ext))
 	got := w.lockAt(ctx, lock)
@@ -105,6 +105,11 @@ func (w *laneWaiter) await(ctx context.Context, next laneWait, started map[uint6
 		return laneError("the alive lock of a live owner held", fmt.Sprintf("ticket %d of pid %d with its lock free", t.seq, t.PID), laneReplaced)
 	}
 	return nil
+}
+
+// laneDrainLine is the line logged when the drain of an abandoned wait cannot free the lock it got.
+func laneDrainLine(label, path string, err error) string {
+	return fmt.Sprintf("lane %s: could not free the lock %s of a cancelled wait: %v\n", label, path, err)
 }
 
 // laneLockError names the next step for a lock open the OS refused, keeping its cause. A cancel, a
@@ -161,7 +166,8 @@ func (w *laneWaiter) osWait(ctx context.Context, p string) laneLocked {
 }
 
 // lockOrDrain blocks in the OS lock on p and hands the outcome to the waiter of osWait; when the
-// waiter abandoned the wait, it frees the lock it got instead and frees the gate.
+// waiter abandoned the wait, it frees the lock it got instead and frees the gate. It has nobody to
+// return a failed release to, so it logs one line with the lock path.
 func (w *laneWaiter) lockOrDrain(ctx context.Context, stop context.CancelFunc, p string,
 	got chan<- laneLocked, abandon <-chan struct{}) {
 	defer stop()
@@ -172,7 +178,9 @@ func (w *laneWaiter) lockOrDrain(ctx context.Context, stop context.CancelFunc, p
 	case <-abandon:
 	}
 	if err == nil {
-		_ = fl.Release() // a lane file is never deleted
+		if rerr := fl.Release(); rerr != nil {
+			_ = w.lanes.print(laneDrainLine(w.spec.label, p, rerr)) // a failed Log write has nowhere to go either
+		}
 	}
 	<-w.gate
 }

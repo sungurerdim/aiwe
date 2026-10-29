@@ -9,9 +9,9 @@ import (
 	"testing"
 )
 
-// TestLaneLockFilesPersist pins B2 of audit-596-r2: a lane deletes no lock file, so no open of one
-// meets a delete in progress and no wait polls for it. After a holder and a waiter ended, their
-// wait and alive files are still there; only the tickets are gone.
+// TestLaneLockFilesPersist pins B2 of audit-596-r2: a lane deletes a lock file only in the sweep
+// of an idle lane, so no open of one meets a delete in progress and no wait polls for it. After a
+// holder and a waiter ended, their wait and alive files are still there; only the tickets are gone.
 func TestLaneLockFilesPersist(t *testing.T) {
 	t.Log("catches: a lane removes .wait or .alive files, so a waiter's open can meet a pending delete and a poll is needed")
 	root := t.TempDir()
