@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"path"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/sungurerdim/aiwe/internal/core"
 	"github.com/sungurerdim/aiwe/internal/ledger"
@@ -331,12 +333,26 @@ func toolchainText(out string) string {
 	return strings.Join(strings.Fields(out), " ")
 }
 
-// goModulePath is the module path a go.mod declares, or "" when it declares none.
+// goModulePath is the module path a go.mod declares, or "" when it declares none. The path is a bare
+// token or a Go string literal (quoted or backtick-quoted); a literal that does not decode, or a path
+// that holds a quote, a backtick or white space, is no path.
 func goModulePath(data []byte) string {
 	for _, line := range strings.Split(string(data), "\n") {
-		if f := strings.Fields(line); len(f) >= 2 && f[0] == "module" {
-			return strings.Trim(f[1], `"`)
+		f := strings.Fields(line)
+		if len(f) < 2 || f[0] != "module" {
+			continue
 		}
+		p := f[1]
+		if p[0] == '"' || p[0] == '`' {
+			var err error
+			if p, err = strconv.Unquote(p); err != nil {
+				return ""
+			}
+		}
+		if strings.ContainsAny(p, "\"`") || strings.ContainsFunc(p, unicode.IsSpace) {
+			return ""
+		}
+		return p
 	}
 	return ""
 }
