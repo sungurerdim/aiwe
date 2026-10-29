@@ -135,9 +135,31 @@ func meanDurations(checks []ledger.Check) []timedTest {
 	return tests
 }
 
+// slowestGap is why the slowest lists cannot give the slowest 10 % of the tests, or empty when they
+// can: a record keeps only its slowestTests slowest tests, so the share is over every test a run
+// ran only when its record holds its test count and kept all of them (DR-6). Skipped tests are not
+// timed and so not counted.
+func slowestGap(checks []ledger.Check) string {
+	for _, c := range checks {
+		if !c.Slowest.Known {
+			continue
+		}
+		if !c.Counts.Known {
+			return "a record holds no test count, so its kept tests may not be all it ran"
+		}
+		if c.Counts.Value["pass"]+c.Counts.Value["fail"] > int64(len(c.Slowest.Value)) {
+			return fmt.Sprintf("a record ran more tests than the %d slowest it keeps", slowestTests)
+		}
+	}
+	return ""
+}
+
 // slowestShare is how many tests the slowest 10 % are and how much of the time they take, then the
-// slowest of them. A record keeps only its slowest tests, so the figure is over those.
+// slowest of them. It is unknown, with the reason, when a record did not keep every test it ran.
 func slowestShare(checks []ledger.Check) []string {
+	if gap := slowestGap(checks); gap != "" {
+		return []string{unknownText + ": " + gap}
+	}
 	tests := meanDurations(checks)
 	var all int64
 	for _, t := range tests {
