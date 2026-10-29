@@ -3,6 +3,7 @@ package gates
 import (
 	"cmp"
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -18,7 +19,8 @@ const (
 	reportRows = 10
 	// slowestPercent is the share of the tests, slowest first, that the slowest section sums.
 	slowestPercent = 10
-	// neverRedRuns is how many runs a test must appear in before it counts as never red (L68).
+	// neverRedRuns is how many runs a test must be known to have survived before it counts as never
+	// red; set by #595, which the owner may change.
 	neverRedRuns = 3
 )
 
@@ -190,11 +192,18 @@ type testFailure struct {
 	subclass string
 }
 
-// failures are the failing tests read from the tail files of the red runs; read and unread count
-// the red runs whose tail was read and was not.
+// failures are the failing tests read from the tail files of the red runs. named holds the index in
+// the checks of each red run whose tail names a failing test; unread counts the red runs with no
+// readable tail and unnamed those whose tail names no failing test.
 type failures struct {
-	tests        map[string]*testFailure
-	read, unread int
+	tests           map[string]*testFailure
+	named           map[int]bool
+	unread, unnamed int
+}
+
+// newFailures is an empty failures.
+func newFailures() failures {
+	return failures{tests: map[string]*testFailure{}, named: map[int]bool{}}
 }
 
 // redClassOf is the red class c names, or unknown when no rule matched.
@@ -205,13 +214,17 @@ func redClassOf(c ledger.Check) string {
 	return unknownText
 }
 
-// addTail counts each failing test the tail data of the red run c holds.
-func (f failures) addTail(data []byte, c ledger.Check) {
+// addTail counts each failing test the tail data of the red run c holds, and returns how many it
+// named.
+func (f failures) addTail(data []byte, c ledger.Check) int {
+	n := 0
 	for _, e := range readEntries(data, nil, RepoScope{}) {
 		if e.Test != "" && e.Kind != findingKind {
 			f.add(e.Test, redClassOf(c)+"."+e.Kind, c)
+			n++
 		}
 	}
+	return n
 }
 
 // add counts one red run of test; the subclass and commit are those of the latest run.
@@ -227,47 +240,81 @@ func (f failures) add(test, subclass string, c ledger.Check) {
 	}
 }
 
-// unreadNote counts the red runs that have no readable tail, or is empty when all have one.
+// unreadNote counts the red runs that have no readable tail and those whose tail names no failing
+// test, or is empty when every red run names one.
 func (f failures) unreadNote() []string {
-	if f.unread == 0 {
-		return nil
+	var notes []string
+	if f.unread > 0 {
+		notes = append(notes, fmt.Sprintf("note: red runs without a readable tail: %d", f.unread))
 	}
-	return []string{fmt.Sprintf("note: red runs without a readable tail: %d", f.unread)}
+	if f.unnamed > 0 {
+		notes = append(notes, fmt.Sprintf("note: red runs whose tail names no failing test: %d", f.unnamed))
+	}
+	return notes
 }
 
-// neverRed lists the tests that ran in at least neverRedRuns records and failed in none of the red
-// runs whose tail was read. The runs a test is known to have run in are the records that name it in
-// their slowest list.
-func neverRed(checks []ledger.Check, f failures) []string {
-	runs := map[string]int{}
-	known := false
-	for _, c := range checks {
-		known = known || c.Slowest.Known
-		for _, t := range c.Slowest.Value {
-			runs[t.ID]++
+// selectedRuns counts, for each test the selected lists of checks name, the runs it is known to have
+// survived (a green run, or a red run whose tail names its failing tests) and the runs whose outcome
+// for it is unknown (a red run that names no failing test, or a run with no exit code). known is
+// whether any record measured its selected list.
+func selectedRuns(checks []ledger.Check, f failures) (survived, unsure map[string]int, known bool) {
+	survived, unsure = map[string]int{}, map[string]int{}
+	for i, c := range checks {
+		if !c.Selected.Known {
+			continue
+		}
+		known = true
+		counted := unsure
+		if (c.ExitCode.Known && c.ExitCode.Value == 0) || f.named[i] {
+			counted = survived
+		}
+		for _, s := range c.Selected.Value {
+			counted[s.ID]++
 		}
 	}
+	return survived, unsure, known
+}
+
+// neverRed lists the tests that ran in at least neverRedRuns records and failed in none. A test that
+// ran in a run whose failing tests are unknown is listed as unknown, not never red (DR-6). The runs a
+// test ran in are the records that name it in their selected list.
+func neverRed(checks []ledger.Check, f failures) []string {
+	survived, unsure, known := selectedRuns(checks, f)
 	if !known {
 		return unknownLines()
 	}
-	var ids []string
-	for id, n := range runs {
-		if _, red := f.tests[id]; n >= neverRedRuns && !red {
-			ids = append(ids, id)
-		}
+	ran := maps.Clone(survived)
+	for id, n := range unsure {
+		ran[id] += n
 	}
-	slices.Sort(ids)
+	var ids, unknownIDs []string
+	for _, id := range slices.Sorted(maps.Keys(ran)) {
+		if _, red := f.tests[id]; red || ran[id] < neverRedRuns {
+			continue
+		}
+		if unsure[id] > 0 {
+			unknownIDs = append(unknownIDs, id+" "+unknownText)
+			continue
+		}
+		ids = append(ids, id)
+	}
 	head := fmt.Sprintf("%d tests ran in %d or more runs and were never red", len(ids), neverRedRuns)
 	if len(ids) == 0 {
 		head = fmt.Sprintf("no test ran in %d or more runs without a red", neverRedRuns)
 	}
 	rows := append([]string{head}, ids[:min(len(ids), reportRows)]...)
+	if len(unknownIDs) > 0 {
+		rows = append(rows, fmt.Sprintf("%s for %d tests that ran in a run whose failing tests are not known",
+			unknownText, len(unknownIDs)))
+		rows = append(rows, unknownIDs[:min(len(unknownIDs), reportRows)]...)
+	}
 	return append(rows, f.unreadNote()...)
 }
 
 // topFailing lists the most failing tests with subclass, count and the commit of their last red run.
+// It is unknown when no red run's tail names a failing test.
 func topFailing(f failures) []string {
-	if f.read == 0 {
+	if len(f.named) == 0 {
 		return unknownLines()
 	}
 	counts := make(map[string]int64, len(f.tests))
@@ -278,9 +325,6 @@ func topFailing(f failures) []string {
 	for _, id := range sortedByCount(counts)[:min(len(counts), reportRows)] {
 		t := f.tests[id]
 		rows = append(rows, fmt.Sprintf("%s %s count %d last red %s", id, t.subclass, t.count, t.commit))
-	}
-	if len(rows) == 0 {
-		rows = append(rows, "no failing test in the red runs read")
 	}
 	return rows
 }

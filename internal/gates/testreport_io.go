@@ -46,18 +46,20 @@ func readChecks(state, repo string, since time.Time) (checks []ledger.Check, err
 // readFailures reads the tail file of each red run that names one, inside tails, and collects the
 // failing tests it holds. The tail is the only place a record holds test names until #702.
 func readFailures(checks []ledger.Check, tails string) failures {
-	f := failures{tests: map[string]*testFailure{}}
-	for _, c := range checks {
+	f := newFailures()
+	for i, c := range checks {
 		if !isRed(c) {
 			continue
 		}
 		data, ok := readTail(c, tails)
-		if !ok {
+		switch {
+		case !ok:
 			f.unread++
-			continue
+		case f.addTail(data, c) == 0:
+			f.unnamed++
+		default:
+			f.named[i] = true
 		}
-		f.read++
-		f.addTail(data, c)
 	}
 	return f
 }
