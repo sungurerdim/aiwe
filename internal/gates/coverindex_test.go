@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -22,7 +21,8 @@ func coverDirOf() map[string]string {
 		"example.com/m/internal/data": "internal/data", "example.com/m/internal/item": "internal/item"}
 }
 
-// coverHashes are the content hashes of the Go files of each package when the index was built.
+// coverHashes are the content hashes of the Go files of each package when the index was built; as
+// the hashes at the base, they say no package changed between the index and the base.
 func coverHashes() map[string]string {
 	return map[string]string{".": "h-root", "internal/core": "h-core", "internal/data": "h-data", "internal/item": "h-item"}
 }
@@ -88,7 +88,7 @@ func TestCoverIndexMapsFileToTestPackages(t *testing.T) {
 		{"a backslash path is the same file", []string{`internal\data\rules.go`},
 			[]CoverSelection{{"./internal/core", "coverage", "coverage: internal/data/rules.go covered by ./internal/core"}}, nil},
 	}
-	for _, tc := range cases {
+	for _, tc := range cases { // the work tree changed these files; the base still equals the index
 		t.Run(tc.name, func(t *testing.T) {
 			got := idx.Select(tc.changed, coverHashes())
 			if !reflect.DeepEqual(got.Selected, tc.want) {
@@ -109,18 +109,18 @@ func TestCoverIndexMapsFileToTestPackages(t *testing.T) {
 	}
 }
 
-// TestCoverIndexStaleFallsBack catches a stale entry that still selects by coverage, a stale entry
-// that selects its own directory instead of the full selection (a directory that may be no Go
-// package), an unchanged package read as stale because the index is old, a file outside every
-// package that selects its directory, a missing index read as fresh, and a package whose profile
-// is missing read as covering nothing (SPEC L66, L69, DR-2, DR-6).
+// TestCoverIndexStaleFallsBack catches a work-tree change read as staleness, an entry stale at the
+// base that still selects by coverage, a stale entry that takes more or less than its own package
+// suite while that package exists at the base, an old index read as stale, a file in no Go package
+// that selects its directory, a missing index read as fresh, and a package whose profile is
+// missing read as covering nothing (SPEC L66, L69, DR-2, DR-6).
 func TestCoverIndexStaleFallsBack(t *testing.T) {
 	idx := coverTestIndex(t)
-	changedData := coverHashes()
-	changedData["internal/data"] = "h-data-new"
-	changedData["newdir"] = "h-new"
 	old := idx
 	old.Built = coverBuilt().AddDate(-1, 0, 0)
+	moved := coverHashes()
+	moved["internal/data"], moved["newdir"] = "h-data-at-base", "h-new"
+	delete(moved, ".")
 	missing, err := LoadCoverIndex(filepath.Join(t.TempDir(), "absent.json"))
 	notMeasured := coverCollection()
 	notMeasured.NotMeasured = []string{"internal/item"}
@@ -128,39 +128,38 @@ func TestCoverIndexStaleFallsBack(t *testing.T) {
 	if err != nil || buildErr != nil {
 		t.Fatalf("LoadCoverIndex(absent), BuildCoverIndex(not measured) = %v, %v, want nil, nil", err, buildErr)
 	}
+	const why = " (the Go files of their package at the base differ from the index)"
 	cases := []struct {
 		name    string
 		idx     CoverIndex
 		changed []string
-		current map[string]string
+		atBase  map[string]string
 		want    []CoverSelection
 		unknown []string
 	}{
-		{"a package whose Go files changed falls to the full selection, the rest still by coverage",
-			idx, []string{"internal/data/rules.go", "internal/data/other.go", "main.go", "newdir/x.go"}, changedData,
-			[]CoverSelection{
-				{"./...", "stale", "stale: internal/data/other.go, internal/data/rules.go, newdir/x.go (the Go files of their package differ from the index)"},
-				{"./internal/core", "coverage", "coverage: main.go covered by ./internal/core"}}, nil},
-		{"an unchanged package selects by coverage however old the index is",
+		{"a work-tree change in a package unchanged at the base selects by coverage, however old the index",
 			old, []string{"internal/data/rules.go"}, coverHashes(),
 			[]CoverSelection{{"./internal/core", "coverage", "coverage: internal/data/rules.go covered by ./internal/core"}}, nil},
-		{"a file outside every Go package never selects its directory",
+		{"a package that differs at the base falls to its own package suite",
+			idx, []string{"internal/data/rules.go", "internal/data/other.go", "newdir/x.go"}, moved,
+			[]CoverSelection{
+				{"./internal/data", "stale", "stale: internal/data/other.go, internal/data/rules.go" + why},
+				{"./newdir", "stale", "stale: newdir/x.go" + why}}, nil},
+		{"a package gone at the base falls to the full selection",
+			idx, []string{"main.go"}, moved, []CoverSelection{{"./...", "stale", "stale: main.go" + why}}, nil},
+		{"a file in no Go package never selects its directory",
 			missing, []string{"internal/data/testdata/r.json"}, coverHashes(), nil, []string{"internal/data/testdata/r.json"}},
-		{"a missing index falls to the full selection",
+		{"a missing index falls to the suite of the file's package",
 			missing, []string{"internal/core/a.go"}, coverHashes(),
-			[]CoverSelection{{"./...", "stale", "stale: internal/core/a.go (the Go files of their package differ from the index)"}}, nil},
-		{"a package whose profile is missing is not_measured and falls to the full selection",
-			partial, []string{"internal/data/rules.go"}, coverHashes(),
-			[]CoverSelection{{"./...", "stale", "stale: internal/data/rules.go (coverage of ./internal/item not_measured)"}}, nil},
+			[]CoverSelection{{"./internal/core", "stale", "stale: internal/core/a.go" + why}}, nil},
+		{"a package whose profile is missing leaves every file unmapped",
+			partial, []string{"internal/data/rules.go", "main.go"}, coverHashes(), nil, []string{"internal/data/rules.go", "main.go"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := tc.idx.Select(tc.changed, tc.current)
-			if !reflect.DeepEqual(got.Selected, tc.want) {
-				t.Errorf("Select(%q).Selected = %v, want %v", tc.changed, got.Selected, tc.want)
-			}
-			if !reflect.DeepEqual(got.Unmapped, tc.unknown) {
-				t.Errorf("Select(%q).Unmapped = %v, want %v", tc.changed, got.Unmapped, tc.unknown)
+			got := tc.idx.Select(tc.changed, tc.atBase)
+			if !reflect.DeepEqual(got.Selected, tc.want) || !reflect.DeepEqual(got.Unmapped, tc.unknown) {
+				t.Errorf("Select(%q) = %v, unmapped %v, want %v, unmapped %v", tc.changed, got.Selected, got.Unmapped, tc.want, tc.unknown)
 			}
 		})
 	}
@@ -169,41 +168,42 @@ func TestCoverIndexStaleFallsBack(t *testing.T) {
 	}
 }
 
-// TestCoverHashFollowsGoFiles catches a hash that misses a Go file change or a new Go file, one that
-// moves on a non-Go file, and a directory with no Go file that is hashed as a package (DR-2).
+// TestCoverHashFollowsGoFiles catches a hash that misses a Go file change, a same-length one or a new
+// Go file, one that moves on a non-Go file, a directory with no Go file hashed as a package, a base
+// hash that differs from the work-tree hash of the same files, and a work-tree edit that makes its
+// own package stale, so coverage never selects (DR-2, SPEC L66).
 func TestCoverHashFollowsGoFiles(t *testing.T) {
-	root := t.TempDir()
+	root := cacheTestRepo(t, map[string]string{"a/a.go": "package a\n\nconst N = 1\n", "a/x.json": "{}", "b/r.json": "{}"})
+	dirs := []string{"a", "b", "gone"}
 	write := func(name, body string) {
-		file := filepath.Join(root, filepath.FromSlash(name))
-		if err := os.MkdirAll(filepath.Dir(file), 0o750); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(file, []byte(body), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(name)), []byte(body), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
 	hash := func() map[string]string {
-		got, err := HashGoDirs(root, []string{"a", "b", "gone"})
+		got, err := HashGoDirs(root, dirs)
 		if err != nil {
 			t.Fatalf("HashGoDirs() error = %v, want nil", err)
 		}
 		return got
 	}
-	write("a/a.go", "package a\n")
-	write("a/x.json", "{}")
-	write("b/r.json", "{}")
-	if first := hash(); len(first) != 1 || first["a"] == "" {
-		t.Fatalf("HashGoDirs() = %v, want one hash, for a", first)
-	}
 	first := hash()
+	atBase, err := BaseGoHashes(t.Context(), root, "HEAD", dirs)
+	if err != nil || len(first) != 1 || first["a"] == "" || !reflect.DeepEqual(atBase, first) {
+		t.Fatalf("HashGoDirs() = %v, BaseGoHashes(HEAD) = %v, %v, want one equal hash, for a", first, atBase, err)
+	}
 	write("a/x.json", `{"k":1}`)
 	if got := hash(); got["a"] != first["a"] {
 		t.Errorf("hash after a non-Go change = %q, want %q", got["a"], first["a"])
 	}
-	write("a/a.go", "package a\n\nvar V = 1\n")
+	write("a/a.go", "package a\n\nconst N = 2\n")
 	second := hash()
 	if second["a"] == first["a"] {
-		t.Errorf("hash after a Go file change = %q, want a new hash", second["a"])
+		t.Errorf("hash after a same-length Go edit = %q, want a new hash", second["a"])
+	}
+	idx := CoverIndex{Hashes: first, Files: map[string][]string{"a/a.go": {"./a"}}}
+	if got := idx.Select([]string{"a/a.go"}, atBase); len(got.Selected) != 1 || got.Selected[0].Kind != "coverage" {
+		t.Errorf("Select(edited a/a.go, base hashes) = %v, want a coverage selection", got.Selected)
 	}
 	write("a/a_test.go", "package a\n")
 	if got := hash(); got["a"] == second["a"] {
@@ -276,18 +276,12 @@ func TestCoverRunTakesTheTestStepLimit(t *testing.T) {
 // helper of durationsTestStep: it prints the fixture the JSON variable names and exits 0.
 func coverGoStub(t *testing.T) string {
 	t.Helper()
-	src, err := os.Open(os.Args[0])
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = src.Close() }()
 	stub := filepath.Join(t.TempDir(), "go"+filepath.Ext(os.Args[0]))
-	dst, err := os.OpenFile(stub, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o700)
-	if err != nil {
-		t.Fatal(err)
+	bin, err := os.ReadFile(os.Args[0])
+	if err == nil {
+		err = os.WriteFile(stub, bin, 0o700)
 	}
-	_, err = io.Copy(dst, src)
-	if err = errors.Join(err, dst.Close()); err != nil {
+	if err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv(durationsJSONEnv(), writeCoverFixture(t))
