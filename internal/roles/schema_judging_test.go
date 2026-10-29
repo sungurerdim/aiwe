@@ -233,6 +233,19 @@ func TestFindingLineRefusesMalformed(t *testing.T) {
 		})
 	}
 }
+func TestParseJudgementEmptyInput(t *testing.T) {
+	t.Parallel()
+	for _, text := range []string{"", " \n\t\r\n "} {
+		got, err := ParseJudgement(text, citedCriteria())
+		var e *core.Error
+		if !errors.As(err, &e) || e.Outcome != "unit_invalid" || !strings.Contains(e.Expected, "judgement") {
+			t.Fatalf("text %q: got %#v, %v; want unit_invalid naming the missing judgement", text, got, err)
+		}
+		if !reflect.DeepEqual(got, Judgement{}) {
+			t.Fatalf("text %q: got %#v with the error, want a zero Judgement", text, got)
+		}
+	}
+}
 func FuzzParseJudgement(f *testing.F) {
 	f.Add("")
 	f.Add(roleReturn([]string{"developer", "system"}, "", findingLine("internal/roles/schema.go:42", "DR-12",
