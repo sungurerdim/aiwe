@@ -63,6 +63,9 @@ func TestLaneSweepsAnIdleLane(t *testing.T) {
 			if _, err := os.Lstat(filepath.Join(dir, laneMutexName)); err != nil {
 				t.Errorf("the lane lock = %v, want it kept", err)
 			}
+			if got := laneTicketFiles(t, dir); len(got) != 1 || got[0] != laneSeqName(1, laneTicketExt) {
+				t.Errorf("tickets %q after an idle sweep, want the one numbered 1: numbers restart", got)
+			}
 			mustRelease(t, idle)
 		})
 	}
@@ -142,5 +145,43 @@ func TestLaneLockOpenErrorNamesTheNextStep(t *testing.T) {
 	case !errors.As(err, &ce) || !strings.Contains(ce.Next, refused):
 		t.Errorf("Acquire = %v, want a core error whose next step names %s", err, refused)
 	}
+	mustRelease(t, holder)
+}
+
+// TestLaneFailedDrainReleaseIsLogged pins K2 of audit-596-r4 (STD-11): when a cancelled wait later
+// gets its lock and cannot free it, the goroutine that drains it has nobody to return the error
+// to, so it logs one line with the lock path. The lock here is one the test freed already, so its
+// second Release fails.
+func TestLaneFailedDrainReleaseIsLogged(t *testing.T) {
+	t.Log("catches: the drain of an abandoned wait drops the error of its release, so a lock that stays held has no line")
+	root := t.TempDir()
+	holder := mustAcquire(t, newTestLanes(t, root, 4), dbRequest("holder", 1))
+	alive := filepath.Join(dbLane(root), laneSeqName(1, laneAliveExt))
+	lines := newLaneLines()
+	w := newTestLanes(t, root, 4)
+	w.Log = lines
+	entered, free := make(chan struct{}), make(chan struct{})
+	w.lock = func(ctx context.Context, p string) (*core.FileLock, error) {
+		if p != alive {
+			return core.AcquireFileLock(ctx, p)
+		}
+		close(entered)
+		<-free
+		fl, err := core.AcquireFileLock(context.WithoutCancel(ctx), filepath.Join(t.TempDir(), "freed"))
+		if err == nil {
+			err = fl.Release()
+		}
+		return fl, err
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := goAcquire(ctx, w, dbRequest("waiter", 1))
+	<-entered
+	cancel()
+	if r := awaitResult(t, done, laneTestWait); !errors.Is(r.err, context.Canceled) {
+		t.Fatalf("Acquire = %v, want %v", r.err, context.Canceled)
+	}
+	close(free)
+	lines.next(t, alive)
 	mustRelease(t, holder)
 }
