@@ -3,7 +3,6 @@ package gates
 import (
 	"cmp"
 	"fmt"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -46,10 +45,9 @@ func (r TestReport) text() string {
 	return b.String()
 }
 
-// buildTestReport builds the sections of checks. tails is the directory of the tail files; since is
+// buildTestReport builds the sections of checks and of the failing tests their tails named; since is
 // the --since value as given, empty for every record.
-func buildTestReport(checks []ledger.Check, tails, since string) TestReport {
-	failed := readFailures(checks, tails)
+func buildTestReport(checks []ledger.Check, failed failures, since string) TestReport {
 	heading := "of all records"
 	if since != "" {
 		heading = "since " + since
@@ -177,25 +175,6 @@ type failures struct {
 	read, unread int
 }
 
-// readFailures reads the tail file of each red run that names one, inside tails, and collects the
-// failing tests it holds. The tail is the only place a record holds test names until #702.
-func readFailures(checks []ledger.Check, tails string) failures {
-	f := failures{tests: map[string]*testFailure{}}
-	for _, c := range checks {
-		if !isRed(c) {
-			continue
-		}
-		data, ok := readTail(c, tails)
-		if !ok {
-			f.unread++
-			continue
-		}
-		f.read++
-		f.addTail(data, c)
-	}
-	return f
-}
-
 // redClassOf is the red class c names, or unknown when no rule matched.
 func redClassOf(c ledger.Check) string {
 	if c.RedClass.Known {
@@ -211,15 +190,6 @@ func (f failures) addTail(data []byte, c ledger.Check) {
 			f.add(e.Test, redClassOf(c)+"."+e.Kind, c)
 		}
 	}
-}
-
-// readTail returns the tail file c names, when it lies in tails.
-func readTail(c ledger.Check, tails string) ([]byte, bool) {
-	if !c.TailPath.Known || filepath.Dir(c.TailPath.Value) != tails {
-		return nil, false
-	}
-	data, err := readInRoot(tails, filepath.Base(c.TailPath.Value))
-	return data, err == nil
 }
 
 // add counts one red run of test; the subclass and commit are those of the latest run.

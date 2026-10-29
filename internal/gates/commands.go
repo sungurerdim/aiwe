@@ -142,7 +142,8 @@ func runReportTests(_ context.Context, in core.Input) (core.Result[any], error) 
 	if err != nil {
 		return core.Result[any]{}, err
 	}
-	report := buildTestReport(checks, filepath.Join(roots.State, tailDirName), in.Params["since"])
+	failed := readFailures(checks, filepath.Join(roots.State, tailDirName))
+	report := buildTestReport(checks, failed, in.Params["since"])
 	return core.Result[any]{Status: core.StatusOK, Outcome: core.OutcomeOK, Data: report, Detail: report.text()}, nil
 }
 

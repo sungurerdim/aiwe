@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/sungurerdim/aiwe/internal/core"
@@ -40,4 +41,32 @@ func readChecks(state, repo string, since time.Time) (checks []ledger.Check, err
 		}
 	}
 	return checks, nil
+}
+
+// readFailures reads the tail file of each red run that names one, inside tails, and collects the
+// failing tests it holds. The tail is the only place a record holds test names until #702.
+func readFailures(checks []ledger.Check, tails string) failures {
+	f := failures{tests: map[string]*testFailure{}}
+	for _, c := range checks {
+		if !isRed(c) {
+			continue
+		}
+		data, ok := readTail(c, tails)
+		if !ok {
+			f.unread++
+			continue
+		}
+		f.read++
+		f.addTail(data, c)
+	}
+	return f
+}
+
+// readTail returns the tail file c names, when it lies in tails.
+func readTail(c ledger.Check, tails string) ([]byte, bool) {
+	if !c.TailPath.Known || filepath.Dir(c.TailPath.Value) != tails {
+		return nil, false
+	}
+	data, err := readInRoot(tails, filepath.Base(c.TailPath.Value))
+	return data, err == nil
 }
