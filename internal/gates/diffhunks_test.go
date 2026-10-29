@@ -61,15 +61,15 @@ func TestParseDiffHunks(t *testing.T) {
 			"diff --git a/a.go b/a.go\n--- a/a.go\n+++ b/a.go\n@@ -4,2 +4 @@\n--- a/evil.go\n-y\n+z\n",
 			DiffHunks{"a.go": {{4, 4}}}},
 		{"a quoted path is decoded to its bytes",
-			"diff --git \"a/na\303\257ve.go\" \"b/na\303\257ve.go\"\n--- \"a/na\303\257ve.go\"\n" +
-				"+++ \"b/na\303\257ve.go\"\n@@ -1 +1 @@\n-a\n+b\n",
+			"diff --git \"a/na\\303\\257ve.go\" \"b/na\\303\\257ve.go\"\n--- \"a/na\\303\\257ve.go\"\n" +
+				"+++ \"b/na\\303\\257ve.go\"\n@@ -1 +1 @@\n-a\n+b\n",
 			DiffHunks{"na\u00efve.go": {{1, 1}}}},
 		{"a path with a space drops the tab git appends",
 			"diff --git a/my file.go b/my file.go\n--- a/my file.go\t\n+++ b/my file.go\t\n@@ -1 +1 @@\n-a\n+b\n",
 			DiffHunks{"my file.go": {{1, 1}}}},
 		{"a no-newline marker is not a line of the hunk",
-			"diff --git a/a.go b/a.go\n--- a/a.go\n+++ b/a.go\n@@ -1 +1 @@\n-a\n\ No newline at end of file\n" +
-				"+b\n\ No newline at end of file\n@@ -9,0 +10 @@\n+c\n",
+			"diff --git a/a.go b/a.go\n--- a/a.go\n+++ b/a.go\n@@ -1 +1 @@\n-a\n\\ No newline at end of file\n" +
+				"+b\n\\ No newline at end of file\n@@ -9,0 +10 @@\n+c\n",
 			DiffHunks{"a.go": {{1, 1}, {10, 10}}}},
 		{"a binary file has no hunk",
 			"diff --git a/x.bin b/x.bin\nindex 111..222 100644\nBinary files a/x.bin and b/x.bin differ\n",

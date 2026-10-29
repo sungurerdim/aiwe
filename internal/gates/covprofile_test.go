@@ -110,7 +110,7 @@ func TestParseLcov(t *testing.T) {
 		{"lines with different counts stay apart", "SF:a.go\nDA:3,0\nDA:4,1\nDA:6,1\nend_of_record\n",
 			CoverProfile{"a.go": {{Start: 3, End: 3, Count: 0}, {Start: 4, End: 4, Count: 1},
 				{Start: 6, End: 6, Count: 1}}}, false},
-		{"a Windows path and CRLF line ends", "SF:pkg\a.go\r\nDA:1,1\r\nend_of_record\r\n",
+		{"a Windows path and CRLF line ends", "SF:pkg\\a.go\r\nDA:1,1\r\nend_of_record\r\n",
 			CoverProfile{"pkg/a.go": {{Start: 1, End: 1, Count: 1}}}, false},
 		{"a record with no end line", "SF:a.go\nDA:1,1\n",
 			CoverProfile{"a.go": {{Start: 1, End: 1, Count: 1}}}, false},
@@ -173,7 +173,7 @@ func FuzzParseLcov(f *testing.F) {
 func covprofileTestCheck(t *testing.T, text string, profile CoverProfile) {
 	t.Helper()
 	for file, blocks := range profile {
-		if file == "" || strings.ContainsRune(file, '\') || len(blocks) == 0 {
+		if file == "" || strings.ContainsRune(file, '\\') || len(blocks) == 0 {
 			t.Fatalf("profile of %q holds the entry %q with %d block(s)", text, file, len(blocks))
 		}
 		for _, b := range blocks {
