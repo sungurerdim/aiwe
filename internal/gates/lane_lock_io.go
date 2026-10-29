@@ -53,6 +53,23 @@ func (w *laneWaiter) lockMutex(ctx context.Context) (*core.FileLock, error) {
 	return nil, laneError("one lane lock file", "a new file at "+p+" at each open", laneReplaced)
 }
 
+// numberLocked runs number under the lane lock. A failed release of that lock fails the call and
+// ends a hold number made, so no ticket stays behind a lock that may not be free.
+func (w *laneWaiter) numberLocked(ctx context.Context, t laneTicket) (*laneHold, uint64, error) {
+	mutex, err := w.lockMutex(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+	h, unread, err := w.number(ctx, t)
+	if rerr := mutex.Release(); rerr != nil {
+		err = errors.Join(err, rerr)
+		if h != nil {
+			err, h = errors.Join(err, h.end()), nil
+		}
+	}
+	return h, unread, err
+}
+
 // await blocks on the lock next names and frees it at once: getting it shows that its owner
 // started (wait) or ended (alive). An alive lock got while the ticket is still there means its
 // owner died; when that owner still runs and the path names the file the open saw, the lock file

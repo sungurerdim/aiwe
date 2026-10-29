@@ -84,17 +84,7 @@ func (w *laneWaiter) enqueue(ctx context.Context, t laneTicket) (*laneHold, erro
 		return nil, err
 	}
 	for {
-		mutex, err := w.lockMutex(ctx)
-		if err != nil {
-			return nil, err
-		}
-		h, unread, err := w.number(ctx, t)
-		if rerr := mutex.Release(); rerr != nil {
-			err = errors.Join(err, rerr)
-			if h != nil {
-				err, h = errors.Join(err, h.end()), nil
-			}
-		}
+		h, unread, err := w.numberLocked(ctx, t)
 		if err != nil || unread == 0 {
 			return h, err
 		}
@@ -184,25 +174,34 @@ func (w *laneWaiter) tickets(names []string, below uint64) ([]laneTicket, error)
 		if !ok || ext != laneTicketExt || seq >= below {
 			continue
 		}
-		t, present, err := w.readTicket(seq)
-		switch {
-		case err != nil:
-			return nil, err
-		case !present || t.unread && w.gone[seq]: // gone
-		case t.unread:
-			t.Weight = w.spec.capacity
-			out = append(out, t)
-		case !core.OwnerAlive(t.owner()):
-			err = w.dropDead(t)
-		default:
-			out = append(out, t)
-		}
+		t, keep, err := w.queued(seq)
 		if err != nil {
 			return nil, err
+		}
+		if keep {
+			out = append(out, t)
 		}
 	}
 	slices.SortFunc(out, func(a, b laneTicket) int { return cmp.Compare(a.seq, b.seq) })
 	return out, nil
+}
+
+// queued reads ticket seq for tickets: keep is false when it is gone. A placeholder of a ticket
+// it cannot read holds the whole lane; the ticket of a dead owner is dropped and logged.
+func (w *laneWaiter) queued(seq uint64) (laneTicket, bool, error) {
+	t, present, err := w.readTicket(seq)
+	switch {
+	case err != nil:
+		return laneTicket{}, false, err
+	case !present || t.unread && w.gone[seq]:
+		return laneTicket{}, false, nil
+	case t.unread:
+		t.Weight = w.spec.capacity
+		return t, true, nil
+	case !core.OwnerAlive(t.owner()):
+		return laneTicket{}, false, w.dropDead(t)
+	}
+	return t, true, nil
 }
 
 // readTicket reads ticket seq; present is false only when it is absent. A ticket that is there but
