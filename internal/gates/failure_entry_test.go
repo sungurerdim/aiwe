@@ -77,6 +77,12 @@ func TestCheckRecordPersistsFailuresInLedger(t *testing.T) {
 		red[0].Check.Failures.Value[0].TestLocation != "internal/x/x_test.go:12" {
 		t.Errorf("catches a red step whose parsed failure is not in the ledger record: %+v", red)
 	}
+	lint := recordTestRun(t, recordTestStep(t, "lint", recordTestVetJSON, 1))
+	if len(lint) != 1 || !lint[0].Check.Failures.Known || len(lint[0].Check.Failures.Value) != 1 ||
+		lint[0].Check.Failures.Value[0].Kind != "printf" ||
+		lint[0].Check.Failures.Value[0].TestLocation != "internal/x/x.go:7:2" {
+		t.Errorf("catches a red lint record that loses its parsed findings: %+v", lint)
+	}
 	raw := recordTestRun(t, recordTestStep(t, testStepID, "connection refused\n", 1))
 	if len(raw) != 1 || raw[0].Check.Failures.Known || raw[0].Check.FailuresDropped.Known {
 		t.Errorf("catches a red step no parser read whose failures are not unknown: %+v", raw)
