@@ -36,7 +36,7 @@ func Modules() []Module {
 			"removal, sweep, footprint, measured values, identities, sandbox port."},
 		{Package: stacks, Serves: "S3", Imports: []string{core},
 			Responsibility: "Stack profile table, detection, gate derivation."},
-		{Package: gates, Serves: "S4, S6", Imports: []string{core},
+		{Package: gates, Serves: "S4, S6", Imports: []string{core, ledger},
 			Responsibility: "Gate runner, check cache, diff checks D1–D18, payload scan."},
 		{Package: roles, Serves: "S3, S7", Imports: []string{core, adapters},
 			Responsibility: "Role cards (embedded), card schema, pinned model list."},
