@@ -331,22 +331,11 @@ func BaseGoHashes(ctx context.Context, repo, base string, dirs []string) (map[st
 	if err != nil {
 		return nil, err
 	}
-	var files []baseGoFile
-	var request strings.Builder
-	for _, entry := range strings.Split(tree.Stdout, "\x00") {
-		meta, name, ok := strings.Cut(entry, "\t")
-		f := strings.Fields(meta)
-		if !ok || len(f) != 3 || f[1] != "blob" || (f[0] != "100644" && f[0] != "100755") ||
-			!strings.HasSuffix(name, ".go") || !slices.Contains(dirs, path.Dir(name)) {
-			continue
-		}
-		files = append(files, baseGoFile{dir: path.Dir(name), name: path.Base(name)})
-		request.WriteString(f[2] + "\n")
-	}
+	files, request := baseGoTree(tree.Stdout, dirs)
 	if len(files) == 0 {
 		return map[string]string{}, nil
 	}
-	blobs, err := core.GitInput(ctx, repo, request.String(), "cat-file", "--batch")
+	blobs, err := core.GitInput(ctx, repo, request, "cat-file", "--batch")
 	if err != nil {
 		return nil, err
 	}
@@ -357,6 +346,24 @@ func BaseGoHashes(ctx context.Context, repo, base string, dirs []string) (map[st
 		}
 	}
 	return sumByDir(files), nil
+}
+
+// baseGoTree reads the `git ls-tree -r -z` output tree and returns the regular Go files in dirs, in
+// tree order, and the `cat-file --batch` request that reads their blobs in the same order.
+func baseGoTree(tree string, dirs []string) ([]baseGoFile, string) {
+	var files []baseGoFile
+	var request strings.Builder
+	for _, entry := range strings.Split(tree, "\x00") {
+		meta, name, ok := strings.Cut(entry, "\t")
+		f := strings.Fields(meta)
+		if !ok || len(f) != 3 || f[1] != "blob" || (f[0] != "100644" && f[0] != "100755") ||
+			!strings.HasSuffix(name, ".go") || !slices.Contains(dirs, path.Dir(name)) {
+			continue
+		}
+		files = append(files, baseGoFile{dir: path.Dir(name), name: path.Base(name)})
+		request.WriteString(f[2] + "\n")
+	}
+	return files, request.String()
 }
 
 // nextBlob reads one answer of `cat-file --batch`, `<oid> blob <size>`, the bytes and a newline,
