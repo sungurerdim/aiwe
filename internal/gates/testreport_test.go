@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -88,6 +89,24 @@ func reportTestSlowest() ledger.Field[[]ledger.Timed] {
 	return ledger.Field[[]ledger.Timed]{Value: timed, Known: true}
 }
 
+// reportTestSelected is a measured list of the tests named, each run for an import.
+func reportTestSelected(names ...string) ledger.Field[[]ledger.Selected] {
+	sel := []ledger.Selected{}
+	for _, name := range names {
+		sel = append(sel, ledger.Selected{ID: reportTestPkg + "." + name, Reason: "import"})
+	}
+	return ledger.Field[[]ledger.Selected]{Value: sel, Known: true}
+}
+
+// reportTestAll names the ten tests of reportTestSlowest.
+func reportTestAll() []string {
+	names := []string{}
+	for i := range 10 {
+		names = append(names, fmt.Sprintf("T%d", i))
+	}
+	return names
+}
+
 // reportTestFail is the go test -json line of a failing test.
 func reportTestFail(name string) string {
 	return fmt.Sprintf(`{"Action":"fail","Package":%q,"Test":%q,"Elapsed":0.01}`, reportTestPkg, name)
@@ -111,12 +130,14 @@ func reportTestMeasured(v int64) core.Measured[int64] {
 }
 
 // reportTestSeed writes four records of repo, all inside seven days: two red runs of class real_bug
-// that fail T1 (and T3 once), a red run whose class is unknown, and a green run.
+// that fail T1 (and T3 once), a red run whose class and failing tests are unknown and that ran only
+// T0, and a green run. Every run but the third ran T0 to T9.
 func reportTestSeed(t *testing.T, repo string, now time.Time) {
 	t.Helper()
 	red := func(commit string, age time.Duration, wait int64) ledger.Check {
 		c := reportTestCheck(repo, commit, now.Add(-age))
 		c.ExitCode, c.Slowest = reportTestMeasured(1), reportTestSlowest()
+		c.Selected = reportTestSelected(reportTestAll()...)
 		c.RedClass = ledger.Field[string]{Value: "real_bug", Known: true}
 		c.QueueWaitMS = ledger.Field[map[string]core.Measured[int64]]{
 			Value: map[string]core.Measured[int64]{"db": reportTestMeasured(wait)}, Known: true}
@@ -130,9 +151,11 @@ func reportTestSeed(t *testing.T, repo string, now time.Time) {
 	reportTestWrite(t, r2, reportTestFail("T1"), reportTestFail("T3"))
 	r3 := reportTestCheck(repo, "c3c3c3c", now.Add(-24*time.Hour))
 	r3.ExitCode, r3.Slowest = reportTestMeasured(1), reportTestSlowest()
+	r3.Selected = reportTestSelected("T0")
 	reportTestWrite(t, r3)
 	r4 := reportTestCheck(repo, "c4c4c4c", now.Add(-time.Hour))
 	r4.ExitCode, r4.Slowest = reportTestMeasured(0), reportTestSlowest()
+	r4.Selected = reportTestSelected(reportTestAll()...)
 	r4.MapGaps = ledger.Field[[]string]{Value: []string{}, Known: true}
 	r4.QueueWaitMS = ledger.Field[map[string]core.Measured[int64]]{Value: map[string]core.Measured[int64]{
 		"db": reportTestMeasured(200), "browser": {}}, Known: true}
@@ -155,10 +178,9 @@ func TestReportTestsPrintsFiveSections(t *testing.T) {
 		t.Fatalf("section titles = %q, want %q", titles, reportTestTitles())
 	}
 	want := map[string][]string{
-		"red class shares": {"real_bug 2 (66.7 %)", "unknown 1 (33.3 %)"},
-		"slowest 10 % of tests": {"1 of 10 tests take 90.9 % of the time",
-			reportTestPkg + ".T0 900 ms"},
-		"tests never red":        {"8 tests ran in 3 or more runs and were never red"},
+		"red class shares":       {"real_bug 2 (66.7 %)", "unknown 1 (33.3 %)"},
+		"slowest 10 % of tests":  {"unknown: a record holds no test count, so its kept tests may not be all it ran"},
+		"tests never red":        {"7 tests ran in 3 or more runs and were never red"},
 		"map gaps":               {"a.go in 2 of 3 records", "b.go in 1 of 3 records"},
 		"queue wait p50 and p90": {"browser p50 unknown p90 unknown", "db p50 200 ms p90 300 ms"},
 	}
@@ -169,12 +191,18 @@ func TestReportTestsPrintsFiveSections(t *testing.T) {
 		}
 	}
 	never := reportTestSection(t, env.Detail, "tests never red")
-	for _, id := range []string{"T0", "T2", "T9"} {
+	for _, id := range []string{"T2", "T9"} {
 		if !slices.Contains(never, reportTestPkg+"."+id) {
 			t.Errorf("tests never red misses %s: %q", id, never)
 		}
 	}
-	for _, id := range []string{"T1", "T3"} {
+	// T0 ran in the third run, a red run whose failing tests are unknown: it is unknown, not never red.
+	for _, line := range []string{reportTestPkg + ".T0 unknown", "note: red runs without a readable tail: 1"} {
+		if !slices.Contains(never, line) {
+			t.Errorf("tests never red misses %q: %q", line, never)
+		}
+	}
+	for _, id := range []string{"T0", "T1", "T3"} {
 		if slices.Contains(never, reportTestPkg+"."+id) {
 			t.Errorf("tests never red lists %s, which failed: %q", id, never)
 		}
@@ -298,6 +326,84 @@ func TestReportTestsWritesNoFile(t *testing.T) {
 			if old, ok := before[i][path]; !ok || old != content {
 				t.Errorf("%s was created or changed by the report", path)
 			}
+		}
+	}
+}
+
+// TestReportTestsSlowestNeedsTheWholeRun pins that the slowest 10 % are summed only when each record
+// keeps every test it ran: a run of more tests than its record keeps prints unknown with the reason,
+// never a share of the kept ones.
+func TestReportTestsSlowestNeedsTheWholeRun(t *testing.T) {
+	cases := map[string]struct {
+		counts map[string]int64
+		want   []string
+	}{
+		"every test kept": {map[string]int64{"pass": 9, "fail": 1, "skip": 3},
+			[]string{"1 of 10 tests take 90.9 % of the time", reportTestPkg + ".T0 900 ms"}},
+		"more tests than kept": {map[string]int64{"pass": 40},
+			[]string{"unknown: a record ran more tests than the 10 slowest it keeps"}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			commandsTestSetRoots(t)
+			c := reportTestCheck("r", "c1c1c1c", time.Now().Add(-time.Hour))
+			c.ExitCode, c.Slowest = reportTestMeasured(0), reportTestSlowest()
+			c.Counts = ledger.Field[map[string]int64]{Value: tc.counts, Known: true}
+			reportTestWrite(t, c)
+			got := reportTestSection(t, reportTestRun(t, "--since", "7d").Detail, "slowest 10 % of tests")
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("slowest 10 %% of tests = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestReportTestsRedRunNamingNoFailure pins that a red run whose tail names no failing test is no run
+// a test survived: the tests it ran read unknown, the run is noted, and the top failing tests are
+// unknown.
+func TestReportTestsRedRunNamingNoFailure(t *testing.T) {
+	commandsTestSetRoots(t)
+	now := time.Now()
+	for i, exit := range []int64{1, 0, 0} {
+		c := reportTestCheck("r", fmt.Sprintf("c%dc%dc%dc", i, i, i), now.Add(-time.Duration(i+1)*time.Hour))
+		c.ExitCode, c.Selected = reportTestMeasured(exit), reportTestSelected("T0")
+		pass := fmt.Sprintf(`{"Action":"pass","Package":%q,"Test":"T0","Elapsed":0.01}`, reportTestPkg)
+		reportTestWrite(t, c, pass)
+	}
+	detail := reportTestRun(t, "--since", "7d").Detail
+	never := reportTestSection(t, detail, "tests never red")
+	if slices.Contains(never, reportTestPkg+".T0") || !slices.Contains(never, reportTestPkg+".T0 unknown") {
+		t.Errorf("tests never red = %q, want T0 unknown and not never red", never)
+	}
+	if !slices.Contains(never, "note: red runs whose tail names no failing test: 1") {
+		t.Errorf("tests never red = %q, want the red run without a named failure noted", never)
+	}
+	if got := reportTestSection(t, detail, "top failing tests"); !slices.Equal(got, []string{"unknown"}) {
+		t.Errorf("top failing tests = %q, want [unknown]", got)
+	}
+}
+
+// TestParseSince pins the forms --since takes (Nd, Nh, a date) and the counts it refuses: zero, a
+// negative count, a count over maxSinceUnits, no count, an unknown unit and a date that is no date.
+func TestParseSince(t *testing.T) {
+	now := time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC)
+	accepted := map[string]time.Time{
+		"":           {},
+		"7d":         now.Add(-7 * 24 * time.Hour),
+		"12h":        now.Add(-12 * time.Hour),
+		"36500d":     now.Add(-36500 * 24 * time.Hour),
+		"2026-10-22": time.Date(2026, 10, 22, 0, 0, 0, 0, time.UTC),
+	}
+	for value, want := range accepted {
+		if got, err := parseSince(value, now); err != nil || !got.Equal(want) {
+			t.Errorf("parseSince(%q) = %v, %v; want %v", value, got, err, want)
+		}
+	}
+	for _, value := range []string{"0d", "-1d", "0h", "36501d", "d", "7", "7w", "7\u0434", "2026-13-01"} {
+		_, err := parseSince(value, now)
+		var refusal *core.Error
+		if !errors.As(err, &refusal) || refusal.Outcome != core.OutcomeUsage {
+			t.Errorf("parseSince(%q) error = %v, want a usage refusal", value, err)
 		}
 	}
 }
