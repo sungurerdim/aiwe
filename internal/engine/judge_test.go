@@ -27,6 +27,11 @@ func TestReadVerdict(t *testing.T) {
 			want: VerdictGreen,
 		},
 		{
+			name: "a one-line GREEN return ending in CRLF is approved, not read as empty",
+			text: "VERDICT: GREEN bound to RunID " + runID + "\r\n",
+			want: VerdictGreen,
+		},
+		{
 			name: "a RED verdict that cites a DR opens a fix round",
 			text: "VERDICT: RED bound to RunID " + runID +
 				"\nfinding: internal/engine/lifecycle.go:42 · DR-12 · a check was removed · a regression may land · must",

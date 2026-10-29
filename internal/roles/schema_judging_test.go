@@ -235,7 +235,17 @@ func TestFindingLineRefusesMalformed(t *testing.T) {
 }
 func TestParseJudgementEmptyInput(t *testing.T) {
 	t.Parallel()
-	for _, text := range []string{"", " \n\t\r\n "} {
+	blank := []struct{ name, text string }{
+		{"empty text", ""},
+		{"only white space", " \n\t\r\n "},
+		{"only a BOM", "\ufeff"},
+		{"only a zero-width space", "\u200b"},
+		{"only zero-width joiners", "\u200c\u200d"},
+		{"only a word joiner", "\u2060"},
+		{"invisible runes between white space", " \ufeff\n\u200b\t\u2060 "},
+	}
+	for _, tc := range blank {
+		text := tc.text
 		got, err := ParseJudgement(text, citedCriteria())
 		var e *core.Error
 		if !errors.As(err, &e) || e.Outcome != "unit_invalid" || !strings.Contains(e.Expected, "judgement") {
