@@ -67,7 +67,7 @@ func TestStaticFindingSharesTheEntryShape(t *testing.T) {
 // known empty list, a red step whose output a parser read holds its entries, and a red step no parser
 // read leaves the list unknown.
 func TestCheckRecordPersistsFailuresInLedger(t *testing.T) {
-	green := recordTestRun(t, recordTestStep(t, testStepID, "", 0))
+	green := recordTestRun(t, recordTestStep(t, "lint", "", 0))
 	if len(green) != 1 || !green[0].Check.Failures.Known || green[0].Check.Failures.Value == nil ||
 		len(green[0].Check.Failures.Value) != 0 || !green[0].Check.FailuresDropped.Known {
 		t.Errorf("catches a green step whose record holds no known empty list: %+v", green)

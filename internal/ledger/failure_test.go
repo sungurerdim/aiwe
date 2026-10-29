@@ -9,6 +9,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/sungurerdim/aiwe/internal/core"
 )
 
 // failureTestEntries returns n failures named t000, t001 and so on, each a test failure that holds
@@ -19,7 +21,7 @@ func failureTestEntries(n int) []Failure {
 		id := fmt.Sprintf("t%03d", i)
 		out = append(out, Failure{Test: id, Kind: "assertion", Message: "got 1, want 2",
 			TestLocation: "internal/x/x_test.go:12", SourceLocation: "internal/x/x.go:7", Got: "1", Want: "2",
-			Rerun:       []string{"aiwe", "check", "verify", "--test", id},
+			Rerun:       []string{core.Product, "check", "verify", "--test", id},
 			Attachments: []Attachment{{Kind: "trace", Path: "traces/a.zip"}, {Kind: "log", Text: "boom"}}})
 	}
 	return out
