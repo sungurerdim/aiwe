@@ -1,6 +1,7 @@
 package gates
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -25,6 +26,7 @@ func FuzzTestCounts(f *testing.F) {
 		fixEvent{Action: "fail", Package: pkgCalc, FailedBuild: buildImport},
 	))
 	f.Add([]byte("{\"Action\":\"pass\",\"Package\":\"p\",\"Test\":\"T\",\"Elapsed\":-1}\nnot json\n{\"Action\":\"pass\",\"Test\":"))
+	f.Add(passStream(f, slowestTests+1))
 	f.Add([]byte{})
 	f.Fuzz(func(t *testing.T, data []byte) {
 		counts, slowest := testCounts(data)
@@ -86,6 +88,36 @@ func TestGoModulePath(t *testing.T) {
 	for _, c := range cases {
 		if got := goModulePath([]byte(c.in)); got != c.want {
 			t.Errorf("%s: goModulePath(%q) = %q, want %q", c.name, c.in, got, c.want)
+		}
+	}
+}
+
+// passStream is a test2json stream of n passed tests, test i taking i+1 seconds.
+func passStream(tb testing.TB, n int) []byte {
+	tb.Helper()
+	evs := make([]fixEvent, n)
+	for i := range evs {
+		evs[i] = fixEvent{Action: "pass", Package: pkgCalc, Test: fmt.Sprintf("Test%02d", i), Elapsed: float64(i + 1)}
+	}
+	return goJSON(tb, evs...)
+}
+
+// TestTestCountsSlowestCap pins that a stream of more timed tests than the bound keeps exactly the
+// bound, the slowest first.
+func TestTestCountsSlowestCap(t *testing.T) {
+	n := slowestTests + 1
+	counts, slowest := testCounts(passStream(t, n))
+	if got := counts.Value["pass"]; got != int64(n) {
+		t.Fatalf("pass count = %d, want %d", got, n)
+	}
+	if len(slowest.Value) != slowestTests {
+		t.Fatalf("slowest holds %d tests, want %d", len(slowest.Value), slowestTests)
+	}
+	for i, tm := range slowest.Value {
+		wantMS := int64(n-i) * 1000
+		wantID := fmt.Sprintf("%s.Test%02d", pkgCalc, n-1-i)
+		if tm.DurationMS != wantMS || tm.ID != wantID {
+			t.Errorf("slowest[%d] = %q %d ms, want %q %d ms", i, tm.ID, tm.DurationMS, wantID, wantMS)
 		}
 	}
 }
