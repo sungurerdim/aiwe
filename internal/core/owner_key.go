@@ -20,9 +20,11 @@ import (
 	"time"
 )
 
+// LedgerFile is the name of the ledger file in the state root (SPEC §8.5), the one owner of the name.
+const LedgerFile = "ledger.jsonl"
+
 const (
 	ownerKeyFile       = "owner.key"
-	ledgerFile         = "ledger.jsonl"
 	ledgerPrefix       = "ledger."
 	rotationSuffix     = ".jsonl.gz"
 	noneField          = "none"
@@ -195,7 +197,7 @@ func (o *Owner) appendRecord(rec ownedRecord) error {
 	if err != nil {
 		return fmt.Errorf("owned_dir record: %w", err)
 	}
-	f, err := os.OpenFile(filepath.Join(o.state, ledgerFile), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
+	f, err := os.OpenFile(filepath.Join(o.state, LedgerFile), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
 	if err != nil {
 		return fmt.Errorf("owned_dir record: %w", err)
 	}
@@ -230,7 +232,7 @@ func ledgerFiles(state string) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ledger: %w", err)
 	}
-	files := []string{filepath.Join(state, ledgerFile)}
+	files := []string{filepath.Join(state, LedgerFile)}
 	for _, e := range ents {
 		n, ok := strings.CutPrefix(e.Name(), ledgerPrefix)
 		n, gz := strings.CutSuffix(n, rotationSuffix)
