@@ -110,19 +110,51 @@ func openCheckLedger() (*checkLedger, error) {
 
 // WriteCheck writes rec: its tail, when it keeps one, to a new file whose path the record then
 // names, and the record to the ledger. A tail that is not written leaves the record unwritten, so no
-// record names a file that does not exist.
+// record names a file that does not exist; a tail whose record the ledger refuses is removed, so no
+// tail file outlives the record that would name it (DR-11).
 func (l *checkLedger) WriteCheck(ctx context.Context, rec CheckRecord) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), recordLockWait)
 	defer cancel()
 	check := rec.Check
-	if len(rec.Tail) > 0 {
-		name := tailName(check.StepID, check.At)
-		if err := writeNewFile(l.tails, name, tailText(rec.Tail)); err != nil {
-			return fmt.Errorf("check tail: %w", err)
-		}
-		check.TailPath = ledger.Field[string]{Value: filepath.Join(l.tails, name), Known: true}
+	if len(rec.Tail) == 0 {
+		return ledger.AppendFile(ctx, l.path, check)
 	}
-	return ledger.AppendFile(ctx, l.path, check)
+	name, err := writeTail(l.tails, check.StepID, check.At, tailText(rec.Tail))
+	if err != nil {
+		return fmt.Errorf("check tail: %w", err)
+	}
+	check.TailPath = ledger.Field[string]{Value: filepath.Join(l.tails, name), Known: true}
+	if err := ledger.AppendFile(ctx, l.path, check); err != nil {
+		return errors.Join(err, removeInRoot(l.tails, name))
+	}
+	return nil
+}
+
+// tailNameTries bounds the names writeTail tries for one tail.
+const tailNameTries = 100
+
+// writeTail writes data to the first free tail name of step at at in dir and returns that name; a
+// name another tail of the same step and instant holds is skipped.
+func writeTail(dir, step string, at time.Time, data []byte) (string, error) {
+	for n := range tailNameTries {
+		name := tailName(step, at, n)
+		err := writeNewFile(dir, name, data)
+		if !errors.Is(err, fs.ErrExist) {
+			return name, err
+		}
+	}
+	return "", fmt.Errorf("the first %d tail names of step %q are taken", tailNameTries, step)
+}
+
+// removeInRoot removes the file name in dir, opened through dir so a link in the name cannot lead
+// out of it (SPEC §5.6).
+func removeInRoot(dir, name string) (err error) {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, root.Close()) }()
+	return root.Remove(name)
 }
 
 // writeNewFile writes data to the new file name in dir. It opens through dir, so a link in the

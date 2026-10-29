@@ -70,9 +70,9 @@ func findingEntry(s StaticFinding) CheckEntry {
 }
 
 // CheckRecord is what one step leaves after it runs: its ledger check record, the failures[] its
-// parsed output holds, and Tail, the last tailLines lines of its output. Tail is set only for a run
-// that is not green and whose output no parser understood; the sink writes it to a file and names
-// that file in the record's tailPath (SPEC-contracts §8.5).
+// parsed output holds, and Tail, the last tailLines lines of its output. Tail is set for every run
+// that is not green, parsed or not, until the ledger record carries failures[] (#702); the sink
+// writes it to a file and names that file in the record's tailPath (SPEC-contracts §8.5).
 type CheckRecord struct {
 	Check    ledger.Check
 	Failures []CheckEntry
@@ -147,8 +147,9 @@ func (r *Runner) record(ctx context.Context, report StepReport, ran stepOutput) 
 }
 
 // buildCheckRecord builds the record of one step that ended at at. A green step carries no failure
-// and no tail. A red one names the class of the rule table (#593). A step that is not green carries
-// the entries its output parsers read, and keeps its tail only when none read an entry.
+// and no tail. A red one names the class of the rule table (#593) when a rule matched. A step that is
+// not green carries the entries its output parsers read and always keeps its tail: the ledger record
+// carries no failures[] until #702, so the tail is its only diagnostic.
 func buildCheckRecord(facts RunFacts, report StepReport, ran stepOutput, at time.Time) CheckRecord {
 	c := ledger.Check{Header: checkHeader(at), Key: cmp.Or(facts.Key, recordNone), StepID: report.ID,
 		Commit: cmp.Or(facts.Commit, ledger.CommitUncommitted), Killed: ran.killed,
@@ -166,13 +167,10 @@ func buildCheckRecord(facts RunFacts, report StepReport, ran stepOutput, at time
 	lines := outputLines(ran.all)
 	if report.Result == ResultRed {
 		v := ClassifyRed(RedRun{Step: report.ID, Exit: report.ExitCode, Output: lines})
-		c.RedClass = ledger.Field[string]{Value: string(v.Class), Known: true}
+		c.RedClass = ledger.Field[string]{Value: string(v.Class), Known: v.Class != RedUnknown}
 	}
-	rec := CheckRecord{Check: c, Failures: parsedEntries(ran, RepoScope{Module: facts.Module, Root: ran.dir})}
-	if len(rec.Failures) == 0 {
-		rec.Tail = lastLines(lines, tailLines)
-	}
-	return rec
+	return CheckRecord{Check: c, Failures: parsedEntries(ran, RepoScope{Module: facts.Module, Root: ran.dir}),
+		Tail: lastLines(lines, tailLines)}
 }
 
 // checkHeader is the header of a check record at at; the record names no goal, unit or run, so each
@@ -310,16 +308,17 @@ func lastLines(lines []string, n int) []string {
 // tailNameChars are the characters of a step id that a tail file name keeps.
 const tailNameChars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
 
-// tailName is the file name of the tail of step at at: the step id with each character outside
-// tailNameChars replaced by an underscore, so a step id never leads out of the tail directory.
-func tailName(step string, at time.Time) string {
+// tailName is the n-th candidate file name of the tail of step at at: the step id with each
+// character outside tailNameChars replaced by an underscore, so a step id never leads out of the tail
+// directory, then the instant and n, so two tails of one step in one clock tick get two names.
+func tailName(step string, at time.Time, n int) string {
 	safe := strings.Map(func(r rune) rune {
 		if strings.ContainsRune(tailNameChars, r) {
 			return r
 		}
 		return '_'
 	}, step)
-	return fmt.Sprintf("%s-%d.log", safe, at.UnixNano())
+	return fmt.Sprintf("%s-%d-%d.log", safe, at.UnixNano(), n)
 }
 
 // tailText is the content of a tail file: one line per line, each ended by a newline.
