@@ -88,6 +88,10 @@ type Runner struct {
 	// not. A declared need that Probe reports missing must keep its step from starting, so the step
 	// is not_measured with one env_missing line naming the need, never red (K26, #327).
 	Probe func(Need) error
+	// Records receives one check record after each step the run takes up; nil writes none
+	// (SPEC-contracts §8.5). Facts are what each of those records carries about the run.
+	Records RecordSink
+	Facts   RunFacts
 }
 
 // Run runs the steps of def in dir. A non-empty only names the steps to run; every other step is
@@ -112,7 +116,8 @@ func (r *Runner) Run(ctx context.Context, def Definition, dir string, only []str
 			report.Steps = append(report.Steps, unmeasured(step.ID, "left out of this run"))
 			continue
 		}
-		report.Steps = append(report.Steps, r.runStep(ctx, step, dir, def.Proof))
+		stepReport, ran := r.runStep(ctx, step, dir, def.Proof)
+		report.Steps = append(report.Steps, r.record(ctx, stepReport, ran))
 		ranRequired = ranRequired || step.Required
 	}
 	report.Result = gateResult(def.Steps, report.Steps)
@@ -141,29 +146,35 @@ func checkOnly(def Definition, only []string) error {
 // runStep runs one step as a process tree in fresh roots, streams its output while it runs and
 // judges it by its declared exit code, its output expectations and the roots it leaves (SPEC §7.8,
 // §8.3). A step that cannot start or is stopped before it exits is not_measured. A test step that
-// exits as declared is then judged by its package durations (SPEC §5.13).
-func (r *Runner) runStep(ctx context.Context, step GateStep, dir string, proof *Proof) StepReport {
+// exits as declared is then judged by its package durations (SPEC §5.13). The output it returns is
+// what the step's check record reads; a step that did not start returns none.
+func (r *Runner) runStep(ctx context.Context, step GateStep, dir string, proof *Proof) (StepReport, stepOutput) {
 	if err := ctx.Err(); err != nil {
-		return unmeasured(step.ID, "not started: "+err.Error())
+		return unmeasured(step.ID, "not started: "+err.Error()), stepOutput{}
 	}
 	if detail := r.missingNeed(step.ID); detail != "" {
-		return unmeasured(step.ID, detail)
+		return unmeasured(step.ID, detail), stepOutput{}
 	}
 	step, note, err := r.prepare(step, proof)
 	if err != nil {
-		return unmeasured(step.ID, "not started: "+err.Error())
+		return unmeasured(step.ID, "not started: "+err.Error()), stepOutput{}
 	}
 	stream, err := newStepStream(r.Output, step)
 	if err != nil {
-		return unmeasured(step.ID, "not started: "+err.Error())
+		return unmeasured(step.ID, "not started: "+err.Error()), stepOutput{}
 	}
 	roots, err := r.freshRoots(ctx)
 	if err != nil {
-		return unmeasured(step.ID, "not started: fresh roots: "+err.Error())
+		return unmeasured(step.ID, "not started: fresh roots: "+err.Error()), stepOutput{}
 	}
 	var out bytes.Buffer
-	spec := core.ChildSpec{Dir: dir, Env: roots.env(), Stdout: io.MultiWriter(&out, stream), Stderr: stream}
-	code, failed := execStep(ctx, step, spec)
+	var all outputLog
+	spec := core.ChildSpec{Dir: dir, Env: roots.env(), Stdout: io.MultiWriter(&out, &all, stream),
+		Stderr: io.MultiWriter(&all, stream)}
+	started := time.Now()
+	code, killed, failed := execStep(ctx, step, spec)
+	ran := stepOutput{dir: dir, argv: step.Command, stdout: out.Bytes(), all: all.Bytes(),
+		started: failed == nil || killed, killed: killed, duration: time.Since(started)}
 	var report StepReport
 	if failed != nil {
 		report = *failed
@@ -175,7 +186,7 @@ func (r *Runner) runStep(ctx context.Context, step GateStep, dir string, proof *
 	if err := stream.Close(); err != nil {
 		report.Detail = joinDetail(report.Detail, err.Error())
 	}
-	return roots.close(ctx, report)
+	return roots.close(ctx, report), ran
 }
 
 // judgeStep judges a step that exited by its declared exit code, by the output expectations it
@@ -269,16 +280,16 @@ func (r *Runner) missingNeed(id string) string {
 
 // execStep runs step as a process tree under its time limit, with the directory, environment and
 // output of spec, and returns its exit code. A non-nil report is the not_measured result of a step
-// that gave no exit code.
-func execStep(ctx context.Context, step GateStep, spec core.ChildSpec) (int, *StepReport) {
+// that gave no exit code; killed is true when the step was stopped before it exited.
+func execStep(ctx context.Context, step GateStep, spec core.ChildSpec) (int, bool, *StepReport) {
 	if step.TimeoutSeconds > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(step.TimeoutSeconds)*time.Second)
 		defer cancel()
 	}
-	fail := func(detail string) (int, *StepReport) {
+	fail := func(detail string) (int, bool, *StepReport) {
 		report := unmeasured(step.ID, detail)
-		return exitUnknown, &report
+		return exitUnknown, false, &report
 	}
 	spec.Argv = step.Command
 	child, err := core.Start(ctx, spec)
@@ -290,13 +301,14 @@ func execStep(ctx context.Context, step GateStep, spec core.ChildSpec) (int, *St
 		return fail("a leftover process could not be stopped: " + err.Error())
 	}
 	if err := ctx.Err(); err != nil {
-		return fail("stopped before it exited: " + err.Error())
+		report := unmeasured(step.ID, "stopped before it exited: "+err.Error())
+		return exitUnknown, true, &report
 	}
 	code, ok := exitCode(waitErr)
 	if !ok {
 		return fail("no exit code: " + waitErr.Error())
 	}
-	return code, nil
+	return code, false, nil
 }
 
 // judgeDurations judges a test step that exited as declared by the package durations its
