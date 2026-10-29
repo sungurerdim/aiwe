@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -386,6 +387,57 @@ func TestLaneOneOSWaiterPerResource(t *testing.T) {
 	mustRelease(t, leaseOf(t, awaitResult(t, dones[2], laneTestWait)))
 	if p := peakNow(); p > 1 {
 		t.Errorf("%d OS waits ran at once in one lane, want at most 1", p)
+	}
+}
+
+// TestLaneTicketInFluxIsSkipped pins that a neighbour's ticket a waiter cannot read whole, an empty
+// file or one being deleted (Windows then refuses the open with ERROR_ACCESS_DENIED), counts as
+// gone: Acquire succeeds and reports no corrupt ticket.
+func TestLaneTicketInFluxIsSkipped(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		plant   func(t *testing.T, dir, name string)
+		catches string
+	}{
+		{"an empty ticket", func(t *testing.T, dir, name string) {
+			if err := os.WriteFile(filepath.Join(dir, name), nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}, "an empty ticket is read as corrupt and fails every Acquire behind it"},
+		{"a ticket deleted while a reader holds it open", func(t *testing.T, dir, name string) {
+			ticket := `{"pid":` + strconv.Itoa(os.Getpid()) + `,"start":"2026-01-02T03:04:05Z","weight":1,"slot":1}`
+			if err := os.WriteFile(filepath.Join(dir, name), []byte(ticket), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			root, err := os.OpenRoot(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f, err := root.Open(name) // shares delete, so the remove below leaves it delete-pending on Windows
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = f.Close(); _ = root.Close() })
+			if err := os.Remove(filepath.Join(dir, name)); err != nil {
+				t.Fatal(err)
+			}
+		}, "a ticket pending delete is refused with access denied and read as corrupt, so the waiter fails"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Logf("catches: %s", tc.catches)
+			root := t.TempDir()
+			if err := os.MkdirAll(dbLane(root), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			tc.plant(t, dbLane(root), laneSeqName(1, laneTicketExt))
+			ctx, cancel := context.WithTimeout(t.Context(), laneTestWait/4)
+			defer cancel()
+			lease, err := newTestLanes(t, root, 4).Acquire(ctx, dbRequest("alpha", 1))
+			if err != nil {
+				t.Fatalf("Acquire = %v, want a lease past the ticket in flux", err)
+			}
+			mustRelease(t, lease)
+		})
 	}
 }
 
