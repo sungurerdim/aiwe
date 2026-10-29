@@ -128,7 +128,7 @@ func TestCoverIndexStaleFallsBack(t *testing.T) {
 	if err != nil || buildErr != nil {
 		t.Fatalf("LoadCoverIndex(absent), BuildCoverIndex(not measured) = %v, %v, want nil, nil", err, buildErr)
 	}
-	const why = " (the Go files of their package at the base differ from the index)"
+	const why = " (the Go files of their package at the base differ from the ones the index measured)"
 	cases := []struct {
 		name    string
 		idx     CoverIndex
@@ -170,10 +170,12 @@ func TestCoverIndexStaleFallsBack(t *testing.T) {
 
 // TestCoverHashFollowsGoFiles catches a hash that misses a Go file change, a same-length one or a new
 // Go file, one that moves on a non-Go file, a directory with no Go file hashed as a package, a base
-// hash that differs from the work-tree hash of the same files, and a work-tree edit that makes its
-// own package stale, so coverage never selects (DR-2, SPEC L66).
+// hash that differs from the work-tree hash of the same files or reads only the first of two Go
+// files, a CRLF work tree (core.autocrlf) that makes its unchanged LF blob stale, and a work-tree
+// edit that makes its own package stale, so coverage never selects (DR-2, DR-3, SPEC L66).
 func TestCoverHashFollowsGoFiles(t *testing.T) {
-	root := cacheTestRepo(t, map[string]string{"a/a.go": "package a\n\nconst N = 1\n", "a/x.json": "{}", "b/r.json": "{}"})
+	root := cacheTestRepo(t, map[string]string{"a/a.go": "package a\n\nconst N = 1\n",
+		"a/b.go": "package a\n\nconst M = 1\n", "a/x.json": "{}", "b/r.json": "{}"})
 	dirs := []string{"a", "b", "gone"}
 	write := func(name, body string) {
 		if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(name)), []byte(body), 0o600); err != nil {
@@ -192,6 +194,12 @@ func TestCoverHashFollowsGoFiles(t *testing.T) {
 	if err != nil || len(first) != 1 || first["a"] == "" || !reflect.DeepEqual(atBase, first) {
 		t.Fatalf("HashGoDirs() = %v, BaseGoHashes(HEAD) = %v, %v, want one equal hash, for a", first, atBase, err)
 	}
+	write("a/a.go", "package a\r\n\r\nconst N = 1\r\n")
+	crlf := CoverIndex{Hashes: hash(), Files: map[string][]string{"a/a.go": {"./a"}}}
+	if got := crlf.Select([]string{"a/a.go"}, atBase); len(got.Selected) != 1 || got.Selected[0].Kind != "coverage" {
+		t.Errorf("Select(CRLF a/a.go, LF blob at base) = %v, want a coverage selection", got.Selected)
+	}
+	write("a/a.go", "package a\n\nconst N = 1\n")
 	write("a/x.json", `{"k":1}`)
 	if got := hash(); got["a"] != first["a"] {
 		t.Errorf("hash after a non-Go change = %q, want %q", got["a"], first["a"])
