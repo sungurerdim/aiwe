@@ -862,9 +862,10 @@ Source: a re-read of the session transcript, from the owner's DSH task to the la
 - D6. Every wait of an agent on an outside check has a time limit (DR-1), since a wait past the prompt-cache lifetime re-reads the whole context.
 - D7. #596: the caller passes the lease index k through `LaneRequest` (audit B1); lane lock files are never deleted, so the waiter needs no polling (audit B2, lead decision: fewest moving parts, reversible).
 
-### Open, owner only
+### Resolved
 
-- O1. Which DSH profile produced the scores the owner saw (minimal or full)? It decides which arm U0 compares against. U0 also needs the owner to run DSH by hand as the comparison arm.
+- O1 (resolved 2026-10-29 by web research; the owner did not know the profile). The model is DeepSeek-V4.1-Flash-1017, released 2026-10-17 (huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash-1017; vals.ai). The only cross-harness comparison found is Bug Hunt Bench (github.com/phuryn/bug-hunt-bench, third party, max effort, 105 seeded bugs, blind grading): DSH 42.7 (n=7), Pi 42.2 (n=5), Claude Code 39.1 (n=7), OpenCode 37.6 (n=5). The board calls the DSH-over-Claude-Code gap "a lean, not an established difference"; run counts and warnings differ per arm, so the comparison is not controlled, and the DSH profile is not stated. DeepSeek's own code-agent numbers use "the Minimal mode of DeepSeek Harness and a 1M-token context window" (huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash). Decision: U0 compares against DSH Minimal mode, the one documented profile, and treats the harness gap as unproven until U0 measures it. Quotes come from the research agent's file; the lead did not re-fetch them, so confidence is low.
+- U0 still needs one DSH run by hand as its comparison arm.
 
 ### Track A: harness loop (DSH + OpenCode), parent epic + U0-U18
 

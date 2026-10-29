@@ -23,6 +23,7 @@
 ## Live configuration
 
 - Work is still tracked in GitHub issues; the work store under `work/` takes over at the G1 cutover (SPEC L61).
+- Owner, 2026-10-29: ask the owner as little as possible; at a decision point the lead takes the option that fully meets the industry standards and the project's purpose and goals (SPEC §1), and records it. The 28-unit batch is approved to ship.
 - The owner runs up to 10 agents in parallel (2026-10-29; was 3 earlier the same day). Agents run no tests, gates or builds, the lead runs each check in sequence; release, the full gate and CI wait for a batch of 25-30 issues.
 - First work since 2026-10-27 (owner): the test-system goal #587, units #588–#616 plus #522 and #257, in the order phase 0 → 1 → 5 → 4 → 3 → 2 → 6. Its decisions are SPEC §16 L63–L79. Baseline: `docs/evidence/2026-10-27-test-baseline.md`.
 - Owner rules for this goal (2026-10-27): every piece of work has an issue; GitHub Actions is used as little as possible (the repository is private, so minutes are metered); everything sensible runs locally and efficiently.
