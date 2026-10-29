@@ -157,11 +157,11 @@ func laneRecordOf(t *testing.T, lease *LaneLease, label string) LaneRecord {
 func dbLane(root string) string { return filepath.Join(root, laneExclusiveDir, "db") }
 
 func dbRequest(repo string, workers int) LaneRequest {
-	return LaneRequest{Repo: repo, Kind: "unit", Exclusive: []string{"db"}, Workers: workers}
+	return LaneRequest{Repo: repo, Kind: "unit", Exclusive: []string{"db"}, Workers: workers, Slot: 1}
 }
 
 func cpuRequest(repo string, workers int) LaneRequest {
-	return LaneRequest{Repo: repo, Kind: "unit", Workers: workers}
+	return LaneRequest{Repo: repo, Kind: "unit", Workers: workers, Slot: 1}
 }
 
 // TestExclusiveResourceRequestsSerialise pins L63 (2): requests that name one exclusive resource
@@ -207,7 +207,7 @@ func TestExclusiveResourceRequestsSerialise(t *testing.T) {
 }
 
 // TestSeparableChecksRunInParallelWithTheirSlot pins L63 (1): checks with no shared exclusive
-// resource hold their lanes at once, and each gets its own AIWE_SLOT in its env.
+// resource hold their lanes at once, and each runs with the slot its caller leased, in its env.
 func TestSeparableChecksRunInParallelWithTheirSlot(t *testing.T) {
 	for _, tc := range []struct {
 		name          string
@@ -220,15 +220,15 @@ func TestSeparableChecksRunInParallelWithTheirSlot(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Logf("catches: %s", tc.catches)
 			root := t.TempDir()
-			a := mustAcquire(t, newTestLanes(t, root, 4), LaneRequest{Repo: "alpha", Kind: "unit", Exclusive: tc.first, Workers: 1})
+			a := mustAcquire(t, newTestLanes(t, root, 4), LaneRequest{Repo: "alpha", Kind: "unit", Exclusive: tc.first, Workers: 1, Slot: 3})
 			ctx, cancel := context.WithTimeout(t.Context(), laneTestWait/4)
 			defer cancel()
-			b, err := newTestLanes(t, root, 4).Acquire(ctx, LaneRequest{Repo: "beta", Kind: "unit", Exclusive: tc.second, Workers: 1})
+			b, err := newTestLanes(t, root, 4).Acquire(ctx, LaneRequest{Repo: "beta", Kind: "unit", Exclusive: tc.second, Workers: 1, Slot: 5})
 			if err != nil {
 				t.Fatalf("second Acquire while the first holds = %v, want a lease at once", err)
 			}
-			if a.Slot() < 1 || b.Slot() < 1 || a.Slot() == b.Slot() {
-				t.Errorf("slots = %d and %d, want two different slots from 1", a.Slot(), b.Slot())
+			if a.Slot() != 3 || b.Slot() != 5 {
+				t.Errorf("slots = %d and %d, want the 3 and 5 the callers leased, different, from 1", a.Slot(), b.Slot())
 			}
 			for _, lease := range []*LaneLease{a, b} {
 				if want := laneSlotEnv() + "=" + strconv.Itoa(lease.Slot()); !slices.Contains(lease.Env(), want) {
@@ -421,13 +421,13 @@ func TestLaneWaiterPrintsPositionAndJobAhead(t *testing.T) {
 			root := t.TempDir()
 			holder := newTestLanes(t, root, 4)
 			holder.Now = laneTestT0
-			a := mustAcquire(t, holder, LaneRequest{Repo: "alpha", Kind: "unit", Exclusive: []string{"db"}, Workers: 1})
+			a := mustAcquire(t, holder, LaneRequest{Repo: "alpha", Kind: "unit", Exclusive: []string{"db"}, Workers: 1, Slot: 1})
 			var middle <-chan laneResult
 			if tc.ahead == 2 {
 				ml := newLaneLines()
 				m := newTestLanes(t, root, 4)
 				m.Log, m.Now = ml, func() time.Time { return laneTestT0().Add(time.Hour) }
-				middle = goAcquire(t.Context(), m, LaneRequest{Repo: "beta", Kind: "lint", Exclusive: []string{"db"}, Workers: 1})
+				middle = goAcquire(t.Context(), m, LaneRequest{Repo: "beta", Kind: "lint", Exclusive: []string{"db"}, Workers: 1, Slot: 1})
 				ml.next(t, "position 1")
 			}
 			bl := newLaneLines()

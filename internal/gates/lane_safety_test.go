@@ -167,7 +167,7 @@ func TestLaneRefusesOutsidePathParts(t *testing.T) {
 			}
 			l := newTestLanes(t, root, 4)
 			locks := countLocks(l)
-			lease, err := l.Acquire(t.Context(), LaneRequest{Repo: "alpha", Kind: "unit", Exclusive: []string{tc.resource}, Workers: 1})
+			lease, err := l.Acquire(t.Context(), LaneRequest{Repo: "alpha", Kind: "unit", Exclusive: []string{tc.resource}, Workers: 1, Slot: 1})
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("Acquire = %v, want an error: %v", err, tc.wantErr)
 			}
@@ -235,9 +235,9 @@ func TestLaneLockFileSwapIsRefused(t *testing.T) {
 }
 
 // TestLaneLockFileCannotBeDeletedWhileHeld pins N1 (security-591): Windows opens the lock file
-// without FILE_SHARE_DELETE, so it cannot be removed or replaced while open, and the lane copes:
-// a release whose delete Windows refuses still succeeds, and the last one to close the file
-// removes it.
+// without FILE_SHARE_DELETE, so it cannot be removed or replaced while open. The lane never
+// deletes a lock file (B2 of audit-596-r2), so a release beside a waiter that holds the file open
+// has nothing to delete and succeeds; only the tickets go.
 func TestLaneLockFileCannotBeDeletedWhileHeld(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
@@ -247,7 +247,7 @@ func TestLaneLockFileCannotBeDeletedWhileHeld(t *testing.T) {
 		{"a held alive file cannot be removed or replaced", true,
 			"the lock file is opened with FILE_SHARE_DELETE, so it can be removed and a second holder takes a new file"},
 		{"a release while a waiter holds the file open", false,
-			"a release fails, or leaves lock files behind, when Windows refuses to delete a file a waiter holds open"},
+			"a release fails, or leaves a ticket behind, when a waiter holds a lock file of the lane open"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Logf("catches: %s", tc.catches)
@@ -279,7 +279,7 @@ func TestLaneLockFileCannotBeDeletedWhileHeld(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, e := range entries {
-				if e.Name() != laneMutexName {
+				if strings.HasSuffix(e.Name(), laneTicketExt) || strings.HasSuffix(e.Name(), laneTempExt) {
 					t.Errorf("the lane still holds %q after every lease ended", e.Name())
 				}
 			}
@@ -288,8 +288,8 @@ func TestLaneLockFileCannotBeDeletedWhileHeld(t *testing.T) {
 }
 
 // TestLaneReleaseClosesLockHandles pins N2 (security-591): a release closes every lock file handle
-// it opened. On Windows a handle left open makes the delete of its file fail; on Linux the open
-// descriptors of the process grow.
+// it opened. A handle left open makes the removal of its file fail on Windows (the test removes
+// every file left); on Linux the open descriptors of the process grow.
 func TestLaneReleaseClosesLockHandles(t *testing.T) {
 	t.Run("every lane file can be removed after a release", func(t *testing.T) {
 		t.Log("catches: a release leaves a lock file handle open, so Windows refuses its delete and the handle keeps the lock")
@@ -299,7 +299,7 @@ func TestLaneReleaseClosesLockHandles(t *testing.T) {
 			if err != nil || d.IsDir() {
 				return err
 			}
-			if d.Name() != laneMutexName {
+			if strings.HasSuffix(d.Name(), laneTicketExt) || strings.HasSuffix(d.Name(), laneTempExt) {
 				t.Errorf("%s is left after the release", p)
 			}
 			return os.Remove(p)
@@ -391,8 +391,8 @@ func TestLaneOneOSWaiterPerResource(t *testing.T) {
 }
 
 // TestLaneFileInFlux pins Q1 and F1 of audit-596 (DR-6, STD-11): an empty or unreadable ticket of a
-// live holder (seq 1) keeps its place and slot until its alive lock is got, and a permission error
-// at the open of a lock ahead (Windows: pending delete) is retried until the bound; others fail.
+// live holder (seq 1) keeps its place until its alive lock is got, and an error at the open of a lock
+// ahead, a permission one too, fails Acquire at once with no retry (B2 of audit-596-r2: no deletes).
 func TestLaneFileInFlux(t *testing.T) {
 	for _, tc := range []struct {
 		name, ticket, lock string // ticket 1: "emptied" or "refused" (each read) under the holder, or "ownerless" and empty
@@ -406,19 +406,19 @@ func TestLaneFileInFlux(t *testing.T) {
 		{"a refused ticket in a resource lane", "refused", "", false, 0, nil, context.DeadlineExceeded,
 			"a ticket read refused with a permission error is skipped, so a lane of capacity 1 gets a second holder"},
 		{"an emptied ticket in the cpu lane", "emptied", "", true, 0, nil, context.DeadlineExceeded,
-			"an empty ticket of a live holder is skipped, so its slot goes to a second check"},
+			"an empty ticket of a live holder is skipped, so the cpu lane admits a second check beside a full pool"},
 		{"a refused ticket in the cpu lane", "refused", "", true, 0, nil, context.DeadlineExceeded,
-			"a ticket read refused with a permission error is skipped, so its slot goes to a second check"},
+			"a ticket read refused with a permission error is skipped, so the cpu lane admits a second check beside a full pool"},
 		{"an empty ticket of no owner", "ownerless", "", false, 0, nil, nil,
 			"an empty ticket of no owner is read as corrupt, or holds the lane for good once its alive lock is free"},
-		{"the alive lock ahead refused once", "", laneSeqName(1, laneAliveExt), false, 1, fs.ErrPermission, context.DeadlineExceeded,
-			"a waiter fails Acquire with access denied when the alive file of the ticket ahead is pending delete"},
-		{"the wait lock ahead refused once", "", laneSeqName(1, laneWaitExt), false, 1, fs.ErrPermission, context.DeadlineExceeded,
-			"a waiter fails Acquire with access denied when the wait file of the ticket ahead is pending delete"},
-		{"the alive lock ahead refused for good", "", laneSeqName(1, laneAliveExt), false, 1 << 20, fs.ErrPermission, context.DeadlineExceeded,
-			"a lock file refused for good fails Acquire at once, or is retried past the waiter's bound"},
+		{"the alive lock ahead refused once", "", laneSeqName(1, laneAliveExt), false, 1, fs.ErrPermission, fs.ErrPermission,
+			"a permission error at the alive file of the ticket ahead is retried on a timer instead of failing closed"},
+		{"the wait lock ahead refused once", "", laneSeqName(1, laneWaitExt), false, 1, fs.ErrPermission, fs.ErrPermission,
+			"a permission error at the wait file of the ticket ahead is retried on a timer instead of failing closed"},
+		{"the alive lock ahead refused for good", "", laneSeqName(1, laneAliveExt), false, 1 << 20, fs.ErrPermission, fs.ErrPermission,
+			"a lock file refused for good is retried until the waiter's bound, a busy wait"},
 		{"the alive lock ahead refused with another error", "", laneSeqName(1, laneAliveExt), false, 1, fs.ErrInvalid, fs.ErrInvalid,
-			"the retry swallows every open error, so a broken lock file is waited on until MaxWait"},
+			"a retry swallows an open error, so a broken lock file is waited on until MaxWait"},
 		{"the request's own alive lock refused", "", laneSeqName(2, laneAliveExt), false, 1, fs.ErrPermission, fs.ErrPermission,
 			"a retry on the request's own lock file hides a lane it cannot write and waits out MaxWait"},
 	} {
@@ -461,8 +461,8 @@ func TestLaneFileInFlux(t *testing.T) {
 				t.Errorf("Acquire = a lease in slot %d beside the holder in slot %d, want %v", lease.Slot(), holder.Slot(), tc.want)
 			case !errors.Is(err, tc.want) || !errors.Is(tc.want, context.DeadlineExceeded) && errors.Is(err, context.DeadlineExceeded):
 				t.Errorf("Acquire = %v, want %v", err, tc.want)
-			case opens.Load() == 0 && tc.refusals > 0:
-				t.Errorf("Acquire opened no %s, so the row tests nothing", tc.lock)
+			case tc.refusals > 0 && opens.Load() != 1:
+				t.Errorf("Acquire opened %s %d times, want once: a refused open is not retried, and the row must open it", tc.lock, opens.Load())
 			}
 			if err == nil {
 				mustRelease(t, lease)
