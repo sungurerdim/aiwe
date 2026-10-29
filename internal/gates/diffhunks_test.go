@@ -53,10 +53,10 @@ func TestParseDiffHunks(t *testing.T) {
 		{"a pure deletion in a kept file gives no range",
 			"diff --git a/a.go b/a.go\n--- a/a.go\n+++ b/a.go\n@@ -5,2 +4,0 @@\n-a\n-b\n",
 			DiffHunks{}},
-		{"an added line that reads as a file header forges no file",
+		{"an added line that reads as a file header forges no file for the next hunk",
 			"diff --git a/a.go b/a.go\n--- a/a.go\n+++ b/a.go\n@@ -0,0 +1,3 @@\n+x\n+++ b/evil.go\n" +
-				"+@@ -0,0 +9,9 @@\n",
-			DiffHunks{"a.go": {{1, 3}}}},
+				"+@@ -0,0 +9,9 @@\n@@ -5,0 +10 @@\n+y\n",
+			DiffHunks{"a.go": {{1, 3}, {10, 10}}}},
 		{"a removed line that reads as a file header forges no file",
 			"diff --git a/a.go b/a.go\n--- a/a.go\n+++ b/a.go\n@@ -4,2 +4 @@\n--- a/evil.go\n-y\n+z\n",
 			DiffHunks{"a.go": {{4, 4}}}},
@@ -88,8 +88,9 @@ func TestParseDiffHunks(t *testing.T) {
 	}
 }
 
-// TestReadDiffHunks catches a reader that counts from a ref other than the run's base commit, that
-// accepts a HEAD~n base (DR-9), or that reads hunks from anything but Git's own output.
+// TestReadDiffHunks catches a reader that counts from a ref other than the run's base commit,
+// that accepts a base that is not a commit id (DR-9), or that reads hunks from anything but
+// Git's own output.
 func TestReadDiffHunks(t *testing.T) {
 	dir := cacheTestRepo(t, map[string]string{"a.go": "one\ntwo\nthree\n"})
 	base := cacheTestGit(t, dir, "", "rev-parse", "HEAD")
@@ -104,7 +105,7 @@ func TestReadDiffHunks(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("ReadDiffHunks = %v, want %v", got, want)
 	}
-	for _, bad := range []string{"", "-p", "HEAD~1", "HEAD^", base + "~1"} {
+	for _, bad := range []string{"", "-p", "HEAD~1", "HEAD^", base + "~1", "HEAD", "main", "HEAD@{1}"} {
 		if _, err := ReadDiffHunks(t.Context(), dir, bad, tip); err == nil {
 			t.Errorf("ReadDiffHunks with base %q succeeded, want a refusal", bad)
 		}
