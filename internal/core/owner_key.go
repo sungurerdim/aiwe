@@ -20,10 +20,8 @@ import (
 	"time"
 )
 
-// LedgerFile is the name of the ledger file in the state root (SPEC §8.5), the one owner of the name.
-const LedgerFile = "ledger.jsonl"
-
 const (
+	LedgerFile         = "ledger.jsonl" // the ledger in the state root (SPEC §8.5), the one owner of the name
 	ownerKeyFile       = "owner.key"
 	ledgerPrefix       = "ledger."
 	rotationSuffix     = ".jsonl.gz"
