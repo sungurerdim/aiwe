@@ -28,11 +28,13 @@ type laneDir struct {
 
 // laneWaiter is the one request of l that may wait in the OS locks of one lane: it holds the
 // lane's gate. passed means a cancel abandoned an OS wait, which holds the gate now and frees it
-// when the OS call returns, so no second request of l starts an OS wait there before (L78).
+// when the OS call returns, so no second request of l starts an OS wait there before (L78). gone
+// holds each ticket it cannot read whose alive lock it got: that owner ended or died.
 type laneWaiter struct {
 	laneDir
 	gate   chan struct{}
 	passed bool
+	gone   map[uint64]bool
 }
 
 // laneHold is one ticket of a request and the locks its owner holds; wait is nil once it started.
@@ -51,7 +53,7 @@ func (l *Lanes) take(ctx context.Context, s laneSpec, t laneTicket) (*laneHold, 
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
-	w := &laneWaiter{laneDir: laneDir{lanes: l, spec: s, path: filepath.Join(l.Root, s.dir)}, gate: gate}
+	w := &laneWaiter{laneDir: laneDir{lanes: l, spec: s, path: filepath.Join(l.Root, s.dir)}, gate: gate, gone: map[uint64]bool{}}
 	defer func() {
 		if !w.passed {
 			<-gate
@@ -74,40 +76,53 @@ func (l *Lanes) take(ctx context.Context, s laneSpec, t laneTicket) (*laneHold, 
 }
 
 // enqueue numbers t under the lane lock, takes its wait and alive locks, then writes its ticket,
-// so no ticket is ever seen without its owner's locks.
+// so no ticket is ever seen without its owner's locks. A ticket number cannot read holds a slot it
+// cannot see: enqueue then waits on that ticket's alive lock, outside the lane lock, and numbers
+// again, so no slot is handed out twice.
 func (w *laneWaiter) enqueue(ctx context.Context, t laneTicket) (*laneHold, error) {
 	if err := makeLaneDir(w.lanes.Root, w.spec.dir); err != nil {
 		return nil, err
 	}
-	mutex, err := w.lockMutex(ctx)
-	if err != nil {
-		return nil, err
-	}
-	h, err := w.number(ctx, t)
-	if rerr := mutex.Release(); rerr != nil {
-		err = errors.Join(err, rerr)
-		if h != nil {
-			err, h = errors.Join(err, h.end()), nil
+	for {
+		mutex, err := w.lockMutex(ctx)
+		if err != nil {
+			return nil, err
+		}
+		h, unread, err := w.number(ctx, t)
+		if rerr := mutex.Release(); rerr != nil {
+			err = errors.Join(err, rerr)
+			if h != nil {
+				err, h = errors.Join(err, h.end()), nil
+			}
+		}
+		if err != nil || unread == 0 {
+			return h, err
+		}
+		if err := w.await(ctx, laneWait{seq: unread, ext: laneAliveExt}, nil); err != nil {
+			return nil, err
 		}
 	}
-	return h, err
 }
 
 // number gives t the next seq and, in the CPU lane, the lowest free slot, then takes its locks
-// and writes its ticket. It runs under the lane lock.
-func (w *laneWaiter) number(ctx context.Context, t laneTicket) (*laneHold, error) {
+// and writes its ticket. It runs under the lane lock. In the CPU lane a ticket it cannot read
+// leaves t unnumbered: number returns that ticket's seq instead (seqs start at 1).
+func (w *laneWaiter) number(ctx context.Context, t laneTicket) (*laneHold, uint64, error) {
 	names, err := laneNames(w.path)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	seq, ok := laneNextSeq(names)
 	if !ok {
-		return nil, laneError("a free ticket number", "every number used in "+w.path, "remove the lane directory while no check runs")
+		return nil, 0, laneError("a free ticket number", "every number used in "+w.path, "remove the lane directory while no check runs")
 	}
 	if w.spec.slots {
 		all, err := w.tickets(names, seq)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
+		}
+		if i := slices.IndexFunc(all, func(a laneTicket) bool { return a.unread }); i >= 0 {
+			return nil, all[i].seq, nil
 		}
 		t.Slot = laneFreeSlot(all)
 	}
@@ -116,14 +131,14 @@ func (w *laneWaiter) number(ctx context.Context, t laneTicket) (*laneHold, error
 	for ext, fl := range map[string]**core.FileLock{laneWaitExt: &h.wait, laneAliveExt: &h.alive} {
 		got := w.lockAt(ctx, filepath.Join(w.path, laneSeqName(seq, ext)), nil) // a new file: free at once
 		if got.err != nil {
-			return nil, errors.Join(got.err, h.end())
+			return nil, 0, errors.Join(got.err, h.end())
 		}
 		*fl = got.fl
 	}
 	if err := w.writeTicket(t); err != nil {
-		return nil, errors.Join(err, h.end())
+		return nil, 0, errors.Join(err, h.end())
 	}
-	return h, nil
+	return h, 0, nil
 }
 
 // serve waits until the lane admits h, printing each new position, and drops dead owners on its way.
@@ -152,44 +167,14 @@ func (w *laneWaiter) serve(ctx context.Context, h *laneHold) error {
 	}
 }
 
-// await blocks on the lock next names and frees it at once: getting it shows that its owner
-// started (wait) or ended (alive). An alive lock got while the ticket is still there means its
-// owner died; when that owner still runs and the path names the file the open saw, the lock file
-// was replaced under a live owner (A3), and the request is refused rather than run beside it.
-func (w *laneWaiter) await(ctx context.Context, next laneWait, started map[uint64]bool) error {
-	tidy := func() { w.tidy(next.seq, next.ext) }
-	got := w.lockAt(ctx, filepath.Join(w.path, laneSeqName(next.seq, next.ext)), tidy)
-	if got.err != nil {
-		return got.err
-	}
-	if err := got.fl.Release(); err != nil {
-		return err
-	}
-	if next.ext == laneWaitExt {
-		started[next.seq] = true
-		tidy()
-		return nil
-	}
-	t, present, err := w.readTicket(next.seq)
-	switch {
-	case err != nil:
-		return err
-	case !present:
-		tidy()
-	case !core.OwnerAlive(t.owner()):
-		return w.dropDead(t)
-	case got.same():
-		return laneError("the alive lock of a live owner held", fmt.Sprintf("ticket %d of pid %d with its lock free", t.seq, t.PID), laneReplaced)
-	}
-	return nil
-}
-
 // tickets returns the live tickets below seq in seq order, read from names or, when names is nil,
-// from a fresh listing. A ticket whose owner no longer runs is dropped and logged on the way.
-func (d laneDir) tickets(names []string, below uint64) ([]laneTicket, error) {
+// from a fresh listing. A ticket whose owner no longer runs is dropped and logged on the way. A
+// ticket it cannot read stays in line as a placeholder that holds the whole lane, until w got its
+// alive lock (DR-6: a read that failed once is no proof the ticket is gone).
+func (w *laneWaiter) tickets(names []string, below uint64) ([]laneTicket, error) {
 	var err error
 	if names == nil {
-		if names, err = laneNames(d.path); err != nil {
+		if names, err = laneNames(w.path); err != nil {
 			return nil, err
 		}
 	}
@@ -199,13 +184,17 @@ func (d laneDir) tickets(names []string, below uint64) ([]laneTicket, error) {
 		if !ok || ext != laneTicketExt || seq >= below {
 			continue
 		}
-		t, present, err := d.readTicket(seq)
+		t, present, err := w.readTicket(seq)
 		switch {
 		case err != nil:
 			return nil, err
-		case present && !core.OwnerAlive(t.owner()):
-			err = d.dropDead(t)
-		case present:
+		case !present || t.unread && w.gone[seq]: // gone
+		case t.unread:
+			t.Weight = w.spec.capacity
+			out = append(out, t)
+		case !core.OwnerAlive(t.owner()):
+			err = w.dropDead(t)
+		default:
 			out = append(out, t)
 		}
 		if err != nil {
@@ -216,15 +205,18 @@ func (d laneDir) tickets(names []string, below uint64) ([]laneTicket, error) {
 	return out, nil
 }
 
-// readTicket reads ticket seq. present is false when the ticket is gone or in flux: absent, empty,
-// or refused with a permission error, which is what Windows answers for a ticket pending delete
-// while a reader holds it. The writer renames a whole ticket into place, so only a complete ticket
-// that does not parse is corrupt.
+// readTicket reads ticket seq; present is false only when it is absent. A ticket that is there but
+// empty or refused with a permission error, which is what Windows answers for a ticket pending
+// delete while a reader holds it, comes back as a placeholder with unread set. The writer renames
+// a whole ticket into place, so only a complete ticket that does not parse is corrupt.
 func (d laneDir) readTicket(seq uint64) (laneTicket, bool, error) {
 	name := laneSeqName(seq, laneTicketExt)
 	b, err := d.lanes.readTicketFile(d.path, name)
-	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, fs.ErrPermission) || err == nil && len(b) == 0 {
+	if errors.Is(err, fs.ErrNotExist) {
 		return laneTicket{}, false, nil
+	}
+	if errors.Is(err, fs.ErrPermission) || err == nil && len(b) == 0 {
+		return laneTicket{seq: seq, unread: true}, true, nil
 	}
 	var t laneTicket
 	if err == nil {
@@ -295,12 +287,13 @@ func (d laneDir) dropDead(t laneTicket) error {
 }
 
 // tidy removes the lock file ext of seq once nothing needs it: a wait file always, as it is got
-// only after its owner started; an alive file only when its ticket is gone. A failed remove is
-// left to the next one to close the file: Windows refuses to delete a file another handle holds
-// open, as the lock opens it without FILE_SHARE_DELETE (N1).
+// only after its owner started; an alive file only when its ticket is gone or cannot be read, as
+// tidy runs only after the alive lock was got or its owner freed it. A failed remove is left to
+// the next one to close the file: Windows refuses to delete a file another handle holds open, as
+// the lock opens it without FILE_SHARE_DELETE (N1).
 func (d laneDir) tidy(seq uint64, ext string) {
 	if ext == laneAliveExt {
-		if _, present, err := d.readTicket(seq); err != nil || present {
+		if t, present, err := d.readTicket(seq); err != nil || present && !t.unread {
 			return
 		}
 	}

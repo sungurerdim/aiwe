@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"time"
 
 	"github.com/sungurerdim/aiwe/internal/core"
 )
@@ -50,6 +51,60 @@ func (w *laneWaiter) lockMutex(ctx context.Context) (*core.FileLock, error) {
 		}
 	}
 	return nil, laneError("one lane lock file", "a new file at "+p+" at each open", laneReplaced)
+}
+
+// await blocks on the lock next names and frees it at once: getting it shows that its owner
+// started (wait) or ended (alive). An alive lock got while the ticket is still there means its
+// owner died; when that owner still runs and the path names the file the open saw, the lock file
+// was replaced under a live owner (A3), and the request is refused rather than run beside it. An
+// alive lock got while the ticket cannot be read marks it gone: a live owner would hold the lock.
+// A permission error at the open is what Windows answers for a lock file pending delete: its
+// owner moved on, so await pauses and the caller looks again, until ctx ends.
+func (w *laneWaiter) await(ctx context.Context, next laneWait, started map[uint64]bool) error {
+	tidy := func() { w.tidy(next.seq, next.ext) }
+	got := w.lockAt(ctx, filepath.Join(w.path, laneSeqName(next.seq, next.ext)), tidy)
+	if errors.Is(got.err, fs.ErrPermission) {
+		return lanePause(ctx, got.err)
+	}
+	if got.err != nil {
+		return got.err
+	}
+	if err := got.fl.Release(); err != nil {
+		return err
+	}
+	if next.ext == laneWaitExt {
+		started[next.seq] = true
+		tidy()
+		return nil
+	}
+	t, present, err := w.readTicket(next.seq)
+	switch {
+	case err != nil:
+		return err
+	case !present:
+		tidy()
+	case t.unread:
+		w.gone[next.seq] = true
+		tidy()
+	case !core.OwnerAlive(t.owner()):
+		return w.dropDead(t)
+	case got.same():
+		return laneError("the alive lock of a live owner held", fmt.Sprintf("ticket %d of pid %d with its lock free", t.seq, t.PID), laneReplaced)
+	}
+	return nil
+}
+
+// lanePause waits laneFluxPause before a waiter looks again at a lock file in flux. When ctx ends
+// first it returns ctx's error joined with why, so a file refused for good is named.
+func lanePause(ctx context.Context, why error) error {
+	timer := time.NewTimer(laneFluxPause)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return errors.Join(ctx.Err(), why)
+	}
 }
 
 // lockAt takes the OS lock on p. It refuses a p that is a link or not a regular file, before the

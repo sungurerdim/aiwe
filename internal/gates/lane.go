@@ -21,13 +21,14 @@ import (
 // Resource lanes and CPU tickets (#596, SPEC §7.8, L63, L78). A check queues in the lane of each
 // exclusive resource it names and in the CPU lane for as many tickets as its workers. A lane is a
 // directory of ticket files served first in, first out; a request waits only in blocking OS locks
-// (core.AcquireFileLock), never by polling. This file decides; lane_io.go does the IO (STD-10).
+// (core.AcquireFileLock), polling only a lock file pending delete; lane_io.go does the IO (STD-10).
 //
 // The owner of ticket <seq>.ticket holds two OS locks: <seq>.wait while it queues and <seq>.alive
 // until it ends. A request blocks on the wait lock of the ticket just ahead, so none overtakes one
 // queued before it, then, while the tickets ahead leave too little capacity, on the alive lock of
 // the oldest. The OS frees both locks when an owner dies; a ticket whose owner no longer runs is
-// dropped and logged. lane.lock serialises only the numbering of new tickets.
+// dropped and logged; one that cannot be read holds its place until its alive lock is got (DR-6).
+// lane.lock serialises only the numbering of new tickets.
 
 const (
 	laneCPUDir       = "cpu"
@@ -41,8 +42,9 @@ const (
 	laneSeqDigits    = 20
 	laneTokenSep     = ":"
 	laneTokenParts   = 3
-	laneMaxPool      = 1 << 20 // far above any core count; it keeps the ticket sums in range
-	laneTicketMax    = 4096    // bytes; a ticket is far smaller
+	laneMaxPool      = 1 << 20               // far above any core count; it keeps the ticket sums in range
+	laneTicketMax    = 4096                  // bytes; a ticket is far smaller
+	laneFluxPause    = 10 * time.Millisecond // before a waiter looks again at a lock file pending delete
 )
 
 // laneNamePattern is the form of a resource name, which becomes a directory name: no separator,
@@ -123,7 +125,8 @@ type laneSpec struct {
 	slots            bool
 }
 
-// laneTicket is the content of one ticket file; seq comes from its file name.
+// laneTicket is the content of one ticket file; seq comes from its file name. unread marks the
+// placeholder of a ticket that is there but empty or refused: only its seq is known.
 type laneTicket struct {
 	PID     int       `json:"pid"`
 	Start   time.Time `json:"start"`
@@ -134,6 +137,7 @@ type laneTicket struct {
 	Weight  int       `json:"weight"`
 	Slot    int       `json:"slot"`
 	seq     uint64
+	unread  bool
 }
 
 func (t laneTicket) owner() core.ProcessID { return core.ProcessFrom(t.PID, t.Start, t.StartID) }
@@ -286,6 +290,9 @@ func laneStep(ahead []laneTicket, started map[uint64]bool, weight, capacity int)
 // and kind are quoted, so a name cannot fake a second line.
 func laneWaitLine(label string, ahead []laneTicket) string {
 	t := ahead[len(ahead)-1]
+	if t.unread {
+		return fmt.Sprintf("lane %s: position %d, behind ticket %d, which cannot be read\n", label, len(ahead), t.seq)
+	}
 	return fmt.Sprintf("lane %s: position %d, behind repo %q kind %q since %s\n", label, len(ahead), t.Repo, t.Kind,
 		t.Since.UTC().Format(time.RFC3339Nano))
 }
