@@ -2,18 +2,21 @@ package gates
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -295,9 +298,95 @@ func hashGoDir(root *os.Root, dir string) (sum string, ok bool, err error) {
 		if readErr != nil {
 			return "", false, readErr
 		}
-		_, _ = fmt.Fprintf(h, "%s %d\n", e.Name(), len(data))
-		_, _ = h.Write(data)
+		goFileSum(h, e.Name(), data)
 		ok = true
 	}
 	return hex.EncodeToString(h.Sum(nil)), ok, nil
+}
+
+// goFileSum adds one Go file to the hash of its package: its name, its length and its bytes. The
+// work tree (hashGoDir) and the base commit (BaseGoHashes) both hash through it, so the same files
+// give the same hash.
+func goFileSum(h hash.Hash, name string, data []byte) {
+	_, _ = fmt.Fprintf(h, "%s %d\n", name, len(data))
+	_, _ = h.Write(data)
+}
+
+// baseGoFile is one Go file of a package at the base commit.
+type baseGoFile struct {
+	dir, name string
+	data      []byte
+}
+
+// BaseGoHashes returns the content hash of the Go files of each of dirs, slash directories relative
+// to the repository root, at the commit base of the repository in repo: the hash HashGoDirs gives
+// the same files in a work tree (DR-2). One `git ls-tree` lists the tree and one `git cat-file
+// --batch` reads the blobs (K31). A directory with no Go file at the base gets no entry; a link or
+// a submodule is no Go file, as in HashGoDirs.
+func BaseGoHashes(ctx context.Context, repo, base string, dirs []string) (map[string]string, error) {
+	if base == "" || strings.HasPrefix(base, "-") || strings.ContainsAny(base, "\r\n") {
+		return nil, coverError("a base commit", fmt.Sprintf("the base %q", base), nil)
+	}
+	tree, err := core.Git(ctx, repo, "ls-tree", "-r", "-z", "--full-tree", base)
+	if err != nil {
+		return nil, err
+	}
+	var files []baseGoFile
+	var request strings.Builder
+	for _, entry := range strings.Split(tree.Stdout, "\x00") {
+		meta, name, ok := strings.Cut(entry, "\t")
+		f := strings.Fields(meta)
+		if !ok || len(f) != 3 || f[1] != "blob" || (f[0] != "100644" && f[0] != "100755") ||
+			!strings.HasSuffix(name, ".go") || !slices.Contains(dirs, path.Dir(name)) {
+			continue
+		}
+		files = append(files, baseGoFile{dir: path.Dir(name), name: path.Base(name)})
+		request.WriteString(f[2] + "\n")
+	}
+	if len(files) == 0 {
+		return map[string]string{}, nil
+	}
+	blobs, err := core.GitInput(ctx, repo, request.String(), "cat-file", "--batch")
+	if err != nil {
+		return nil, err
+	}
+	rest := blobs.Stdout
+	for i := range files {
+		if files[i].data, rest, err = nextBlob(rest); err != nil {
+			return nil, coverError("the Go blobs of "+base, err.Error(), err)
+		}
+	}
+	return sumByDir(files), nil
+}
+
+// nextBlob reads one answer of `cat-file --batch`, `<oid> blob <size>`, the bytes and a newline,
+// and returns the bytes and the rest of the output. Any other answer is an error (DR-6).
+func nextBlob(out string) (data []byte, rest string, err error) {
+	header, tail, _ := strings.Cut(out, "\n")
+	f := strings.Fields(header)
+	if len(f) != 3 || f[1] != "blob" {
+		return nil, "", fmt.Errorf("the answer %q is not a blob", header)
+	}
+	size, err := strconv.Atoi(f[2])
+	if err != nil || size < 0 || size > coverReadMax || size >= len(tail) || tail[size] != '\n' {
+		return nil, "", fmt.Errorf("the blob %s does not hold its %s bytes", f[0], f[2])
+	}
+	return []byte(tail[:size]), tail[size+1:], nil
+}
+
+// sumByDir hashes the files of each directory in name order through goFileSum.
+func sumByDir(files []baseGoFile) map[string]string {
+	slices.SortFunc(files, func(a, b baseGoFile) int {
+		return cmp.Or(strings.Compare(a.dir, b.dir), strings.Compare(a.name, b.name))
+	})
+	sums := map[string]string{}
+	for start := 0; start < len(files); {
+		h, end := sha256.New(), start
+		for ; end < len(files) && files[end].dir == files[start].dir; end++ {
+			goFileSum(h, files[end].name, files[end].data)
+		}
+		sums[files[start].dir] = hex.EncodeToString(h.Sum(nil))
+		start = end
+	}
+	return sums
 }

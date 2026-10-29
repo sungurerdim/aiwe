@@ -22,7 +22,7 @@ const (
 	coverKind = SelectorCoverage
 	staleKind = "stale"
 	// coverFullSelection is the full test selection the test step runs without the index: every
-	// package of the module, the suite of the module (SPEC L69). isFullGoTest reads the same one.
+	// package of the module, the suite of a file in no Go package (SPEC L69). isFullGoTest reads it.
 	coverFullSelection = "./..."
 )
 
@@ -33,10 +33,10 @@ type CoverIndex struct {
 	FormatVersion int       `json:"formatVersion"`
 	Built         time.Time `json:"built"`
 	// Hashes maps the slash directory of each package of the module to the content hash of its Go
-	// files when the index was built. An entry is fresh while the hash of its package is unchanged.
+	// files when the index was built. An entry is fresh while its package at the base has that hash.
 	Hashes map[string]string `json:"hashes"`
 	// NotMeasured lists the test packages, spelled as Files spells them, whose coverage run wrote no
-	// profile. Such a package may cover any file, so the index selects nothing by coverage (DR-6).
+	// profile. Such a package may cover any file, so the index knows no file (DR-6).
 	NotMeasured []string `json:"notMeasured,omitempty"`
 	// Files maps a slash file path relative to the repository root to its test packages, each
 	// `./<dir>` or `.`, sorted and free of duplicates (the spelling of declaredDeps tests).
@@ -142,31 +142,37 @@ func profileBlock(line string) (name string, count int, err error) {
 	return line[:colon], count, nil
 }
 
-// stale reports whether the entry of file f is stale against current, the content hash of the Go
-// files of each package now: its package's hash differs from the one stored with the index, or one
-// side has no package there. A file in a directory that is a Go package on neither side has no
-// entry and is not stale (DR-2).
-func (idx CoverIndex) stale(f string, current map[string]string) bool {
+// stale reports whether the entry of file f is stale against atBase, the content hash of the Go
+// files of each package at the run's base commit (BaseGoHashes): the package's hash at the base
+// differs from the one stored with the index, or one side has no package there. The work tree is
+// never compared: its change is the diff that selects tests. A file in a directory that is a Go
+// package on neither side has no entry and is not stale (DR-2).
+func (idx CoverIndex) stale(f string, atBase map[string]string) bool {
 	dir := path.Dir(f)
-	now, isPkg := current[dir]
 	then, wasPkg := idx.Hashes[dir]
-	return isPkg != wasPkg || now != then
+	base, isPkg := atBase[dir]
+	return isPkg != wasPkg || base != then
 }
 
 // Select returns the test packages the changed files, slash paths relative to the repository root,
-// affect; current is the content hash of the Go files of each package now (HashGoDirs). A fresh
-// entry gives a file the packages that covered it. A stale entry, and any file of a package while a
-// test package is not measured, says "stale" and takes the full selection the test step runs
-// without the index; it never selects a directory, which may be no Go package (SPEC L66, L69,
-// DR-6). It does no IO.
-func (idx CoverIndex) Select(changed []string, current map[string]string) CoverSelectResult {
+// affect; atBase is the content hash of the Go files of each package at the run's base commit. A
+// fresh entry gives a file the packages that covered it. A stale entry says "stale" and takes the
+// suite of its package when that package exists at the base, else the full selection the test step
+// runs without the index; it never selects a directory that is no Go package (SPEC L66, L69). While
+// a test package is not measured the index knows no file: every file is unmapped (DR-6). It does
+// no IO.
+func (idx CoverIndex) Select(changed []string, atBase map[string]string) CoverSelectResult {
 	var res CoverSelectResult
 	byKey := map[[2]string][]string{}
 	for _, f := range cleanChanged(changed) {
-		_, inPkg := current[path.Dir(f)]
 		switch pkgs := idx.Files[f]; {
-		case idx.stale(f, current) || (inPkg && len(idx.NotMeasured) > 0):
+		case len(idx.NotMeasured) > 0:
+			res.Unmapped = append(res.Unmapped, f)
+		case idx.stale(f, atBase):
 			key := [2]string{coverFullSelection, staleKind}
+			if _, isPkg := atBase[path.Dir(f)]; isPkg {
+				key[0] = testDir(path.Dir(f))
+			}
 			byKey[key] = append(byKey[key], f)
 		case len(pkgs) == 0:
 			res.Unmapped = append(res.Unmapped, f)
@@ -182,19 +188,16 @@ func (idx CoverIndex) Select(changed []string, current map[string]string) CoverS
 	})
 	for _, k := range keys {
 		res.Selected = append(res.Selected, CoverSelection{Package: k[0], Kind: k[1],
-			Reason: idx.reason(k, byKey[k])})
+			Reason: coverReason(k, byKey[k])})
 	}
 	return res
 }
 
-// reason is the text of a selection of package key[0] by the files that changed.
-func (idx CoverIndex) reason(key [2]string, files []string) string {
+// coverReason is the text of a selection of package key[0] by the files that changed.
+func coverReason(key [2]string, files []string) string {
 	list := strings.Join(files, ", ")
-	switch {
-	case key[1] == staleKind && len(idx.NotMeasured) > 0:
-		return fmt.Sprintf("stale: %s (coverage of %s not_measured)", list, strings.Join(idx.NotMeasured, ", "))
-	case key[1] == staleKind:
-		return "stale: " + list + " (the Go files of their package differ from the index)"
+	if key[1] == staleKind {
+		return "stale: " + list + " (the Go files of their package at the base differ from the index)"
 	}
 	return "coverage: " + list + " covered by " + key[0]
 }
