@@ -2,6 +2,7 @@ package gates
 
 import (
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -35,7 +36,8 @@ func TestLaneLockFilesPersist(t *testing.T) {
 }
 
 // TestLaneLogsAnOwnerlessEmptyTicket pins the low finding of audit-596-r2: an empty ticket of no
-// owner, which takes a lease once its alive lock is free, is logged with its path in one line.
+// owner, which takes a lease once its alive lock is free, is logged with its path in one line and
+// removed, so the lane can go idle (audit-596-r3).
 func TestLaneLogsAnOwnerlessEmptyTicket(t *testing.T) {
 	t.Log("catches: a lease passes an empty ticket of no owner and says nothing, so the residue stays unseen")
 	root := t.TempDir()
@@ -55,5 +57,8 @@ func TestLaneLogsAnOwnerlessEmptyTicket(t *testing.T) {
 	}
 	if n != 1 {
 		t.Errorf("the log holds %d lines with the ticket path %s, want one; log = %q", n, ticket, log.String())
+	}
+	if _, err := os.Lstat(ticket); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("the ownerless ticket is still there (Lstat = %v), want it removed so the lane can go idle", err)
 	}
 }
