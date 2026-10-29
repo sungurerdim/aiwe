@@ -1,6 +1,6 @@
-# DSH and OpenCode studies -> aiwe proposal (2026-10-29, for discussion; nothing is built)
+# DSH and OpenCode studies -> aiwe plan (2026-10-29)
 
-Status: plan only, recorded for later (owner, 2026-10-29: "note it, do not apply it now"). Nothing below is built or filed. Source: deepseek-ai/deepseek-harness at f3803c9; six read-only analyst passes with a per-file coverage ledger, then one architect synthesis. The last section adds the OpenCode study and merges both into one plan (M0-M15, units U0-U18); where it differs, it supersedes the DSH proposals and units above.
+Status: plan accepted by the owner on 2026-10-29 and filed as issues; nothing is built. The last section, "Final plan", lists every owner statement and decision and wins over the sections above it. Source: deepseek-ai/deepseek-harness at f3803c9; six read-only analyst passes with a per-file coverage ledger, then one architect synthesis. The last section adds the OpenCode study and merges both into one plan (M0-M15, units U0-U18); where it differs, it supersedes the DSH proposals and units above.
 
 Inputs read whole: brief.md, A-, A2-, B-, C-, C2-, D-findings.md. DSH source (f3803c9) was read once, for the one conflict:
 the retry default is 5 in code (packages/llm/llm/src/retry-policy.ts:14), while a design note says 2 (D-findings §4). The code wins.
@@ -833,3 +833,61 @@ Out of scope: everything under "Rejected or deferred", plus F3. `report_result` 
 Drop order if time runs short: U18, U17, U14, U16, U13, U12.
 
 Plan checks: 19 units. 3 owner questions. Criteria: 15 received, 15 placed.
+
+## Final plan (owner review, 2026-10-29)
+
+Source: a re-read of the session transcript, from the owner's DSH task to the last owner message, after a context compaction. Every owner statement and every settled decision is listed with the place that now owns it. This section supersedes the status line of this file where they differ.
+
+### Owner statements and where each lands
+
+| # | Owner statement (paraphrased, 2026-10-28/29) | Lands in |
+|---|---|---|
+| 1 | Learn from DSH's code why DSH with DeepSeek v4.1 flash scores higher; adopt it, or an adapted form, as a systemic gain for every provider, agent and model, not for one model; find further ideas from the same logic and consult. | Sections 1-6 and the merged plan (Track A) |
+| 2 | Scan the DSH repository from its code, in full and in order, not by sampling. | Coverage ledgers of the six passes (header of this file) |
+| 3 | Record the DSH plan, do not apply it yet; study OpenCode the same way and merge what is worth taking. | "OpenCode study and the merged plan" |
+| 4 | The OpenCode proposals are suitable; record the work in a file, open the issues at once, set the right priority. | Track A filing below |
+| 5 | Livvmonitor audit of DSH work: about half of ~110 closes were wrong (11) or incomplete (~30). aiwe must prevent this as mechanically as possible, measuring only the real change, with nothing out of scope; it must find untested items, endpoints and functions by itself, then tell the lead or start a role agent; the agent waits for an outside check before it returns and fixes in the same context; lead-agent round trips stay minimal. | Track B |
+| 6 | "Your proposal is fine": file the test-system items under #587. | Track B filing below |
+| 7 | Can the separate audit become mechanical? Should tests be written with the issue so the agent has a ready test to turn green? Owner on the answer: "your proposal on tests is fine too". | Track B items B6, B7; decisions D3, D4 |
+| 8 | Can slot management be mechanical, dynamic and fully automatic, residue cleanup included, with an agent only where needed? | Track C |
+| 9 | Up to 10 agents in parallel; agents never run tests or gates, only the lead does. | `STATUS.md` "Live configuration" |
+
+### Decisions
+
+- D1. Q1 = (a), Q2 = (b), Q3 = (a): the owner accepted the OpenCode proposals and their recommendations (statement 4). Recorded as accepted recommendations; say so if any was meant otherwise.
+- D2. DSH session log (`dsh_session_log`) is not adopted: it sends repository content off the machine.
+- D3. The audit is not removed. A mechanical pre-audit runs first and the auditor judges only the residue; wrong behaviour (the livvmonitor "wrong" class) needs judgement.
+- D4. Acceptance tests are written at dispatch time, not at issue creation, because the base moves in between (#594's base moved four units). The test author adds a stub of the interface so the red is an assertion, not a build failure.
+- D5. A finding class seen a third time becomes a gate at the earliest stage (rule of Prevention Order). Seen this session: escape sequence turned into a raw character (3x) -> `gofmt -l` in the clone pre-commit hook, batched with the session-end hook edits.
+- D6. Every wait of an agent on an outside check has a time limit (DR-1), since a wait past the prompt-cache lifetime re-reads the whole context.
+- D7. #596: the caller passes the lease index k through `LaneRequest` (audit B1); lane lock files are never deleted, so the waiter needs no polling (audit B2, lead decision: fewest moving parts, reversible).
+
+### Open, owner only
+
+- O1. Which DSH profile produced the scores the owner saw (minimal or full)? It decides which arm U0 compares against. U0 also needs the owner to run DSH by hand as the comparison arm.
+
+### Track A: harness loop (DSH + OpenCode), parent epic + U0-U18
+
+Units, dependencies and done criteria: "Units" above. Priority is derived (impact x urgency, `aiwe-wt/issue.py`); severity is set so the foundation ranks first: U0, U1, U2, U3, U5, U6 high; U4, U7-U12, U14-U16 medium; U13, U17, U18 low. U15 (in-run verify) and B1 are one outcome and become one issue.
+
+### Track B: test system, under #587
+
+- B1. In-run verify: the agent calls `aiwe verify`, the engine runs the check and returns the result in the same call; the final report is refused until verify is green or the try limit (3) is spent. The auditor runs in its own run with a clean context (DR-5), and the writer can receive the verdict in the same bounded wait. Each unit records lead-agent round trips and first-pass green, so the gain is measured.
+- B2. Changed-line coverage: the coverage profile is intersected with the diff hunks; a finding names `file:line-line` and the function no test ran.
+- B3. New public surface inventory: every exported symbol, endpoint or route the diff adds, with no test that calls it, is a finding; the surface kinds are stack rows (DR-3).
+- B4. Each `done` item maps to a recorded green check; an item with no evidence blocks the close. A diff that touches a stack row's `UIPaths` requires the UX check result.
+- B5. Freshness scan: after a green full run, symbols and endpoints with no test become work items, and the dispatcher starts `test-author` for them; the lead sees only a decision.
+- B6. Mechanical pre-audit report as the auditor's input; every audit finding carries a class tag and a counter; the third finding of a class opens the gate work (D5).
+- B7. Acceptance tests at dispatch by `test-author`, with an interface stub (D4); the writer's diff to a locked test file is refused, and a test fix needs its own approval.
+- B8. The ledger check record carries `failures[]` (gap left by #594).
+
+Existing issues to extend instead of duplicating: #254 (in-run verify), #24 (untested-code check), #66 (mutation on changed lines), #522, #597.
+
+### Track C: slot operations, mechanical
+
+Already filed: #526 (take: claim, scope lease and slot in one call), #527 (return: collect and release), #528, #531, #536 (refs that outlive their item), #521, #572, #573 (lease expiry and reclaim), #293 (measured capacity), #444, #480 (residue). One gap: a session-start sweep that finds dead leases and ownerless clones and cleans them; added to #444 as a to-do line. An agent enters only when the same run failure repeats (`debugger` for the root cause).
+
+### Session-end batch
+
+- `gofmt -l` in the clone pre-commit hook (D5).
+- `vfy.sh` prints raw step exits next to its summary (audit fail-open note).
