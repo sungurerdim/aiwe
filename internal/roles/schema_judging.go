@@ -31,6 +31,10 @@ type parsed struct {
 }
 
 func ParseJudgement(text string, criteria []string) (Judgement, error) {
+	if strings.TrimSpace(text) == "" {
+		return Judgement{}, unitInvalid("a role return with a judgement", "empty text",
+			"rerun the role and pass its full return text")
+	}
 	p, err := parseReturn(text)
 	if err != nil {
 		return Judgement{}, err
