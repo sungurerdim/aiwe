@@ -197,7 +197,7 @@ func (idx CoverIndex) Select(changed []string, atBase map[string]string) CoverSe
 func coverReason(key [2]string, files []string) string {
 	list := strings.Join(files, ", ")
 	if key[1] == staleKind {
-		return "stale: " + list + " (the Go files of their package at the base differ from the index)"
+		return "stale: " + list + " (the Go files of their package at the base differ from the ones the index measured)"
 	}
 	return "coverage: " + list + " covered by " + key[0]
 }

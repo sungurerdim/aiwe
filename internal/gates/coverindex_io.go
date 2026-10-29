@@ -304,10 +304,10 @@ func hashGoDir(root *os.Root, dir string) (sum string, ok bool, err error) {
 	return hex.EncodeToString(h.Sum(nil)), ok, nil
 }
 
-// goFileSum adds one Go file to the hash of its package: its name, its length and its bytes. The
-// work tree (hashGoDir) and the base commit (BaseGoHashes) both hash through it, so the same files
-// give the same hash.
+// goFileSum adds one Go file to its package hash: name, length and bytes, CRLF read as LF so a
+// core.autocrlf work tree (hashGoDir) and its LF base blobs (BaseGoHashes) give one hash (DR-3).
 func goFileSum(h hash.Hash, name string, data []byte) {
+	data = bytes.ReplaceAll(data, []byte("\r\n"), []byte("\n"))
 	_, _ = fmt.Fprintf(h, "%s %d\n", name, len(data))
 	_, _ = h.Write(data)
 }
