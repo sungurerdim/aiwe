@@ -130,8 +130,5 @@ func FuzzParseDiffHunks(f *testing.F) {
 				}
 			}
 		}
-		if strings.Contains(diff, "\x00") {
-			return
-		}
 	})
 }
