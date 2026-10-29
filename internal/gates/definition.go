@@ -201,6 +201,15 @@ func badGlob(glob string) bool {
 	return false
 }
 
+// SelectorCoverage names the selector that picks tests from the coverage reverse index (SPEC L66).
+const SelectorCoverage = "coverage"
+
+// selectors are the selector names a test row may carry.
+var selectors = []string{SelectorCoverage}
+
+// KnownSelector reports whether name is a registered selector.
+func KnownSelector(name string) bool { return slices.Contains(selectors, name) }
+
 // validOrigin reports whether origin is one of the origins of SPEC §8.3.
 func validOrigin(origin string) bool {
 	switch origin {

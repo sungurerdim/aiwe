@@ -92,6 +92,8 @@ type Runner struct {
 	// (SPEC-contracts §8.5). Facts are what each of those records carries about the run.
 	Records RecordSink
 	Facts   RunFacts
+	// Cover refreshes the coverage reverse index after a green full run; nil keeps no index (SPEC L66).
+	Cover *CoverRefresh
 }
 
 // Run runs the steps of def in dir. A non-empty only names the steps to run; every other step is
@@ -129,6 +131,7 @@ func (r *Runner) Run(ctx context.Context, def Definition, dir string, only []str
 			report.Steps[i].Detail = joinDetail("not required", report.Steps[i].Detail)
 		}
 	}
+	report.Detail = joinDetail(report.Detail, r.refreshCoverIndex(ctx, def, report, dir))
 	return report, nil
 }
 
