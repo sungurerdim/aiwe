@@ -216,13 +216,18 @@ func (d laneDir) tickets(names []string, below uint64) ([]laneTicket, error) {
 	return out, nil
 }
 
-// readTicket reads ticket seq through an os.Root of the lane, so a link cannot lead it outside;
-// present is false when the ticket is gone.
+// readTicket reads ticket seq through an os.Root of the lane, so a link cannot lead it outside.
+// present is false when the ticket is gone or in flux: absent, empty, or refused with a permission
+// error, which is what Windows answers for a ticket pending delete while a reader holds it. The
+// writer renames a whole ticket into place, so only a complete ticket that does not parse is corrupt.
 func (d laneDir) readTicket(seq uint64) (laneTicket, bool, error) {
 	name := laneSeqName(seq, laneTicketExt)
 	p := filepath.Join(d.path, name)
 	fi, err := laneStat(p)
-	if err != nil || fi == nil {
+	if errors.Is(err, fs.ErrPermission) || err == nil && (fi == nil || fi.Size() == 0) {
+		return laneTicket{}, false, nil
+	}
+	if err != nil {
 		return laneTicket{}, false, err
 	}
 	if fi.Size() > laneTicketMax {
@@ -234,7 +239,7 @@ func (d laneDir) readTicket(seq uint64) (laneTicket, bool, error) {
 	}
 	b, err := root.ReadFile(name)
 	err = errors.Join(err, root.Close())
-	if errors.Is(err, fs.ErrNotExist) {
+	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, fs.ErrPermission) || err == nil && len(b) == 0 {
 		return laneTicket{}, false, nil
 	}
 	t, derr := decodeLaneTicket(seq, b)
