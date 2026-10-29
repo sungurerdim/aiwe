@@ -34,7 +34,7 @@ import (
 const (
 	laneCPUDir       = "cpu"
 	laneExclusiveDir = "exclusive"
-	laneCPULabel     = "cpu"
+	laneCPULabel     = "cpu" // distinct: the lane label in records; the dir is the on-disk name
 	laneMutexName    = "lane.lock"
 	laneTicketExt    = ".ticket"
 	laneWaitExt      = ".wait"

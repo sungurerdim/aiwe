@@ -17,7 +17,7 @@ const (
 	// redNamePlaceholder stands for a captured name in a subclass and in its hint.
 	redNamePlaceholder = "<NAME>"
 	// redUnknownSub is the subclass of a run that no rule matches.
-	redUnknownSub = "unknown"
+	redUnknownSub = "unknown" // distinct: classifier subclass, not the test failure type
 	// redUnknownHint is the hint of a run that no rule matches.
 	redUnknownHint = "Read the log for the cause; a signature that repeats gets a row in the rule table."
 	// redToolExit is the shell exit code of a command that was not found.
