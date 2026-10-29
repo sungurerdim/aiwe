@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/sungurerdim/aiwe/internal/core"
-	"github.com/sungurerdim/aiwe/internal/ledger"
 )
 
 // The outcomes of a gate that does not hold; each is a row of core.Outcomes.
