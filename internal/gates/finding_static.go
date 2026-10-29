@@ -54,6 +54,7 @@ const (
 // line, one finding per file. Empty output means every file is formatted, so
 // it is the one reader here that returns no findings for empty input. A gofmt
 // file entry has no line, so Line and Col are 0.
+// empty-clean: the step exit code carries the measurement, so empty output is a measured clean result
 func ParseGofmtList(data []byte) []StaticFinding {
 	var out []StaticFinding
 	for _, line := range strings.Split(string(data), "\n") {
