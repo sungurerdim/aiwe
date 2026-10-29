@@ -2,10 +2,17 @@ package gates
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/sungurerdim/aiwe/internal/core"
+	"github.com/sungurerdim/aiwe/internal/ledger"
 )
 
 // The outcomes of a gate that does not hold; each is a row of core.Outcomes.
@@ -19,6 +26,8 @@ func Commands() []core.Command {
 	return []core.Command{
 		{Module: "gates", Object: "gates", Verb: "gate", Params: []string{"repo", "step", "format"},
 			Purpose: "run the gate that <repo>/gate.json declares and report each step", Run: runGate},
+		{Module: "gates", Object: "report", Verb: "tests", Params: []string{"repo", "since", "format"},
+			Purpose: "print the test report of the check records of a period", Run: runReportTests},
 	}
 }
 
@@ -116,4 +125,76 @@ func gateDetail(report GateReport) string {
 		}
 	}
 	return b.String()
+}
+
+// maxSinceUnits bounds the count of a --since value, so its duration cannot overflow.
+const maxSinceUnits = 36500
+
+// runReportTests reads the check records of the ledger, keeps those of --repo (every repo when it is
+// absent) that are not older than --since (all when it is absent), and prints the report. It writes
+// no file (L68).
+func runReportTests(_ context.Context, in core.Input) (core.Result[any], error) {
+	since, err := parseSince(in.Params["since"], time.Now())
+	if err != nil {
+		return core.Result[any]{}, err
+	}
+	roots, err := core.UserRoots()
+	if err != nil {
+		return core.Result[any]{}, ownerRefusal(err)
+	}
+	checks, err := readChecks(filepath.Join(roots.State, core.LedgerFile), in.Params["repo"], since)
+	if err != nil {
+		return core.Result[any]{}, err
+	}
+	report := buildTestReport(checks, filepath.Join(roots.State, tailDirName), in.Params["since"])
+	return core.Result[any]{Status: core.StatusOK, Outcome: core.OutcomeOK, Data: report, Detail: report.text()}, nil
+}
+
+// parseSince returns the start of the period value names: Nd or Nh before now, or a date
+// (2006-01-02) at midnight UTC. An empty value is no start: the zero time.
+func parseSince(value string, now time.Time) (time.Time, error) {
+	if value == "" {
+		return time.Time{}, nil
+	}
+	if day, err := time.Parse(time.DateOnly, value); err == nil {
+		return day, nil
+	}
+	unit := map[string]time.Duration{"d": 24 * time.Hour, "h": time.Hour}
+	count, err := strconv.Atoi(value[:max(0, len(value)-1)])
+	step, known := unit[value[max(0, len(value)-1):]]
+	if err != nil || !known || count <= 0 || count > maxSinceUnits {
+		return time.Time{}, &core.Error{Outcome: core.OutcomeUsage, Expected: "--since as Nd, Nh or a date such as 2026-10-22",
+			Found: fmt.Sprintf("%q", value), Next: "pass --since 7d"}
+	}
+	return now.Add(-time.Duration(count) * step), nil
+}
+
+// readChecks returns the check records of the ledger at path that belong to repo (any repo when it
+// is empty) and are not older than since. A ledger that does not exist holds none.
+func readChecks(path, repo string, since time.Time) (checks []ledger.Check, err error) {
+	f, err := os.Open(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, ledgerRefusal(err)
+	}
+	defer func() { err = errors.Join(err, f.Close()) }()
+	records, err := ledger.Read(f)
+	if err != nil {
+		return nil, ledgerRefusal(err)
+	}
+	for _, rec := range records {
+		if c, ok := rec.(ledger.Check); ok && (repo == "" || c.RepoID == repo) && !c.At.Before(since) {
+			checks = append(checks, c)
+		}
+	}
+	return checks, nil
+}
+
+// ledgerRefusal is the refusal of a ledger that cannot be read: the report never guesses from a
+// part of it.
+func ledgerRefusal(err error) error {
+	return &core.Error{Outcome: core.OutcomeError, Expected: "a readable ledger in the state root", Found: err.Error(),
+		Next: "repair or move the ledger file, then ask for the report again", Err: err}
 }

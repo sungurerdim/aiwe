@@ -44,6 +44,7 @@ func Dictionary() []ParamDef {
 		{Name: "body", Meaning: "the unit issue body to check"},
 		{Name: "format", Meaning: "output format of the result envelope: text or json"},
 		{Name: "repo", Meaning: "repository root; a relative value resolves once against the working directory"},
+		{Name: "since", Meaning: "start of a report period: a count of days or hours such as 7d or 12h, or a date such as 2026-10-22"},
 		{Name: "step", Meaning: "comma-separated gate step ids to run; every other step is reported not_measured"},
 	}
 }
