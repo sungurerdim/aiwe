@@ -152,7 +152,8 @@ func TestLaneRefusesOutsidePathParts(t *testing.T) {
 		{"a relative root", func(string) string { return "lanes" }, "db", true, "a relative root lands wherever the process runs"},
 		{"a UNC root", func(string) string { return `\\localhost\share\lanes` }, "db", true, "a UNC lane root is opened, which sends NTLM credentials to that host"},
 		{"a UNC root with slashes", func(string) string { return "//localhost/share/lanes" }, "db", true, "the slash form of a UNC root slips past a backslash check"},
-		{"a device root", func(string) string { return `\\.\C:\lanes` }, "db", true, "a device namespace root bypasses the Win32 path checks"},
+		{"a device root", func(string) string { return `\\.\pipe\lanes` }, "db", true, "a device namespace root bypasses the Win32 path checks"},
+		{"a long path root", func(string) string { return `\\?\UNC\localhost\share\lanes` }, "db", true, "the long path form of a UNC root is opened"},
 		{"a root that climbs with ..", func(base string) string { return base + sep + ".." + sep + "lanes" }, "db", true,
 			"a root with .. is cleaned to a directory outside the one given"},
 	} {
