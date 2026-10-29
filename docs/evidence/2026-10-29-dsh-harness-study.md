@@ -888,6 +888,13 @@ Existing issues to extend instead of duplicating: #254 (in-run verify), #24 (unt
 
 Already filed: #526 (take: claim, scope lease and slot in one call), #527 (return: collect and release), #528, #531, #536 (refs that outlive their item), #521, #572, #573 (lease expiry and reclaim), #293 (measured capacity), #444, #480 (residue). One gap: a session-start sweep that finds dead leases and ownerless clones and cleans them; added to #444 as a to-do line. An agent enters only when the same run failure repeats (`debugger` for the root cause).
 
+### Filed (2026-10-29)
+
+The issues own scope, order and priority from here; this list only maps the plan to them.
+- Track A: parent #679 (under #263); U0-U4 #680-#684, U6 #685, U7 #686, U8 #687, U9 #688, U11 #689, U13 #690, U15 #691, U17 #692, U18 #693. Merged into existing issues: U5 into #311; U10, U12, U14 into #310 (its whole refusal of a large result is replaced by Q2=b); U16 into #295.
+- Track B (under #587): B1 #694 (return gate), #695 (verdict through the waiting call), #697 (compact red, round trips); B2 #698, #699; B3 #700; B4 #696; B5 #701, with #39 extended; B6 #703, #704, #705, #706, with #317 extended; B7 #707, #708; B8 #702.
+- Track C: the sweep step added to #444.
+
 ### Session-end batch
 
 - `gofmt -l` in the clone pre-commit hook (D5).
