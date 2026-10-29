@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/sungurerdim/aiwe/internal/core"
 	"github.com/sungurerdim/aiwe/internal/ledger"
@@ -73,7 +74,14 @@ func (s *recordTestSink) WriteCheck(_ context.Context, rec CheckRecord) error {
 // recordTestRun runs steps as one gate whose records go to a sink, and returns the records.
 func recordTestRun(t *testing.T, steps ...GateStep) []CheckRecord {
 	t.Helper()
+	return recordTestRunWith(t, func(*testing.T, *Runner) {}, steps...)
+}
+
+// recordTestRunWith is recordTestRun with a runner that setup changes first.
+func recordTestRunWith(t *testing.T, setup func(*testing.T, *Runner), steps ...GateStep) []CheckRecord {
+	t.Helper()
 	r := runnerTestRunner(t)
+	setup(t, r)
 	sink := &recordTestSink{}
 	r.Records = sink
 	r.Facts = RunFacts{Commit: ledger.CommitUncommitted, Toolchain: "go1.25.0 " + runtime.GOOS + " " + runtime.GOARCH,
@@ -256,7 +264,8 @@ const recordTestVetJSON = `{"` + recordTestPkg + `":{"printf":[{"posn":"internal
 
 // TestCheckRecordHoldsParsedFailures pins the failure record of L76: a red test step's record holds
 // failures[] from the test parser with file:line, and a red lint step's record holds its static
-// findings in the same entry shape; a parsed red run writes no tail.
+// findings in the same entry shape. A parsed red run still keeps its tail until the ledger carries
+// failures[] (#702).
 func TestCheckRecordHoldsParsedFailures(t *testing.T) {
 	cases := []struct {
 		name, catches, step, output, wantLoc, wantKind string
@@ -289,8 +298,106 @@ func TestCheckRecordHoldsParsedFailures(t *testing.T) {
 					t.Errorf("catches an entry shape that misses %q: %s", k, data)
 				}
 			}
-			if len(recs[0].Tail) != 0 {
-				t.Errorf("catches a parsed red run that still keeps a tail: %d lines", len(recs[0].Tail))
+			if want := strings.Split(strings.TrimSuffix(tc.output, "\n"), "\n"); !slices.Equal(recs[0].Tail, want) {
+				t.Errorf("catches a parsed red run that drops its tail until the ledger carries failures[] (#702): %q", recs[0].Tail)
+			}
+		})
+	}
+}
+
+// TestParsedRedRecordKeepsItsTail pins the lead decision on #594 until the ledger carries failures[]
+// (#702): the ledger record of a red step whose output a parser read still names its tail file.
+func TestParsedRedRecordKeepsItsTail(t *testing.T) {
+	roots := commandsTestSetRoots(t)
+	repo := commandsTestRepo(t, []GateStep{recordTestStep(t, "unit", recordTestFailJSON, 1)})
+	if _, env, out := commandsTestRun(t, "--repo", repo); env.Data.Result != ResultRed {
+		t.Fatalf("the gate result is %q, want red from the unit step\n%s", env.Data.Result, out)
+	}
+	c := recordTestOne(t, recordTestLedger(t, roots.state), "unit")
+	if !c.TailPath.Known {
+		t.Fatalf("catches a parsed red run whose ledger record names no tail, so it keeps no diagnostics: %+v", c)
+	}
+	data, err := os.ReadFile(c.TailPath.Value)
+	if err != nil {
+		t.Fatalf("catches a tail path that names no file: %v", err)
+	}
+	if got, want := string(data), recordTestFailJSON; got != want {
+		t.Errorf("catches a tail that is not the step's output: %q, want %q", got, want)
+	}
+}
+
+// recordTestCheck is a check record of step at at that keeps a one-line tail.
+func recordTestCheck(step string, at time.Time) CheckRecord {
+	return CheckRecord{Check: ledger.Check{Header: checkHeader(at), Key: recordNone, StepID: step,
+		Commit: ledger.CommitUncommitted}, Tail: []string{"connection refused"}}
+}
+
+// TestTailFileWrite pins the tail files of the ledger sink: two records of one step in one clock tick
+// each get a file of their own, and a tail whose record the ledger refuses is removed (DR-11).
+func TestTailFileWrite(t *testing.T) {
+	at := time.Now()
+	t.Run("same step, same tick", func(t *testing.T) {
+		commandsTestSetRoots(t)
+		l, err := openCheckLedger()
+		if err != nil {
+			t.Fatalf("openCheckLedger: %v", err)
+		}
+		for i := range 2 {
+			if err := l.WriteCheck(t.Context(), recordTestCheck("probe", at)); err != nil {
+				t.Fatalf("catches a tail name that collides when one step ends twice in one tick: write %d: %v", i+1, err)
+			}
+		}
+		if entries, err := os.ReadDir(l.tails); err != nil || len(entries) != 2 {
+			t.Errorf("catches two records that share one tail file: %d files, %v", len(entries), err)
+		}
+	})
+	t.Run("ledger refuses the record", func(t *testing.T) {
+		commandsTestSetRoots(t)
+		l, err := openCheckLedger()
+		if err != nil {
+			t.Fatalf("openCheckLedger: %v", err)
+		}
+		if err := os.Mkdir(l.path, 0o700); err != nil {
+			t.Fatalf("put a directory where the ledger file goes: %v", err)
+		}
+		if err := l.WriteCheck(t.Context(), recordTestCheck("probe", at)); err == nil {
+			t.Fatalf("a ledger that is a directory took the record")
+		}
+		if entries, err := os.ReadDir(l.tails); err != nil || len(entries) != 0 {
+			t.Errorf("catches a tail left behind by a record the ledger refused (DR-11): %d files, %v", len(entries), err)
+		}
+	})
+}
+
+// TestStepRecordWithoutExit pins the record of a step that gave no exit code: one that never started
+// has neither duration nor exit code, and one stopped by its limit has its duration, no exit code and
+// killed set (DR-6).
+func TestStepRecordWithoutExit(t *testing.T) {
+	goBin := runnerTestGo(t)
+	cases := []struct {
+		name, catches string
+		setup         func(*testing.T, *Runner)
+		step          GateStep
+		wantDuration  bool
+		wantKilled    bool
+	}{
+		{"not started", "a step that never started recorded with a duration, an exit code or as killed",
+			func(_ *testing.T, r *Runner) { r.Needs = map[string][]Need{"probe": {{Kind: "tool", Name: "absent"}}} },
+			GateStep{ID: "probe", Command: []string{goBin, "version"}, Required: true}, false, false},
+		{"killed", "a step stopped by its limit recorded with no duration, an exit code or not as killed",
+			func(t *testing.T, _ *Runner) { t.Setenv(runnerSleepEnv(), "1") },
+			GateStep{ID: "slow", Command: []string{os.Args[0], "-test.run=^$"}, Required: true, TimeoutSeconds: 1,
+				Expect: Expect{ExitCode: 1}}, true, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			recs := recordTestRunWith(t, tc.setup, tc.step)
+			if len(recs) != 1 {
+				t.Fatalf("catches a step that writes %d records, want 1", len(recs))
+			}
+			c := recs[0].Check
+			if c.DurationMS.Known != tc.wantDuration || c.ExitCode.Known || c.Killed != tc.wantKilled {
+				t.Errorf("catches %s: duration %+v, exit %+v, killed %v", tc.catches, c.DurationMS, c.ExitCode, c.Killed)
 			}
 		})
 	}
