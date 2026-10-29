@@ -89,6 +89,7 @@ type Lanes struct {
 	Lookup  func(string) string
 	Now     func() time.Time
 	lock    func(context.Context, string) (*core.FileLock, error) // core.AcquireFileLock when nil
+	read    func(dir, name string) ([]byte, error)                // readLaneTicket when nil
 	mu      sync.Mutex
 	gates   map[string]chan struct{}
 }

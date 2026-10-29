@@ -3,12 +3,12 @@ package gates
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -390,53 +390,88 @@ func TestLaneOneOSWaiterPerResource(t *testing.T) {
 	}
 }
 
-// TestLaneTicketInFluxIsSkipped pins that a neighbour's ticket a waiter cannot read whole, an empty
-// file or one being deleted (Windows then refuses the open with ERROR_ACCESS_DENIED), counts as
-// gone: Acquire succeeds and reports no corrupt ticket.
-func TestLaneTicketInFluxIsSkipped(t *testing.T) {
+// TestLaneFileInFlux pins Q1 and F1 of audit-596 (DR-6, STD-11): an empty or unreadable ticket of a
+// live holder (seq 1) keeps its place and slot until its alive lock is got, and a permission error
+// at the open of a lock ahead (Windows: pending delete) is retried until the bound; others fail.
+func TestLaneFileInFlux(t *testing.T) {
 	for _, tc := range []struct {
-		name    string
-		plant   func(t *testing.T, dir, name string)
-		catches string
+		name, ticket, lock string // ticket 1: "emptied" or "refused" (each read) under the holder, or "ownerless" and empty
+		cpu                bool   // the cpu lane, else the db lane
+		refusals           int32  // how many opens of the lock file lock are refused; 1<<20 is for good
+		lockErr, want      error  // the error of those opens; what Acquire returns while the holder holds (nil: a lease)
+		catches            string
 	}{
-		{"an empty ticket", func(t *testing.T, dir, name string) {
-			if err := os.WriteFile(filepath.Join(dir, name), nil, 0o600); err != nil {
-				t.Fatal(err)
-			}
-		}, "an empty ticket is read as corrupt and fails every Acquire behind it"},
-		{"a ticket deleted while a reader holds it open", func(t *testing.T, dir, name string) {
-			ticket := `{"pid":` + strconv.Itoa(os.Getpid()) + `,"start":"2026-01-02T03:04:05Z","weight":1,"slot":1}`
-			if err := os.WriteFile(filepath.Join(dir, name), []byte(ticket), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			root, err := os.OpenRoot(dir)
-			if err != nil {
-				t.Fatal(err)
-			}
-			f, err := root.Open(name) // shares delete, so the remove below leaves it delete-pending on Windows
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = f.Close(); _ = root.Close() })
-			if err := os.Remove(filepath.Join(dir, name)); err != nil {
-				t.Fatal(err)
-			}
-		}, "a ticket pending delete is refused with access denied and read as corrupt, so the waiter fails"},
+		{"an emptied ticket in a resource lane", "emptied", "", false, 0, nil, context.DeadlineExceeded,
+			"an empty ticket of a live holder is skipped, so a lane of capacity 1 gets a second holder"},
+		{"a refused ticket in a resource lane", "refused", "", false, 0, nil, context.DeadlineExceeded,
+			"a ticket read refused with a permission error is skipped, so a lane of capacity 1 gets a second holder"},
+		{"an emptied ticket in the cpu lane", "emptied", "", true, 0, nil, context.DeadlineExceeded,
+			"an empty ticket of a live holder is skipped, so its slot goes to a second check"},
+		{"a refused ticket in the cpu lane", "refused", "", true, 0, nil, context.DeadlineExceeded,
+			"a ticket read refused with a permission error is skipped, so its slot goes to a second check"},
+		{"an empty ticket of no owner", "ownerless", "", false, 0, nil, nil,
+			"an empty ticket of no owner is read as corrupt, or holds the lane for good once its alive lock is free"},
+		{"the alive lock ahead refused once", "", laneSeqName(1, laneAliveExt), false, 1, fs.ErrPermission, context.DeadlineExceeded,
+			"a waiter fails Acquire with access denied when the alive file of the ticket ahead is pending delete"},
+		{"the wait lock ahead refused once", "", laneSeqName(1, laneWaitExt), false, 1, fs.ErrPermission, context.DeadlineExceeded,
+			"a waiter fails Acquire with access denied when the wait file of the ticket ahead is pending delete"},
+		{"the alive lock ahead refused for good", "", laneSeqName(1, laneAliveExt), false, 1 << 20, fs.ErrPermission, context.DeadlineExceeded,
+			"a lock file refused for good fails Acquire at once, or is retried past the waiter's bound"},
+		{"the alive lock ahead refused with another error", "", laneSeqName(1, laneAliveExt), false, 1, fs.ErrInvalid, fs.ErrInvalid,
+			"the retry swallows every open error, so a broken lock file is waited on until MaxWait"},
+		{"the request's own alive lock refused", "", laneSeqName(2, laneAliveExt), false, 1, fs.ErrPermission, fs.ErrPermission,
+			"a retry on the request's own lock file hides a lane it cannot write and waits out MaxWait"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Logf("catches: %s", tc.catches)
 			root := t.TempDir()
-			if err := os.MkdirAll(dbLane(root), 0o700); err != nil {
-				t.Fatal(err)
+			dir, req := dbLane(root), dbRequest
+			if tc.cpu {
+				dir, req = filepath.Join(root, laneCPUDir), cpuRequest
 			}
-			tc.plant(t, dbLane(root), laneSeqName(1, laneTicketExt))
-			ctx, cancel := context.WithTimeout(t.Context(), laneTestWait/4)
+			var holder *LaneLease
+			if tc.ticket != "ownerless" {
+				holder = mustAcquire(t, newTestLanes(t, root, 4), req("holder", 1))
+			}
+			ticket := filepath.Join(dir, laneSeqName(1, laneTicketExt))
+			if tc.ticket == "emptied" || tc.ticket == "ownerless" {
+				if err := errors.Join(os.MkdirAll(dir, 0o700), os.WriteFile(ticket, nil, 0o600)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			w := newTestLanes(t, root, 4)
+			w.read = func(d, name string) ([]byte, error) {
+				if tc.ticket == "refused" && filepath.Join(d, name) == ticket {
+					return nil, &fs.PathError{Op: "open", Path: ticket, Err: fs.ErrPermission}
+				}
+				return readLaneTicket(d, name)
+			}
+			var opens atomic.Int32
+			w.lock = func(ctx context.Context, p string) (*core.FileLock, error) {
+				if p == filepath.Join(dir, tc.lock) && opens.Add(1) <= tc.refusals {
+					return nil, fmt.Errorf("lock %s: open: %w", p, tc.lockErr)
+				}
+				return core.AcquireFileLock(ctx, p)
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), laneTestBlocked)
 			defer cancel()
-			lease, err := newTestLanes(t, root, 4).Acquire(ctx, dbRequest("alpha", 1))
-			if err != nil {
-				t.Fatalf("Acquire = %v, want a lease past the ticket in flux", err)
+			lease, err := w.Acquire(ctx, req("waiter", 1))
+			switch {
+			case err == nil && tc.want != nil:
+				t.Errorf("Acquire = a lease in slot %d beside the holder in slot %d, want %v", lease.Slot(), holder.Slot(), tc.want)
+			case !errors.Is(err, tc.want) || !errors.Is(tc.want, context.DeadlineExceeded) && errors.Is(err, context.DeadlineExceeded):
+				t.Errorf("Acquire = %v, want %v", err, tc.want)
+			case opens.Load() == 0 && tc.refusals > 0:
+				t.Errorf("Acquire opened no %s, so the row tests nothing", tc.lock)
 			}
-			mustRelease(t, lease)
+			if err == nil {
+				mustRelease(t, lease)
+			}
+			if holder != nil {
+				opens.Store(1 << 30) // no refusal once the holder ends
+				mustRelease(t, holder)
+			}
+			mustRelease(t, leaseOf(t, awaitResult(t, goAcquire(t.Context(), w, req("waiter", 1)), laneTestWait)))
 		})
 	}
 }

@@ -216,37 +216,45 @@ func (d laneDir) tickets(names []string, below uint64) ([]laneTicket, error) {
 	return out, nil
 }
 
-// readTicket reads ticket seq through an os.Root of the lane, so a link cannot lead it outside.
-// present is false when the ticket is gone or in flux: absent, empty, or refused with a permission
-// error, which is what Windows answers for a ticket pending delete while a reader holds it. The
-// writer renames a whole ticket into place, so only a complete ticket that does not parse is corrupt.
+// readTicket reads ticket seq. present is false when the ticket is gone or in flux: absent, empty,
+// or refused with a permission error, which is what Windows answers for a ticket pending delete
+// while a reader holds it. The writer renames a whole ticket into place, so only a complete ticket
+// that does not parse is corrupt.
 func (d laneDir) readTicket(seq uint64) (laneTicket, bool, error) {
 	name := laneSeqName(seq, laneTicketExt)
-	p := filepath.Join(d.path, name)
-	fi, err := laneStat(p)
-	if errors.Is(err, fs.ErrPermission) || err == nil && (fi == nil || fi.Size() == 0) {
-		return laneTicket{}, false, nil
-	}
-	if err != nil {
-		return laneTicket{}, false, err
-	}
-	if fi.Size() > laneTicketMax {
-		return laneTicket{}, false, laneError("a lane ticket", fmt.Sprintf("%d bytes at %s", fi.Size(), p), "remove "+p+" while no check runs")
-	}
-	root, err := os.OpenRoot(d.path)
-	if err != nil {
-		return laneTicket{}, false, err
-	}
-	b, err := root.ReadFile(name)
-	err = errors.Join(err, root.Close())
+	b, err := d.lanes.readTicketFile(d.path, name)
 	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, fs.ErrPermission) || err == nil && len(b) == 0 {
 		return laneTicket{}, false, nil
 	}
-	t, derr := decodeLaneTicket(seq, b)
-	if err = errors.Join(err, derr); err != nil {
+	var t laneTicket
+	if err == nil {
+		t, err = decodeLaneTicket(seq, b)
+	}
+	if err != nil {
+		p := filepath.Join(d.path, name)
 		return laneTicket{}, false, laneError("a lane ticket", fmt.Sprintf("%s: %v", p, err), "remove "+p+" while no check runs")
 	}
 	return t, true, nil
+}
+
+// readLaneTicket reads the ticket file name of the lane directory dir through an os.Root, so a link
+// cannot lead it outside; it refuses a file that is no regular file or larger than any ticket.
+func readLaneTicket(dir, name string) ([]byte, error) {
+	fi, err := os.Lstat(filepath.Join(dir, name))
+	switch {
+	case err != nil:
+		return nil, err
+	case !fi.Mode().IsRegular():
+		return nil, fmt.Errorf("a %s, want a regular file", fi.Mode().Type())
+	case fi.Size() > laneTicketMax:
+		return nil, fmt.Errorf("%d bytes, want at most %d", fi.Size(), laneTicketMax)
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, err
+	}
+	b, err := root.ReadFile(name)
+	return b, errors.Join(err, root.Close())
 }
 
 // writeTicket writes t to a new temporary file and renames it to its ticket name, so a reader sees
@@ -362,6 +370,13 @@ func (l *Lanes) lookup(name string) string {
 		return core.LookupEnv(name)
 	}
 	return l.Lookup(name)
+}
+
+func (l *Lanes) readTicketFile(dir, name string) ([]byte, error) {
+	if l.read == nil {
+		return readLaneTicket(dir, name)
+	}
+	return l.read(dir, name)
 }
 
 func (l *Lanes) now() time.Time {
