@@ -472,3 +472,29 @@ func TestVerifyRunsAProgramWithNoVersionCommand(t *testing.T) {
 	tr := verifyTestTreeOf(t)
 	verifyTestAgain(t, tr, 1, "catches a step refused because its program has no version subcommand")
 }
+
+// verifyTestSink keeps the check records a verify writes; WriteCheck keeps rec.
+type verifyTestSink struct{ recs []gates.CheckRecord }
+
+func (s *verifyTestSink) WriteCheck(_ context.Context, rec gates.CheckRecord) error {
+	s.recs = append(s.recs, rec)
+	return nil
+}
+
+// TestVerifyWritesOneCheckRecord catches a verify that runs and writes no record, or one without its
+// key and facts, and a stored result served from the cache that writes one (SPEC-contracts §8.5).
+func TestVerifyWritesOneCheckRecord(t *testing.T) {
+	tr := verifyTestTreeOf(t)
+	sink := &verifyTestSink{}
+	tr.runner.Records = sink
+	in, _, err := gates.ResolveKeyInput(context.Background(), tr.dir, tr.req.Step)
+	verifyTestOK(t, err)
+	verifyTestAgain(t, tr, 1, "catches a first verify that does not run")
+	verifyTestAgain(t, tr, 1, "catches a cached verify that runs again")
+	if len(sink.recs) != 1 {
+		t.Fatalf("catches a run that writes no record, or a cached call that writes one: %d records", len(sink.recs))
+	}
+	if c := sink.recs[0].Check; c.Key != gates.CheckKey(in) || !c.TreeHash.Known || !c.DurationMS.Known || c.ExitCode.Value != 4 {
+		t.Errorf("catches a verify record without its check key, tree, duration or exit code: %+v", c)
+	}
+}
