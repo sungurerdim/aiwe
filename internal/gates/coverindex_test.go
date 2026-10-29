@@ -14,7 +14,7 @@ import (
 )
 
 // coverBuilt is the moment the shared test index was built.
-var coverBuilt = time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC)
+func coverBuilt() time.Time { return time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC) }
 
 // coverDirOf maps the import paths of the module example.com/m to their directories.
 func coverDirOf() map[string]string {
@@ -37,7 +37,7 @@ func coverProfiles() CoverProfiles {
 
 func coverTestIndex(t *testing.T) CoverIndex {
 	t.Helper()
-	idx, err := BuildCoverIndex(coverProfiles(), coverDirOf(), coverBuilt)
+	idx, err := BuildCoverIndex(coverProfiles(), coverDirOf(), coverBuilt())
 	if err != nil {
 		t.Fatalf("BuildCoverIndex() error = %v, want nil", err)
 	}
@@ -80,7 +80,7 @@ func TestCoverIndexMapsFileToTestPackages(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := idx.Select(tc.changed, coverBuilt)
+			got := idx.Select(tc.changed, coverBuilt())
 			if !reflect.DeepEqual(got.Selected, tc.want) {
 				t.Errorf("Select(%q).Selected = %v, want %v", tc.changed, got.Selected, tc.want)
 			}
@@ -91,7 +91,7 @@ func TestCoverIndexMapsFileToTestPackages(t *testing.T) {
 	}
 	for _, bad := range []string{"", "internal/core/a.go:3.10,5.2 1 1\n", "mode: set\nnot a block\n",
 		"mode: set\nexample.com/m/main.go:1.1,2.2 x 1\n"} {
-		_, err := BuildCoverIndex(CoverProfiles{"internal/core": []byte(bad)}, coverDirOf(), coverBuilt)
+		_, err := BuildCoverIndex(CoverProfiles{"internal/core": []byte(bad)}, coverDirOf(), coverBuilt())
 		if err == nil {
 			t.Errorf("BuildCoverIndex(profile %q) error = nil, want a refusal", bad)
 		}
@@ -104,7 +104,7 @@ func TestCoverIndexMapsFileToTestPackages(t *testing.T) {
 // fresh (SPEC L66, L69).
 func TestCoverIndexStaleFallsBack(t *testing.T) {
 	idx := coverTestIndex(t)
-	old := coverBuilt.Add(coverMaxAge + time.Second)
+	old := coverBuilt().Add(coverMaxAge + time.Second)
 	got := idx.Select([]string{"internal/data/rules.go", "internal/data/other.go", "main.go", "newdir/x.go"}, old)
 	if len(got.Unmapped) != 0 {
 		t.Errorf("stale Select().Unmapped = %v, want none: a stale file falls to its module", got.Unmapped)
@@ -123,7 +123,7 @@ func TestCoverIndexStaleFallsBack(t *testing.T) {
 	if !strings.Contains(got.Selected[1].Reason, "internal/data/other.go, internal/data/rules.go") {
 		t.Errorf("stale reason = %q, want both files of the module", got.Selected[1].Reason)
 	}
-	edge := idx.Select([]string{"internal/data/rules.go"}, coverBuilt.Add(coverMaxAge))
+	edge := idx.Select([]string{"internal/data/rules.go"}, coverBuilt().Add(coverMaxAge))
 	if len(edge.Selected) != 1 || edge.Selected[0].Kind != "coverage" {
 		t.Errorf("Select() at the age limit = %v, want a coverage selection", edge.Selected)
 	}
@@ -131,7 +131,7 @@ func TestCoverIndexStaleFallsBack(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadCoverIndex(absent) error = %v, want nil", err)
 	}
-	none := loaded.Select([]string{"internal/core/a.go"}, coverBuilt)
+	none := loaded.Select([]string{"internal/core/a.go"}, coverBuilt())
 	if len(none.Selected) != 1 || none.Selected[0].Kind != "stale" || none.Selected[0].Package != "./internal/core" {
 		t.Errorf("Select() on a missing index = %v, want the module suite with reason stale", none.Selected)
 	}
@@ -176,7 +176,7 @@ func coverGoStub(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer src.Close()
+	defer func() { _ = src.Close() }()
 	stub := filepath.Join(t.TempDir(), "go"+filepath.Ext(os.Args[0]))
 	dst, err := os.OpenFile(stub, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o700)
 	if err != nil {
@@ -282,7 +282,7 @@ func TestCollectCoverProfilesRunsEachTestPackage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("collectCover(temp module) error = %v, want nil", err)
 	}
-	idx, err := BuildCoverIndex(got.Profiles, got.DirOf, coverBuilt)
+	idx, err := BuildCoverIndex(got.Profiles, got.DirOf, coverBuilt())
 	if err != nil {
 		t.Fatalf("BuildCoverIndex(collected) error = %v, want nil", err)
 	}

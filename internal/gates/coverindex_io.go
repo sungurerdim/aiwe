@@ -19,7 +19,11 @@ import (
 )
 
 // coverRunLimit bounds the coverage run of one test package (DR-1).
-const coverRunLimit = 600
+const (
+	coverRunLimit = 600
+	// coverProfileMax caps one profile read back from a coverage run.
+	coverProfileMax = 64 << 20
+)
 
 // CoverRefresh tells a Runner where the coverage reverse index lives and how to measure it (SPEC
 // L66). A Runner with no CoverRefresh keeps no index. Collect measures coverage in dir; nil runs
@@ -191,7 +195,7 @@ func coverPackage(ctx context.Context, dir string, roots *checkRoots, i int, n *
 	case code != 0:
 		return nil, fmt.Errorf("`go test %s` exited %d: %s", n.importPath, code, lastLine(all.Bytes()))
 	}
-	data, err := os.ReadFile(profile)
+	data, err := readCoverProfile(roots.base, filepath.Base(profile))
 	if errors.Is(err, fs.ErrNotExist) {
 		return []byte("mode: set\n"), nil
 	}
@@ -202,4 +206,14 @@ func coverPackage(ctx context.Context, dir string, roots *checkRoots, i int, n *
 func lastLine(out []byte) string {
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
 	return strings.TrimSpace(lines[len(lines)-1])
+}
+
+// readCoverProfile reads the profile name under dir through an os.Root, so a link cannot lead out.
+func readCoverProfile(dir, name string) (data []byte, err error) {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { err = errors.Join(err, root.Close()) }()
+	return core.ReadRegularCapped(root, name, coverProfileMax)
 }
