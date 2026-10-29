@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"time"
 
 	"github.com/sungurerdim/aiwe/internal/core"
 )
@@ -39,7 +38,7 @@ func (k laneLocked) same() bool {
 func (w *laneWaiter) lockMutex(ctx context.Context) (*core.FileLock, error) {
 	p := filepath.Join(w.path, laneMutexName)
 	for range 2 {
-		got := w.lockAt(ctx, p, nil)
+		got := w.lockAt(ctx, p)
 		if got.err != nil {
 			return nil, got.err
 		}
@@ -55,34 +54,30 @@ func (w *laneWaiter) lockMutex(ctx context.Context) (*core.FileLock, error) {
 
 // numberLocked runs number under the lane lock. A failed release of that lock fails the call and
 // ends a hold number made, so no ticket stays behind a lock that may not be free.
-func (w *laneWaiter) numberLocked(ctx context.Context, t laneTicket) (*laneHold, uint64, error) {
+func (w *laneWaiter) numberLocked(ctx context.Context, t laneTicket) (*laneHold, error) {
 	mutex, err := w.lockMutex(ctx)
 	if err != nil {
-		return nil, 0, err
+		return nil, err
 	}
-	h, unread, err := w.number(ctx, t)
+	h, err := w.number(ctx, t)
 	if rerr := mutex.Release(); rerr != nil {
 		err = errors.Join(err, rerr)
 		if h != nil {
 			err, h = errors.Join(err, h.end()), nil
 		}
 	}
-	return h, unread, err
+	return h, err
 }
 
 // await blocks on the lock next names and frees it at once: getting it shows that its owner
 // started (wait) or ended (alive). An alive lock got while the ticket is still there means its
 // owner died; when that owner still runs and the path names the file the open saw, the lock file
 // was replaced under a live owner (A3), and the request is refused rather than run beside it. An
-// alive lock got while the ticket cannot be read marks it gone: a live owner would hold the lock.
-// A permission error at the open is what Windows answers for a lock file pending delete: its
-// owner moved on, so await pauses and the caller looks again, until ctx ends.
+// alive lock got while the ticket cannot be read marks it gone, with one log line: a live owner would
+// hold the lock. An error at the open, a permission error too, fails the wait: no lock file is ever
+// deleted, so none is met half deleted and nothing is retried.
 func (w *laneWaiter) await(ctx context.Context, next laneWait, started map[uint64]bool) error {
-	tidy := func() { w.tidy(next.seq, next.ext) }
-	got := w.lockAt(ctx, filepath.Join(w.path, laneSeqName(next.seq, next.ext)), tidy)
-	if errors.Is(got.err, fs.ErrPermission) {
-		return lanePause(ctx, got.err)
-	}
+	got := w.lockAt(ctx, filepath.Join(w.path, laneSeqName(next.seq, next.ext)))
 	if got.err != nil {
 		return got.err
 	}
@@ -91,18 +86,17 @@ func (w *laneWaiter) await(ctx context.Context, next laneWait, started map[uint6
 	}
 	if next.ext == laneWaitExt {
 		started[next.seq] = true
-		tidy()
 		return nil
 	}
 	t, present, err := w.readTicket(next.seq)
 	switch {
 	case err != nil:
 		return err
-	case !present:
-		tidy()
 	case t.unread:
 		w.gone[next.seq] = true
-		tidy()
+		return w.lanes.print(laneUnreadLine(w.spec.label, filepath.Join(w.path, laneSeqName(t.seq, laneTicketExt))))
+	case !present:
+		return nil
 	case !core.OwnerAlive(t.owner()):
 		return w.dropDead(t)
 	case got.same():
@@ -111,29 +105,16 @@ func (w *laneWaiter) await(ctx context.Context, next laneWait, started map[uint6
 	return nil
 }
 
-// lanePause waits laneFluxPause before a waiter looks again at a lock file in flux. When ctx ends
-// first it returns ctx's error joined with why, so a file refused for good is named.
-func lanePause(ctx context.Context, why error) error {
-	timer := time.NewTimer(laneFluxPause)
-	defer timer.Stop()
-	select {
-	case <-timer.C:
-		return nil
-	case <-ctx.Done():
-		return errors.Join(ctx.Err(), why)
-	}
-}
-
 // lockAt takes the OS lock on p. It refuses a p that is a link or not a regular file, before the
 // open and again under the lock (A1), and keeps what it saw, so the caller can tell whether p
-// still names the file it locked (A3). tidy runs after an abandoned wait got and freed the lock.
-// The full A3 check, an fstat of the locked handle, needs a core.FileLock that exposes it.
-func (w *laneWaiter) lockAt(ctx context.Context, p string, tidy func()) laneLocked {
+// still names the file it locked (A3). The full A3 check, an fstat of the locked handle, needs a
+// core.FileLock that exposes it.
+func (w *laneWaiter) lockAt(ctx context.Context, p string) laneLocked {
 	before, err := laneStat(p)
 	if err != nil {
 		return laneLocked{err: err}
 	}
-	got := w.osWait(ctx, p, tidy)
+	got := w.osWait(ctx, p)
 	if got.err != nil {
 		return got
 	}
@@ -148,14 +129,14 @@ func (w *laneWaiter) lockAt(ctx context.Context, p string, tidy func()) laneLock
 // goroutine keeps the gate until the OS call returns, then frees the lock it may have got: a
 // cancelled flock stays blocked in the OS on Unix (L78), so l keeps one OS wait per lane. That
 // wait is bounded by MaxWait again (DR-1).
-func (w *laneWaiter) osWait(ctx context.Context, p string, tidy func()) laneLocked {
+func (w *laneWaiter) osWait(ctx context.Context, p string) laneLocked {
 	if err := ctx.Err(); err != nil {
 		return laneLocked{err: err}
 	}
 	drain, stop := context.WithTimeout(context.WithoutCancel(ctx), w.lanes.MaxWait)
 	got := make(chan laneLocked) // unbuffered: a send succeeds only while the waiter takes it
 	abandon := make(chan struct{})
-	go w.lockOrDrain(drain, stop, p, tidy, got, abandon)
+	go w.lockOrDrain(drain, stop, p, got, abandon)
 	select {
 	case r := <-got:
 		return r
@@ -167,8 +148,8 @@ func (w *laneWaiter) osWait(ctx context.Context, p string, tidy func()) laneLock
 }
 
 // lockOrDrain blocks in the OS lock on p and hands the outcome to the waiter of osWait; when the
-// waiter abandoned the wait, it frees the lock it got instead, tidies the file and frees the gate.
-func (w *laneWaiter) lockOrDrain(ctx context.Context, stop context.CancelFunc, p string, tidy func(),
+// waiter abandoned the wait, it frees the lock it got instead and frees the gate.
+func (w *laneWaiter) lockOrDrain(ctx context.Context, stop context.CancelFunc, p string,
 	got chan<- laneLocked, abandon <-chan struct{}) {
 	defer stop()
 	fl, err := w.lanes.lockFile(ctx, p)
@@ -177,8 +158,8 @@ func (w *laneWaiter) lockOrDrain(ctx context.Context, stop context.CancelFunc, p
 		return
 	case <-abandon:
 	}
-	if err == nil && fl.Release() == nil && tidy != nil {
-		tidy()
+	if err == nil {
+		_ = fl.Release() // a lane file is never deleted
 	}
 	<-w.gate
 }

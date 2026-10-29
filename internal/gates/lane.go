@@ -21,14 +21,15 @@ import (
 // Resource lanes and CPU tickets (#596, SPEC §7.8, L63, L78). A check queues in the lane of each
 // exclusive resource it names and in the CPU lane for as many tickets as its workers. A lane is a
 // directory of ticket files served first in, first out; a request waits only in blocking OS locks
-// (core.AcquireFileLock), polling only a lock file pending delete; lane_io.go does the IO (STD-10).
+// (core.AcquireFileLock), never polling; lane_io.go does the IO (STD-10).
 //
 // The owner of ticket <seq>.ticket holds two OS locks: <seq>.wait while it queues and <seq>.alive
 // until it ends. A request blocks on the wait lock of the ticket just ahead, so none overtakes one
 // queued before it, then, while the tickets ahead leave too little capacity, on the alive lock of
 // the oldest. The OS frees both locks when an owner dies; a ticket whose owner no longer runs is
 // dropped and logged; one that cannot be read holds its place until its alive lock is got (DR-6).
-// lane.lock serialises only the numbering of new tickets.
+// lane.lock serialises only the numbering of new tickets. No lock file is ever deleted: a file that
+// stays can never be met half deleted, so no open of one needs a second look (B2 of audit-596-r2).
 
 const (
 	laneCPUDir       = "cpu"
@@ -42,9 +43,8 @@ const (
 	laneSeqDigits    = 20
 	laneTokenSep     = ":"
 	laneTokenParts   = 3
-	laneMaxPool      = 1 << 20               // far above any core count; it keeps the ticket sums in range
-	laneTicketMax    = 4096                  // bytes; a ticket is far smaller
-	laneFluxPause    = 10 * time.Millisecond // before a waiter looks again at a lock file pending delete
+	laneMaxPool      = 1 << 20 // far above any core count; it keeps the ticket sums in range
+	laneTicketMax    = 4096    // bytes; a ticket is far smaller
 )
 
 // laneNamePattern is the form of a resource name, which becomes a directory name: no separator,
@@ -71,12 +71,15 @@ func laneReservedNames() []string {
 }
 
 // LaneRequest is what one check asks of the lanes: the exclusive resources it cannot share and its
-// worker count, the number of CPU tickets it takes. Repo and Kind name the job to its waiters.
+// worker count, the number of CPU tickets it takes. Repo and Kind name the job to its waiters. Slot
+// is the index of the caller's slot lease, from 1: the lease runs with it as AIWE_SLOT (SPEC 6.5), the
+// lanes never number slots themselves.
 type LaneRequest struct {
 	Repo      string
 	Kind      string
 	Exclusive []string
 	Workers   int
+	Slot      int
 }
 
 // Lanes admits checks by resource on one machine. Root holds one directory per lane, Pool is the
@@ -117,7 +120,7 @@ type LaneLease struct {
 }
 
 // laneSpec is one lane a request queues in: capacity tickets in all, weight of them for the
-// request; the CPU lane also hands out the slot.
+// request; slots marks the CPU lane, whose tickets name the slot of their lease.
 type laneSpec struct {
 	label            string
 	dir              string // relative to Root
@@ -166,20 +169,21 @@ func (l *Lanes) Acquire(ctx context.Context, req LaneRequest) (*LaneLease, error
 	}
 	ctx, cancel := context.WithTimeout(ctx, l.MaxWait)
 	defer cancel()
-	lease := &LaneLease{lanes: l, token: laneToken(self)}
+	lease := &LaneLease{lanes: l, slot: req.Slot, token: laneToken(self)}
 	since := l.now().UTC()
 	for _, s := range specs {
 		asked := l.now()
-		h, err := l.take(ctx, s, laneTicket{PID: self.PID, Start: self.Start.UTC(), StartID: self.StartID(),
-			Repo: req.Repo, Kind: req.Kind, Since: since, Weight: s.weight})
+		t := laneTicket{PID: self.PID, Start: self.Start.UTC(), StartID: self.StartID(), Repo: req.Repo, Kind: req.Kind,
+			Since: since, Weight: s.weight}
+		if s.slots {
+			t.Slot = req.Slot
+		}
+		h, err := l.take(ctx, s, t)
 		if err != nil {
 			return nil, errors.Join(fmt.Errorf("lane %s: %w", s.label, err), lease.Release())
 		}
 		lease.holds = append(lease.holds, h)
 		lease.records = append(lease.records, LaneRecord{Lane: s.label, Asked: asked, Started: l.now()})
-		if s.slots {
-			lease.slot = h.ticket.Slot
-		}
 	}
 	return lease, nil
 }
@@ -216,6 +220,10 @@ func (l *Lanes) plan(req LaneRequest) ([]laneSpec, error) {
 	if l.MaxWait <= 0 || req.Workers < 1 {
 		return nil, laneError("a wait bound above 0 (DR-1) and at least 1 worker",
 			fmt.Sprintf("MaxWait %v and %d workers", l.MaxWait, req.Workers), "derive both from the measured durations and cores")
+	}
+	if req.Slot < 1 {
+		return nil, laneError("the index of the caller's slot lease, from 1 (SPEC 6.5)", fmt.Sprintf("slot %d", req.Slot),
+			"pass the K of the slot lease in LaneRequest.Slot")
 	}
 	names := slices.Clone(req.Exclusive)
 	slices.Sort(names)
@@ -329,19 +337,6 @@ func laneNextSeq(names []string) (uint64, bool) {
 		}
 	}
 	return top + 1, top < math.MaxUint64
-}
-
-// laneFreeSlot returns the lowest slot from 1 that no ticket holds.
-func laneFreeSlot(tickets []laneTicket) int {
-	used := map[int]bool{}
-	for _, t := range tickets {
-		used[t.Slot] = true
-	}
-	k := 1
-	for used[k] {
-		k++
-	}
-	return k
 }
 
 func decodeLaneTicket(seq uint64, b []byte) (laneTicket, error) {
