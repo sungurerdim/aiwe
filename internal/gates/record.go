@@ -338,21 +338,24 @@ func toolchainText(out string) string {
 // that holds a quote, a backtick or white space, is no path.
 func goModulePath(data []byte) string {
 	for _, line := range strings.Split(string(data), "\n") {
-		f := strings.Fields(line)
-		if len(f) < 2 || f[0] != "module" {
-			continue
+		if f := strings.Fields(line); len(f) >= 2 && f[0] == "module" {
+			return decodeModulePath(f[1])
 		}
-		p := f[1]
-		if p[0] == '"' || p[0] == '`' {
-			var err error
-			if p, err = strconv.Unquote(p); err != nil {
-				return ""
-			}
-		}
-		if strings.ContainsAny(p, "\"`") || strings.ContainsFunc(p, unicode.IsSpace) {
-			return ""
-		}
-		return p
 	}
 	return ""
+}
+
+// decodeModulePath is the module path a go.mod token spells, or "" when the token is no path.
+func decodeModulePath(token string) string {
+	p := token
+	if p[0] == '"' || p[0] == '`' {
+		var err error
+		if p, err = strconv.Unquote(p); err != nil {
+			return ""
+		}
+	}
+	if strings.ContainsAny(p, "\"`") || strings.ContainsFunc(p, unicode.IsSpace) {
+		return ""
+	}
+	return p
 }
