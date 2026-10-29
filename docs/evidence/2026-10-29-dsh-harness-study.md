@@ -872,14 +872,15 @@ Units, dependencies and done criteria: "Units" above. Priority is derived (impac
 
 ### Track B: test system, under #587
 
-- B1. In-run verify: the agent calls `aiwe verify`, the engine runs the check and returns the result in the same call; the final report is refused until verify is green or the try limit (3) is spent. The auditor runs in its own run with a clean context (DR-5), and the writer can receive the verdict in the same bounded wait. Each unit records lead-agent round trips and first-pass green, so the gain is measured.
+- B1. In-run verify: the agent calls `aiwe verify`, the engine runs the check and returns the result in the same call; the final report is refused until verify is green or the try limit (3) is spent. The auditor runs in its own run with a clean context (DR-5), and the writer can receive the verdict in the same bounded wait. A red result comes back compact: the failed checks, the `done` item each one serves, a one-line fix hint and the path of the full record; the agent fixes it in the same context, and a green result ends the run at once. Each unit records lead-agent round trips and first-pass green, so the gain is measured. Same outcome as U15 (one issue).
 - B2. Changed-line coverage: the coverage profile is intersected with the diff hunks; a finding names `file:line-line` and the function no test ran.
 - B3. New public surface inventory: every exported symbol, endpoint or route the diff adds, with no test that calls it, is a finding; the surface kinds are stack rows (DR-3).
 - B4. Each `done` item maps to a recorded green check; an item with no evidence blocks the close. A diff that touches a stack row's `UIPaths` requires the UX check result.
 - B5. Freshness scan: after a green full run, symbols and endpoints with no test become work items, and the dispatcher starts `test-author` for them; the lead sees only a decision.
-- B6. Mechanical pre-audit report as the auditor's input; every audit finding carries a class tag and a counter; the third finding of a class opens the gate work (D5).
+- B6. Mechanical pre-audit report as the auditor's input. Its checks, each from a finding class seen this session: mutation on the changed lines (#66), a fuzz or empty-input row for every parser (an empty report read as clean, #609), a duplicate-constant scan (#592), the DR-6 empty-field rule (#592), raw escape characters through `gofmt -l` (D5), cognitive complexity, the deleted-test proof (L72), and the evidence summary matched against the raw step exits. Every audit finding carries a class tag and a counter; the third finding of a class opens the gate work (D5).
 - B7. Acceptance tests at dispatch by `test-author`, with an interface stub (D4); the writer's diff to a locked test file is refused, and a test fix needs its own approval.
 - B8. The ledger check record carries `failures[]` (gap left by #594).
+- Related, owned elsewhere: a write outside the declared file set is refused during the run (U16, merged into #295); test weakening is caught by D2 (#24) and the L72 proof lines.
 
 Existing issues to extend instead of duplicating: #254 (in-run verify), #24 (untested-code check), #66 (mutation on changed lines), #522, #597.
 
