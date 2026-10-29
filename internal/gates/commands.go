@@ -2,10 +2,7 @@ package gates
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"io/fs"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -142,7 +139,7 @@ func runReportTests(_ context.Context, in core.Input) (core.Result[any], error) 
 	if err != nil {
 		return core.Result[any]{}, ownerRefusal(err)
 	}
-	checks, err := readChecks(filepath.Join(roots.State, core.LedgerFile), in.Params["repo"], since)
+	checks, err := readChecks(roots.State, in.Params["repo"], since)
 	if err != nil {
 		return core.Result[any]{}, err
 	}
@@ -167,29 +164,6 @@ func parseSince(value string, now time.Time) (time.Time, error) {
 			Found: fmt.Sprintf("%q", value), Next: "pass --since 7d"}
 	}
 	return now.Add(-time.Duration(count) * step), nil
-}
-
-// readChecks returns the check records of the ledger at path that belong to repo (any repo when it
-// is empty) and are not older than since. A ledger that does not exist holds none.
-func readChecks(path, repo string, since time.Time) (checks []ledger.Check, err error) {
-	f, err := os.Open(path)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, ledgerRefusal(err)
-	}
-	defer func() { err = errors.Join(err, f.Close()) }()
-	records, err := ledger.Read(f)
-	if err != nil {
-		return nil, ledgerRefusal(err)
-	}
-	for _, rec := range records {
-		if c, ok := rec.(ledger.Check); ok && (repo == "" || c.RepoID == repo) && !c.At.Before(since) {
-			checks = append(checks, c)
-		}
-	}
-	return checks, nil
 }
 
 // ledgerRefusal is the refusal of a ledger that cannot be read: the report never guesses from a
