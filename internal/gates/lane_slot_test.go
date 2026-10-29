@@ -6,12 +6,12 @@ import (
 	"testing"
 )
 
-// TestLaneSlotIsTheCallers pins B1 of audit-596-r2 (SPEC 6.5, 7.8, L63): AIWE_SLOT is the index of
+// TestLaneSlotIsTheCallers pins B1 of audit-596-r2 (SPEC 6.5, 7.8, L63): the slot variable is the index of
 // the slot lease the caller passes in LaneRequest.Slot, whatever tickets the lane holds, and a
 // request with no slot from 1 is refused before any IO.
 func TestLaneSlotIsTheCallers(t *testing.T) {
 	t.Run("the slot is not renumbered", func(t *testing.T) {
-		t.Log("catches: the lane hands out its own lowest free number, a second source of AIWE_SLOT beside the slot lease")
+		t.Logf("catches: the lane hands out its own lowest free number, a second source of %s beside the slot lease", laneSlotEnv())
 		root := t.TempDir()
 		first := mustAcquire(t, newTestLanes(t, root, 4), LaneRequest{Repo: "a", Kind: "unit", Workers: 1, Slot: 7})
 		second := mustAcquire(t, newTestLanes(t, root, 4), LaneRequest{Repo: "b", Kind: "unit", Workers: 1, Slot: 2})
@@ -46,7 +46,7 @@ func TestLaneSlotIsTheCallers(t *testing.T) {
 		mustRelease(t, waiter)
 	})
 	t.Run("a request with no slot is refused", func(t *testing.T) {
-		t.Log("catches: a request with no slot lease runs with AIWE_SLOT unset or 0, and a project derives its port from it")
+		t.Logf("catches: a request with no slot lease runs with %s unset or 0, and a project derives its port from it", laneSlotEnv())
 		root := t.TempDir()
 		l := newTestLanes(t, root, 4)
 		locks := countLocks(l)
