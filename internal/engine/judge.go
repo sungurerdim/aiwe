@@ -101,16 +101,13 @@ func parseVerdictLine(rest string) (Verdict, string, error) {
 	return verdict, strings.TrimSpace(id), nil
 }
 
-// normalisedReturn returns text for roles.ParseJudgement: a RED verdict becomes the exact line that
-// parser reads, and a GREEN verdict leaves no verdict line behind.
+// normalisedReturn returns text for roles.ParseJudgement: the verdict line becomes the exact
+// `VERDICT: GREEN` or `VERDICT: RED`, so a one-line GREEN return never reaches it as empty text.
 func normalisedReturn(text string, verdict Verdict) string {
 	lines := strings.Split(text, "\n")
 	for i, line := range lines {
 		if strings.HasPrefix(strings.TrimSpace(line), "VERDICT:") {
-			lines[i] = ""
-			if verdict == VerdictRed {
-				lines[i] = "VERDICT: RED"
-			}
+			lines[i] = "VERDICT: " + string(verdict)
 		}
 	}
 	return strings.Join(lines, "\n")

@@ -3,6 +3,7 @@ package roles
 import (
 	"github.com/sungurerdim/aiwe/internal/core"
 	"strings"
+	"unicode"
 )
 
 const findingSep = " · "
@@ -31,7 +32,7 @@ type parsed struct {
 }
 
 func ParseJudgement(text string, criteria []string) (Judgement, error) {
-	if strings.TrimSpace(text) == "" {
+	if strings.TrimFunc(text, blankRune) == "" {
 		return Judgement{}, unitInvalid("a role return with a judgement", "empty text",
 			"rerun the role and pass its full return text")
 	}
@@ -47,6 +48,15 @@ func ParseJudgement(text string, criteria []string) (Judgement, error) {
 		return Judgement{}, err
 	}
 	return Judgement{Affected: p.affected, Findings: p.findings, FixRound: p.red && cited}, nil
+}
+
+// blankRune reports white space, a BOM and the zero-width runes, which carry no judgement.
+func blankRune(r rune) bool {
+	switch r {
+	case 0xFEFF, 0x200B, 0x200C, 0x200D, 0x2060:
+		return true
+	}
+	return unicode.IsSpace(r)
 }
 func parseReturn(text string) (parsed, error) {
 	var p parsed
