@@ -3,12 +3,15 @@ package gates
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -18,12 +21,8 @@ import (
 	"github.com/sungurerdim/aiwe/internal/core"
 )
 
-// coverRunLimit bounds the coverage run of one test package (DR-1).
-const (
-	coverRunLimit = 600
-	// coverProfileMax caps one profile read back from a coverage run.
-	coverProfileMax = 64 << 20
-)
+// coverReadMax caps one file the coverage index reads: a profile or a Go file it hashes.
+const coverReadMax = 64 << 20
 
 // CoverRefresh tells a Runner where the coverage reverse index lives and how to measure it (SPEC
 // L66). A Runner with no CoverRefresh keeps no index. Collect measures coverage in dir; nil runs
@@ -111,12 +110,18 @@ func (r *Runner) refreshCoverIndex(ctx context.Context, def Definition, report G
 	}
 	collect := r.Cover.Collect
 	if collect == nil {
-		collect = r.collectCover
+		limit, err := r.coverLimit(def)
+		if err != nil {
+			return "coverage index not refreshed: " + err.Error()
+		}
+		collect = func(ctx context.Context, dir string) (CoverCollection, error) {
+			return r.collectCover(ctx, dir, limit)
+		}
 	}
 	got, err := collect(ctx, dir)
 	if err == nil {
 		var idx CoverIndex
-		if idx, err = BuildCoverIndex(got.Profiles, got.DirOf, time.Now()); err == nil {
+		if idx, err = BuildCoverIndex(got, time.Now()); err == nil {
 			err = SaveCoverIndex(r.Cover.Path, idx)
 		}
 	}
@@ -134,35 +139,56 @@ func fullTestGreen(def Definition, report GateReport) bool {
 		report.Steps[i].Result == ResultGreen
 }
 
+// coverLimit returns the limit, in seconds, of the coverage run of one test package: the limit the
+// test step of def is prepared with from its measured durations (DR-1, SPEC §5.13). 0 is no limit
+// beyond the gate's context, as for the step.
+func (r *Runner) coverLimit(def Definition) (int, error) {
+	i := slices.IndexFunc(def.Steps, func(s GateStep) bool { return s.ID == testStepID })
+	if i < 0 {
+		return 0, errors.New("the gate has no test step to take the coverage run limit from")
+	}
+	step, _, err := r.prepare(def.Steps[i], def.Proof)
+	return step.TimeoutSeconds, err
+}
+
 // collectCover runs the tests of each package of the Go module in dir under coverage of the whole
-// module, one package at a time per worker, in fresh roots, and returns each package's profile. A
-// package whose run fails makes the collection fail, so a half-measured index is never written.
-func (r *Runner) collectCover(ctx context.Context, dir string) (CoverCollection, error) {
+// module, one package at a time per worker, in fresh roots, each bounded by limit seconds, and
+// returns each package's profile and the hash of each package's Go files. A package whose run fails
+// makes the collection fail, so a half-measured index is never written; a package whose run wrote
+// no profile is listed as not measured.
+func (r *Runner) collectCover(ctx context.Context, dir string, limit int) (CoverCollection, error) {
 	g, err := ListGoPackages(ctx, dir)
 	if err != nil {
+		return CoverCollection{}, err
+	}
+	got := CoverCollection{DirOf: map[string]string{}}
+	var pkgs []*goNode
+	dirs := make([]string, 0, len(g.nodes))
+	for _, n := range g.nodes {
+		got.DirOf[n.importPath] = n.dir
+		dirs = append(dirs, n.dir)
+		if n.hasTests {
+			pkgs = append(pkgs, n)
+		}
+	}
+	if got.Hashes, err = HashGoDirs(dir, dirs); err != nil {
 		return CoverCollection{}, err
 	}
 	roots, err := r.freshRoots(ctx)
 	if err != nil {
 		return CoverCollection{}, err
 	}
-	got := CoverCollection{DirOf: map[string]string{}}
-	var pkgs []*goNode
-	for _, n := range g.nodes {
-		got.DirOf[n.importPath] = n.dir
-		if n.hasTests {
-			pkgs = append(pkgs, n)
-		}
-	}
 	slices.SortFunc(pkgs, func(a, b *goNode) int { return strings.Compare(a.dir, b.dir) })
-	got.Profiles, err = r.coverPackages(ctx, dir, roots, pkgs)
+	got.Profiles, got.NotMeasured, err = r.coverPackages(ctx, dir, roots, pkgs, limit)
 	return got, errors.Join(err, roots.remove(ctx))
 }
 
-// coverPackages runs coverPackage for each of pkgs, as many at a time as the worker count.
-func (r *Runner) coverPackages(ctx context.Context, dir string, roots *checkRoots, pkgs []*goNode) (CoverProfiles, error) {
+// coverPackages runs coverPackage for each of pkgs, as many at a time as the worker count, and
+// returns the profiles and the slash directories of the packages whose run wrote no profile.
+func (r *Runner) coverPackages(ctx context.Context, dir string, roots *checkRoots, pkgs []*goNode, limit int) (CoverProfiles, []string, error) {
 	profiles := make(CoverProfiles, len(pkgs))
 	errs := make([]error, len(pkgs))
+	measured := make([]bool, len(pkgs))
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	slots := make(chan struct{}, max(1, r.Capacity.Workers))
@@ -171,35 +197,40 @@ func (r *Runner) coverPackages(ctx context.Context, dir string, roots *checkRoot
 		wg.Add(1)
 		go func() {
 			defer func() { <-slots; wg.Done() }()
-			data, err := coverPackage(ctx, dir, roots, i, n)
+			data, ok, err := coverPackage(ctx, dir, roots, i, n, limit)
 			mu.Lock()
 			defer mu.Unlock()
-			errs[i], profiles[n.dir] = err, data
+			errs[i], measured[i] = err, ok
+			if ok {
+				profiles[n.dir] = data
+			}
 		}()
 	}
 	wg.Wait()
-	return profiles, errors.Join(errs...)
+	var notMeasured []string
+	for i, n := range pkgs {
+		if errs[i] == nil && !measured[i] {
+			notMeasured = append(notMeasured, n.dir)
+		}
+	}
+	return profiles, notMeasured, errors.Join(errs...)
 }
 
-// coverPackage runs the tests of package n under coverage of the whole module and returns the
-// profile it wrote. A package whose tests ran no statement writes no profile: its profile is empty.
-func coverPackage(ctx context.Context, dir string, roots *checkRoots, i int, n *goNode) ([]byte, error) {
+// coverPackage runs the tests of package n under coverage of the whole module, bounded by limit
+// seconds, and returns the profile it wrote. A run that wrote no profile is not measured (DR-6).
+func coverPackage(ctx context.Context, dir string, roots *checkRoots, i int, n *goNode, limit int) ([]byte, bool, error) {
 	profile := filepath.Join(roots.base, fmt.Sprintf("cover-%d.out", i))
-	step := GateStep{ID: "cover", TimeoutSeconds: coverRunLimit,
-		Command: withCoverage([]string{"go", "test", "-count=1", n.importPath}, profile)}
+	step := GateStep{ID: "cover", TimeoutSeconds: limit, Command: []string{"go", "test", "-count=1",
+		"-coverpkg=" + coverFullSelection, "-coverprofile=" + profile, n.importPath}}
 	var all outputLog
 	code, _, failed := execStep(ctx, step, core.ChildSpec{Dir: dir, Env: roots.env(), Stdout: &all, Stderr: &all})
 	switch {
 	case failed != nil:
-		return nil, fmt.Errorf("%s: %s", n.importPath, failed.Detail)
+		return nil, false, fmt.Errorf("%s: %s", n.importPath, failed.Detail)
 	case code != 0:
-		return nil, fmt.Errorf("`go test %s` exited %d: %s", n.importPath, code, lastLine(all.Bytes()))
+		return nil, false, fmt.Errorf("`go test %s` exited %d: %s", n.importPath, code, lastLine(all.Bytes()))
 	}
-	data, err := readCoverProfile(roots.base, filepath.Base(profile))
-	if errors.Is(err, fs.ErrNotExist) {
-		return []byte("mode: set\n"), nil
-	}
-	return data, err
+	return readCoverProfile(roots.base, filepath.Base(profile))
 }
 
 // lastLine returns the last non-empty line of out.
@@ -209,11 +240,64 @@ func lastLine(out []byte) string {
 }
 
 // readCoverProfile reads the profile name under dir through an os.Root, so a link cannot lead out.
-func readCoverProfile(dir, name string) (data []byte, err error) {
+// A run that wrote no profile is not measured: measured is false and the error nil, never an empty
+// profile that covers nothing (DR-6).
+func readCoverProfile(dir, name string) (data []byte, measured bool, err error) {
 	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, false, err
+	}
+	defer func() { err = errors.Join(err, root.Close()) }()
+	data, err = core.ReadRegularCapped(root, name, coverReadMax)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, false, nil
+	}
+	return data, err == nil, err
+}
+
+// HashGoDirs returns the content hash of the Go files of each of dirs, slash directories relative to
+// root. A directory with no Go file, or no directory at all, is no Go package and gets no entry. The
+// hash covers each Go file's name, length and bytes in name order, read through an os.Root (DR-2).
+func HashGoDirs(root string, dirs []string) (sums map[string]string, err error) {
+	r, err := os.OpenRoot(root)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { err = errors.Join(err, root.Close()) }()
-	return core.ReadRegularCapped(root, name, coverProfileMax)
+	defer func() { err = errors.Join(err, r.Close()) }()
+	sums = map[string]string{}
+	for _, d := range dirs {
+		sum, ok, hashErr := hashGoDir(r, d)
+		if hashErr != nil {
+			return nil, hashErr
+		}
+		if ok {
+			sums[d] = sum
+		}
+	}
+	return sums, nil
+}
+
+// hashGoDir hashes the Go files of dir under root; ok is false when dir holds none.
+func hashGoDir(root *os.Root, dir string) (sum string, ok bool, err error) {
+	entries, err := fs.ReadDir(root.FS(), dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	h := sha256.New()
+	for _, e := range entries {
+		if !e.Type().IsRegular() || !strings.HasSuffix(e.Name(), ".go") {
+			continue
+		}
+		data, readErr := core.ReadRegularCapped(root, filepath.FromSlash(path.Join(dir, e.Name())), coverReadMax)
+		if readErr != nil {
+			return "", false, readErr
+		}
+		_, _ = fmt.Fprintf(h, "%s %d\n", e.Name(), len(data))
+		_, _ = h.Write(data)
+		ok = true
+	}
+	return hex.EncodeToString(h.Sum(nil)), ok, nil
 }

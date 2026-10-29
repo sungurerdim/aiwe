@@ -17,20 +17,27 @@ import (
 
 const (
 	// coverFormatVersion is the only format of the coverage index file this engine reads.
-	coverFormatVersion = 1
-	// coverMaxAge is how long an index selects by coverage; an older index is stale (SPEC L66).
-	coverMaxAge = 7 * 24 * time.Hour
+	coverFormatVersion = 2
 	// coverKind and staleKind are the reasons of SPEC-contracts §8.2 that this selector gives.
-	coverKind = "coverage"
+	coverKind = SelectorCoverage
 	staleKind = "stale"
+	// coverFullSelection is the full test selection the test step runs without the index: every
+	// package of the module, the suite of the module (SPEC L69). isFullGoTest reads the same one.
+	coverFullSelection = "./..."
 )
 
 // CoverIndex is the coverage reverse index of SPEC L66: for each file of the module, the test
 // packages whose tests ran one of its statements, written by a green full run. Built is when the
-// run ended. A zero Built is an index that was never built.
+// run ended; it is a note, never a staleness rule (DR-2).
 type CoverIndex struct {
 	FormatVersion int       `json:"formatVersion"`
 	Built         time.Time `json:"built"`
+	// Hashes maps the slash directory of each package of the module to the content hash of its Go
+	// files when the index was built. An entry is fresh while the hash of its package is unchanged.
+	Hashes map[string]string `json:"hashes"`
+	// NotMeasured lists the test packages, spelled as Files spells them, whose coverage run wrote no
+	// profile. Such a package may cover any file, so the index selects nothing by coverage (DR-6).
+	NotMeasured []string `json:"notMeasured,omitempty"`
 	// Files maps a slash file path relative to the repository root to its test packages, each
 	// `./<dir>` or `.`, sorted and free of duplicates (the spelling of declaredDeps tests).
 	Files map[string][]string `json:"files"`
@@ -40,11 +47,15 @@ type CoverIndex struct {
 // the package relative to the repository root.
 type CoverProfiles map[string][]byte
 
-// CoverCollection is what one coverage run measured: the profiles and the directory of each import
-// path of the module, which turns a profile's file names into repository paths.
+// CoverCollection is what one coverage run measured: the profiles, the directory of each import
+// path of the module, which turns a profile's file names into repository paths, the content hash of
+// the Go files of each package (HashGoDirs), and the slash directories of the test packages whose
+// run wrote no profile.
 type CoverCollection struct {
-	Profiles CoverProfiles
-	DirOf    map[string]string
+	Profiles    CoverProfiles
+	DirOf       map[string]string
+	Hashes      map[string]string
+	NotMeasured []string
 }
 
 // CoverSelection is one test package a change selects through the index. Kind is "coverage" or
@@ -56,21 +67,29 @@ type CoverSelection struct {
 }
 
 // CoverSelectResult is the outcome of CoverIndex.Select. Selected is sorted by package, then kind.
-// Unmapped lists the changed files a fresh index does not know, sorted: the caller falls back to
-// the suite of the module and records a `map_gap` (SPEC L66, L69).
+// Unmapped lists the changed files the index does not know, sorted: a file of a fresh package that
+// no test covered, or a file in no Go package. The caller falls back to the suite of the module and
+// records a `map_gap` (SPEC L66, L69).
 type CoverSelectResult struct {
 	Selected []CoverSelection
 	Unmapped []string
 }
 
-// BuildCoverIndex inverts the profiles: a file that a profile counts at least once under a block
-// that ran maps to that profile's package. A profile that is not a cover profile is an error, so an
-// unread profile never builds an index that selects nothing (DR-6). An import path that dirOf does
-// not know is not part of the module and is left out.
-func BuildCoverIndex(profiles CoverProfiles, dirOf map[string]string, built time.Time) (CoverIndex, error) {
-	idx := CoverIndex{FormatVersion: coverFormatVersion, Built: built.UTC(), Files: map[string][]string{}}
-	for _, dir := range slices.Sorted(maps.Keys(profiles)) {
-		files, err := coveredFiles(profiles[dir], dirOf)
+// BuildCoverIndex inverts the profiles of c: a file that a profile counts at least once under a
+// block that ran maps to that profile's package. A profile that is not a cover profile is an error,
+// so an unread profile never builds an index that selects nothing (DR-6). An import path that DirOf
+// does not know is not part of the module and is left out. The package hashes and the packages
+// that were not measured are kept.
+func BuildCoverIndex(c CoverCollection, built time.Time) (CoverIndex, error) {
+	idx := CoverIndex{FormatVersion: coverFormatVersion, Built: built.UTC(), Hashes: maps.Clone(c.Hashes),
+		Files: map[string][]string{}}
+	for _, dir := range c.NotMeasured {
+		idx.NotMeasured = append(idx.NotMeasured, testDir(dir))
+	}
+	slices.Sort(idx.NotMeasured)
+	idx.NotMeasured = slices.Compact(idx.NotMeasured)
+	for _, dir := range slices.Sorted(maps.Keys(c.Profiles)) {
+		files, err := coveredFiles(c.Profiles[dir], c.DirOf)
 		if err != nil {
 			return CoverIndex{}, coverError("a cover profile of "+dir, err.Error(), err)
 		}
@@ -123,24 +142,31 @@ func profileBlock(line string) (name string, count int, err error) {
 	return line[:colon], count, nil
 }
 
-// stale reports whether the index is too old to select by coverage at now. An index built exactly
-// coverMaxAge ago is still fresh.
-func (idx CoverIndex) stale(now time.Time) bool {
-	return idx.Built.IsZero() || now.Sub(idx.Built) > coverMaxAge
+// stale reports whether the entry of file f is stale against current, the content hash of the Go
+// files of each package now: its package's hash differs from the one stored with the index, or one
+// side has no package there. A file in a directory that is a Go package on neither side has no
+// entry and is not stale (DR-2).
+func (idx CoverIndex) stale(f string, current map[string]string) bool {
+	dir := path.Dir(f)
+	now, isPkg := current[dir]
+	then, wasPkg := idx.Hashes[dir]
+	return isPkg != wasPkg || now != then
 }
 
 // Select returns the test packages the changed files, slash paths relative to the repository root,
-// affect. A fresh index gives each file the packages that covered it. A stale index says "stale"
-// and gives each file the suite of its module, the directory of the file (SPEC L66, L69). It does
-// no IO.
-func (idx CoverIndex) Select(changed []string, now time.Time) CoverSelectResult {
-	files := cleanChanged(changed)
+// affect; current is the content hash of the Go files of each package now (HashGoDirs). A fresh
+// entry gives a file the packages that covered it. A stale entry, and any file of a package while a
+// test package is not measured, says "stale" and takes the full selection the test step runs
+// without the index; it never selects a directory, which may be no Go package (SPEC L66, L69,
+// DR-6). It does no IO.
+func (idx CoverIndex) Select(changed []string, current map[string]string) CoverSelectResult {
 	var res CoverSelectResult
 	byKey := map[[2]string][]string{}
-	for _, f := range files {
+	for _, f := range cleanChanged(changed) {
+		_, inPkg := current[path.Dir(f)]
 		switch pkgs := idx.Files[f]; {
-		case idx.stale(now):
-			key := [2]string{testDir(path.Dir(f)), staleKind}
+		case idx.stale(f, current) || (inPkg && len(idx.NotMeasured) > 0):
+			key := [2]string{coverFullSelection, staleKind}
 			byKey[key] = append(byKey[key], f)
 		case len(pkgs) == 0:
 			res.Unmapped = append(res.Unmapped, f)
@@ -164,9 +190,11 @@ func (idx CoverIndex) Select(changed []string, now time.Time) CoverSelectResult 
 // reason is the text of a selection of package key[0] by the files that changed.
 func (idx CoverIndex) reason(key [2]string, files []string) string {
 	list := strings.Join(files, ", ")
-	if key[1] == staleKind {
-		return fmt.Sprintf("stale: %s (index built %s, older than %s)", list,
-			idx.Built.Format(time.RFC3339), coverMaxAge)
+	switch {
+	case key[1] == staleKind && len(idx.NotMeasured) > 0:
+		return fmt.Sprintf("stale: %s (coverage of %s not_measured)", list, strings.Join(idx.NotMeasured, ", "))
+	case key[1] == staleKind:
+		return "stale: " + list + " (the Go files of their package differ from the index)"
 	}
 	return "coverage: " + list + " covered by " + key[0]
 }
