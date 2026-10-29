@@ -1,12 +1,8 @@
 package gates
 
 import (
-	"context"
-	"fmt"
 	"strconv"
 	"strings"
-
-	"github.com/sungurerdim/aiwe/internal/core"
 )
 
 // maxDiffLine bounds a line number or a hunk length read from a diff, so a range never overflows.
@@ -20,24 +16,6 @@ type LineRange struct {
 // DiffHunks maps a path, as it is named after the change, to the lines the change added or
 // replaced, in the order Git printed them. A file with no added line has no entry.
 type DiffHunks map[string][]LineRange
-
-// ReadDiffHunks returns the added line ranges of `git diff --unified=0 <base>...<tip>` in repo
-// (DR-9). The range is the run's base commit to its tip: a base that counts from HEAD (`HEAD~n`,
-// `HEAD^`) or that is not a plain commit id is refused. Git runs through core.Git, so a program the
-// repository configures never runs (DR-10); the hunks are Git's own output, never a made-up list.
-func ReadDiffHunks(ctx context.Context, repo, base, tip string) (DiffHunks, error) {
-	for _, id := range []string{base, tip} {
-		if id == "" || strings.HasPrefix(id, "-") || strings.ContainsAny(id, "~^") {
-			return nil, fmt.Errorf("diff hunks: commit id %q: want a plain commit id, not a ref counted from HEAD", id)
-		}
-	}
-	res, err := core.Git(ctx, repo, "diff", "--unified=0", "--no-color", "-M",
-		"--src-prefix=a/", "--dst-prefix=b/", base+"..."+tip, "--")
-	if err != nil {
-		return nil, fmt.Errorf("diff hunks %s...%s: %w", base, tip, err)
-	}
-	return ParseDiffHunks(res.Stdout), nil
-}
 
 // ParseDiffHunks reads the added line ranges from the text of a zero-context diff. The text is
 // untrusted: the reader follows the line counts of each hunk header, so an added line that reads as
