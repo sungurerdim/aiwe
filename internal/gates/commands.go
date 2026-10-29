@@ -46,7 +46,11 @@ func runGate(ctx context.Context, in core.Input) (core.Result[any], error) {
 	if err != nil {
 		return core.Result[any]{}, err
 	}
-	r := Runner{Capacity: capacity, Output: in.Stream, Owner: owner}
+	records, err := openCheckLedger()
+	if err != nil {
+		return core.Result[any]{}, err
+	}
+	r := Runner{Capacity: capacity, Output: in.Stream, Owner: owner, Records: records, Facts: MeasureFacts(ctx, repo)}
 	report, err := r.Run(ctx, def, repo, only)
 	if err != nil {
 		return core.Result[any]{}, err

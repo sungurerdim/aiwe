@@ -49,15 +49,18 @@ type VerifyReport struct {
 // refused by the cache and runs nothing. A step with no command, a directory that is not the work
 // tree root, a declared input with no blob, or a toolchain probe that does not print its values is
 // refused before the step runs (DR-6). A red step returns its step, argv, exit code and output
-// tail. The runner starts the step argv as a process tree, never through a shell. Verify returns an
-// error only when the step does not exit, the key cannot be measured, or the cache is nil.
+// tail. The runner starts the step argv as a process tree, never through a shell. A verify that runs
+// writes one check record, under its key, through the runner's record sink (SPEC-contracts §8.5); a
+// stored result served from the cache ran nothing and writes none. Verify returns an error only
+// when the step does not exit, the key cannot be measured, or the cache is nil.
 func Verify(ctx context.Context, runner *gates.Runner, req VerifyRequest) (VerifyReport, error) {
 	in, clean, err := gates.ResolveKeyInput(ctx, req.Dir, req.Step)
 	if err != nil {
 		return VerifyReport{}, err
 	}
+	key := gates.CheckKey(in)
 	build := func() (gates.CheckResult, error) {
-		report, err := runOnce(ctx, runner, req)
+		report, err := runOnce(ctx, runner, req, key)
 		if err != nil {
 			return gates.CheckResult{}, err
 		}
@@ -65,7 +68,7 @@ func Verify(ctx context.Context, runner *gates.Runner, req VerifyRequest) (Verif
 	}
 	var stored gates.CheckResult
 	if clean {
-		stored, err = req.Cache.Once(gates.CheckKey(in), build)
+		stored, err = req.Cache.Once(key, build)
 	} else {
 		stored, err = req.Cache.Uncached(build)
 	}
@@ -77,25 +80,30 @@ func Verify(ctx context.Context, runner *gates.Runner, req VerifyRequest) (Verif
 	return report, nil
 }
 
-// runOnce refuses a runner that cannot run a check, then runs req once.
-func runOnce(ctx context.Context, runner *gates.Runner, req VerifyRequest) (VerifyReport, error) {
+// runOnce refuses a runner that cannot run a check, then runs req once under key.
+func runOnce(ctx context.Context, runner *gates.Runner, req VerifyRequest, key string) (VerifyReport, error) {
 	if runner == nil {
 		return VerifyReport{}, &core.Error{Outcome: core.OutcomeError, Expected: "a gate runner",
 			Found: "no runner", Next: "pass the runner that owns the check's roots"}
 	}
-	return runVerify(ctx, runner, req)
+	return runVerify(ctx, runner, req, key)
 }
 
 // runVerify runs req.Step once and returns its report. It runs on a copy of the runner whose output
 // is the step's own buffer, so two verifies that share a runner — two different keys run at the
 // same time (DR-3) — never write each other's output and never touch the runner's own field; the
-// caller's writer still receives every line.
-func runVerify(ctx context.Context, runner *gates.Runner, req VerifyRequest) (VerifyReport, error) {
+// caller's writer still receives every line. A runner with a record sink writes the verify's one
+// check record with the facts of req.Dir and the check key.
+func runVerify(ctx context.Context, runner *gates.Runner, req VerifyRequest, key string) (VerifyReport, error) {
 	var buf strings.Builder
 	own := *runner
 	own.Output = &buf
 	if prev := runner.Output; prev != nil {
 		own.Output = io.MultiWriter(&buf, prev)
+	}
+	if own.Records != nil {
+		own.Facts = gates.MeasureFacts(ctx, req.Dir)
+		own.Facts.Key = key
 	}
 
 	ran, err := own.Run(ctx, gates.Definition{Steps: []gates.GateStep{req.Step}}, req.Dir, nil)
