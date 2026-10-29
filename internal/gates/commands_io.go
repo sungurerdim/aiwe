@@ -80,8 +80,6 @@ func readInRoot(dir, name string) (data []byte, err error) {
 }
 
 const (
-	// ledgerName is the ledger file of the state root (SPEC §8.5).
-	ledgerName = "ledger.jsonl"
 	// tailDirName is the directory of the state root that holds the tail files of check records.
 	tailDirName = "tails"
 	// recordLockWait bounds the wait for the ledger lock. It does not end with the gate's context,
@@ -105,7 +103,7 @@ func openCheckLedger() (*checkLedger, error) {
 		return nil, &core.Error{Outcome: core.OutcomeError, Expected: "a tail directory in the state root",
 			Found: err.Error(), Next: "make the state root writable, then run the gate again", Err: err}
 	}
-	return &checkLedger{path: filepath.Join(roots.State, ledgerName), tails: tails}, nil
+	return &checkLedger{path: filepath.Join(roots.State, core.LedgerFile), tails: tails}, nil
 }
 
 // WriteCheck writes rec: its tail, when it keeps one, to a new file whose path the record then

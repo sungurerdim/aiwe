@@ -95,7 +95,7 @@ func recordTestRunWith(t *testing.T, setup func(*testing.T, *Runner), steps ...G
 // recordTestLedger returns the check records of the ledger in the state root, by step id.
 func recordTestLedger(t *testing.T, state string) map[string][]ledger.Check {
 	t.Helper()
-	f, err := os.Open(filepath.Join(state, "ledger.jsonl"))
+	f, err := os.Open(filepath.Join(state, core.LedgerFile))
 	if err != nil {
 		t.Fatalf("catches a gate that writes no ledger: %v", err)
 	}
