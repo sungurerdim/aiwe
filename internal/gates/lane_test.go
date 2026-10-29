@@ -117,6 +117,15 @@ func awaitResult(t *testing.T, done <-chan laneResult, bound time.Duration) lane
 	}
 }
 
+// leaseOf returns the lease of r, or fails the test with the error the request returned.
+func leaseOf(t *testing.T, r laneResult) *LaneLease {
+	t.Helper()
+	if r.err != nil {
+		t.Fatalf("Acquire = %v, want a lease", r.err)
+	}
+	return r.lease
+}
+
 func mustAcquire(t *testing.T, l *Lanes, req LaneRequest) *LaneLease {
 	t.Helper()
 	lease, err := l.Acquire(t.Context(), req)
@@ -259,7 +268,7 @@ func TestFullRunTakesTheWholeTicketPool(t *testing.T) {
 			fullDone := goAcquire(t.Context(), fl, cpuRequest("full", tc.full))
 			var full *LaneLease
 			if first == nil {
-				full = awaitResult(t, fullDone, laneTestWait).lease
+				full = leaseOf(t, awaitResult(t, fullDone, laneTestWait))
 			} else {
 				fullLines.next(t, "position 1")
 			}
@@ -270,7 +279,7 @@ func TestFullRunTakesTheWholeTicketPool(t *testing.T) {
 			}
 			if first != nil {
 				mustRelease(t, first)
-				full = awaitResult(t, fullDone, laneTestWait).lease
+				full = leaseOf(t, awaitResult(t, fullDone, laneTestWait))
 			}
 			if full == nil {
 				t.Fatal("the full run got no lease")
@@ -433,9 +442,9 @@ func TestLaneWaiterPrintsPositionAndJobAhead(t *testing.T) {
 			}
 			mustRelease(t, a)
 			if middle != nil {
-				mustRelease(t, awaitResult(t, middle, laneTestWait).lease)
+				mustRelease(t, leaseOf(t, awaitResult(t, middle, laneTestWait)))
 			}
-			mustRelease(t, awaitResult(t, bDone, laneTestWait).lease)
+			mustRelease(t, leaseOf(t, awaitResult(t, bDone, laneTestWait)))
 		})
 	}
 }
@@ -484,7 +493,7 @@ func TestLaneCancelRemovesTicket(t *testing.T) {
 				t.Errorf("moved-up line = %q, want it behind the holder alpha", line)
 			}
 			mustRelease(t, a)
-			mustRelease(t, awaitResult(t, cDone, laneTestWait).lease)
+			mustRelease(t, leaseOf(t, awaitResult(t, cDone, laneTestWait)))
 		})
 	}
 }

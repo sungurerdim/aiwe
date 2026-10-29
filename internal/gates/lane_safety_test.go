@@ -272,7 +272,7 @@ func TestLaneLockFileCannotBeDeletedWhileHeld(t *testing.T) {
 			done := goAcquire(t.Context(), w, dbRequest("waiter", 1))
 			lines.next(t, "position 1")
 			mustRelease(t, holder)
-			mustRelease(t, awaitResult(t, done, laneTestWait).lease)
+			mustRelease(t, leaseOf(t, awaitResult(t, done, laneTestWait)))
 			entries, err := os.ReadDir(dbLane(root))
 			if err != nil {
 				t.Fatal(err)
@@ -383,7 +383,7 @@ func TestLaneOneOSWaiterPerResource(t *testing.T) {
 		}
 	}
 	mustRelease(t, holder)
-	mustRelease(t, awaitResult(t, dones[2], laneTestWait).lease)
+	mustRelease(t, leaseOf(t, awaitResult(t, dones[2], laneTestWait)))
 	if p := peakNow(); p > 1 {
 		t.Errorf("%d OS waits ran at once in one lane, want at most 1", p)
 	}
