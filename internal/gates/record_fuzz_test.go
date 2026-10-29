@@ -80,7 +80,7 @@ func TestGoModulePath(t *testing.T) {
 		{"escaped quote", "module \"\\\"a\"\n", ""},
 		{"backtick only", "module `x\n", ""},
 		{"inner backtick", "module a`b\n", ""},
-		{"escaped line break", "module \"a\nb\"\n", ""},
+		{"escaped line break", "module \"a\\nb\"\n", ""},
 		{"unterminated", "module \"a\n", ""},
 	}
 	for _, c := range cases {
